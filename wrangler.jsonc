@@ -1,0 +1,17 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "claude-workers-ai-proxy",
+    "main": "src/index.ts",
+    "compatibility_date": "2026-08-27",
+    "workers_dev": true,
+    "preview_urls": false,
+    "vars": {},
+    "observability": {
+        "enabled": true
+    },
+    "compatibility_flags": ["global_fetch_strictly_public", "nodejs_compat"],
+    "ai": {
+        "binding": "AI",
+        "remote": true
+    }
+}
