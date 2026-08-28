@@ -21,6 +21,7 @@ export function extractProviderKey(headers: Headers): { apiKey: string; headers:
     const cleanHeaders = new Headers(headers)
     cleanHeaders.delete('x-api-key')
     cleanHeaders.delete('authorization')
+    cleanHeaders.delete('x-proxy-key')
     return { apiKey, headers: cleanHeaders }
 }
 

@@ -116,7 +116,8 @@ function errorToResponse(error: unknown): Response {
         return jsonResponse(body, error.status ?? 500)
     }
     console.error(error)
-    return new Response('OpenAI SDK request failed', { status: 502 })
+    const message = error instanceof Error ? error.message : String(error)
+    return jsonResponse({ type: 'error', error: { type: 'api_error', message } }, 502)
 }
 
 export class ChatCompletionsProvider implements provider.Provider {
@@ -312,6 +313,7 @@ export class ChatCompletionsProvider implements provider.Provider {
 
                 utils.sendMessageStart(controller)
 
+                let errored = false
                 try {
                     for await (const chunk of openaiStream) {
                         if (chunk.usage) {
@@ -363,16 +365,19 @@ export class ChatCompletionsProvider implements provider.Provider {
                         enqueueEvents(controller, events)
                     }
                 } catch (error) {
+                    errored = true
                     console.error(error)
                     controller.error(error)
                     return
                 } finally {
-                    const events: string[] = []
-                    closeTextBlockIfNeeded(events, state)
-                    enqueueEvents(controller, events)
-                    utils.sendMessageDelta(controller, state.stopReason, state.usage)
-                    utils.sendMessageStop(controller)
-                    controller.close()
+                    if (!errored) {
+                        const events: string[] = []
+                        closeTextBlockIfNeeded(events, state)
+                        enqueueEvents(controller, events)
+                        utils.sendMessageDelta(controller, state.stopReason, state.usage)
+                        utils.sendMessageStop(controller)
+                        controller.close()
+                    }
                 }
             }
         })
@@ -447,8 +452,7 @@ export class ResponsesProvider implements provider.Provider {
                 type: 'function',
                 name: tool.name,
                 description: tool.description,
-                parameters: utils.cleanJsonSchema(tool.input_schema),
-                strict: null
+                parameters: utils.cleanJsonSchema(tool.input_schema)
             })) as FunctionTool[]
         }
 
@@ -572,6 +576,7 @@ export class ResponsesProvider implements provider.Provider {
 
                 utils.sendMessageStart(controller)
 
+                let errored = false
                 try {
                     for await (const event of openaiStream) {
                         const events: string[] = []
@@ -645,16 +650,19 @@ export class ResponsesProvider implements provider.Provider {
                         enqueueEvents(controller, events)
                     }
                 } catch (error) {
+                    errored = true
                     console.error(error)
                     controller.error(error)
                     return
                 } finally {
-                    const events: string[] = []
-                    closeTextBlockIfNeeded(events, state)
-                    enqueueEvents(controller, events)
-                    utils.sendMessageDelta(controller, state.stopReason, state.usage)
-                    utils.sendMessageStop(controller)
-                    controller.close()
+                    if (!errored) {
+                        const events: string[] = []
+                        closeTextBlockIfNeeded(events, state)
+                        enqueueEvents(controller, events)
+                        utils.sendMessageDelta(controller, state.stopReason, state.usage)
+                        utils.sendMessageStop(controller)
+                        controller.close()
+                    }
                 }
             }
         })

@@ -160,7 +160,7 @@ export class impl implements provider.Provider {
             if (toolResultParts.length > 0) {
                 contents.push({
                     parts: toolResultParts,
-                    role: 'tool'
+                    role: 'user'
                 })
             }
         }

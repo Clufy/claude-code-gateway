@@ -276,6 +276,7 @@ export class WorkersAIProvider {
                     text += extractText(payload)
                     collectToolCalls(payload, toolCalls)
                     if (finishReason(payload) === 'tool_calls') stopReason = 'tool_use'
+                    else if (finishReason(payload) === 'length') stopReason = 'max_tokens'
                 }
             }
             if (buffer.trim()) {
@@ -284,6 +285,7 @@ export class WorkersAIProvider {
                     text += extractText(payload)
                     collectToolCalls(payload, toolCalls)
                     if (finishReason(payload) === 'tool_calls') stopReason = 'tool_use'
+                    else if (finishReason(payload) === 'length') stopReason = 'max_tokens'
                 }
             }
             reader.releaseLock()
@@ -385,12 +387,13 @@ export class WorkersAIProvider {
         const emitToolCalls = (controller: TransformStreamDefaultController) => {
             closeTextBlock(controller)
             const calls = [...state.toolCalls.entries()].sort(([a], [b]) => a - b)
+            let emitted = 0
             for (let i = state.toolBlocksEmitted; i < calls.length; i++) {
                 const [, call] = calls[i]
                 if (!call.name) continue
                 const toolId = toolUseId(call.id)
                 const input = parseArguments(call.arguments)
-                const blockIndex = state.blockIndex + (i - state.toolBlocksEmitted)
+                const blockIndex = state.blockIndex + emitted
 
                 controller.enqueue(
                     encoder.encode(
@@ -413,8 +416,9 @@ export class WorkersAIProvider {
                 controller.enqueue(
                     encoder.encode(sse('content_block_stop', { type: 'content_block_stop', index: blockIndex }))
                 )
+                emitted++
             }
-            state.blockIndex += calls.length - state.toolBlocksEmitted
+            state.blockIndex += emitted
             state.toolBlocksEmitted = calls.length
             state.stopReason = 'tool_use'
         }
@@ -427,6 +431,8 @@ export class WorkersAIProvider {
             collectToolCalls(payload, state.toolCalls)
             if (finishReason(payload) === 'tool_calls') {
                 emitToolCalls(controller)
+            } else if (finishReason(payload) === 'length') {
+                state.stopReason = 'max_tokens'
             }
         }
 
