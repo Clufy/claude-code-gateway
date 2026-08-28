@@ -34,7 +34,11 @@ function toModel(id: string): ClaudeModelListing {
 
 function configuredModelIds(env: Env): string[] {
     const models = (env as { MODELS?: string }).MODELS
-    const ids = models?.split(',').map(s => s.trim()).filter(Boolean) ?? []
+    const ids =
+        models
+            ?.split(',')
+            .map((s) => s.trim())
+            .filter(Boolean) ?? []
     return ids.length > 0 ? ids : DEFAULT_MODELS
 }
 

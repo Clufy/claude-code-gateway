@@ -45,10 +45,7 @@ export interface ClaudeResponse {
     type: 'message'
     role: 'assistant'
     model?: string
-    content: Array<
-        | { type: 'text'; text: string }
-        | { type: 'tool_use'; id: string; name: string; input: any }
-    >
+    content: Array<{ type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: any }>
     stop_reason?: ClaudeStopReason
     stop_sequence?: string | null
     usage: {

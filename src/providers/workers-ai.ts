@@ -14,8 +14,8 @@ function systemText(system: unknown): string {
     if (typeof system === 'string') return system
     if (Array.isArray(system)) {
         return system
-            .filter(p => p && p.type === 'text')
-            .map(p => p.text ?? '')
+            .filter((p) => p && p.type === 'text')
+            .map((p) => p.text ?? '')
             .join('\n')
     }
     return String(system)
@@ -39,8 +39,8 @@ function cleanSchema(schema: any): any {
 function convertTools(tools: any): any {
     if (!Array.isArray(tools) || tools.length === 0) return undefined
     return tools
-        .filter(t => t && t.name)
-        .map(t => ({
+        .filter((t) => t && t.name)
+        .map((t) => ({
             type: 'function',
             function: {
                 name: t.name,
@@ -250,10 +250,10 @@ export class WorkersAIProvider {
     }
 
     private error(status: number, type: string, message: string): Response {
-        return new Response(
-            JSON.stringify({ type: 'error', error: { type, message }, request_id: this.requestId }),
-            { status, headers: { 'content-type': 'application/json' } }
-        )
+        return new Response(JSON.stringify({ type: 'error', error: { type, message }, request_id: this.requestId }), {
+            status,
+            headers: { 'content-type': 'application/json' }
+        })
     }
 
     private async handleNonStreaming(source: ReadableStream, model: string, id: string): Promise<Response> {

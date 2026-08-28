@@ -53,7 +53,7 @@ export class impl implements provider.Provider {
         if (claudeRequest.tools && claudeRequest.tools.length > 0) {
             geminiRequest.tools = [
                 {
-                    functionDeclarations: claudeRequest.tools.map(tool => ({
+                    functionDeclarations: claudeRequest.tools.map((tool) => ({
                         name: tool.name,
                         description: tool.description,
                         parameters: utils.cleanJsonSchema(tool.input_schema)
@@ -81,8 +81,8 @@ export class impl implements provider.Provider {
             typeof system === 'string'
                 ? system
                 : system
-                      .filter(part => part.type === 'text')
-                      .map(part => part.text)
+                      .filter((part) => part.type === 'text')
+                      .map((part) => part.text)
                       .join('\n')
 
         if (!text) return undefined

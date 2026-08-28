@@ -43,16 +43,16 @@ function systemText(system: types.ClaudeRequest['system']): string | undefined {
     if (!system) return undefined
     if (typeof system === 'string') return system
     return system
-        .filter(part => part.type === 'text')
-        .map(part => part.text)
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
         .join('\n')
 }
 
 function contentToText(content: types.ClaudeContent): string {
     if (typeof content === 'string') return content
     return content
-        .filter(part => part.type === 'text')
-        .map(part => part.text)
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
         .join('\n')
 }
 
@@ -177,7 +177,7 @@ export class ChatCompletionsProvider implements provider.Provider {
         }
 
         if (claudeRequest.tools && claudeRequest.tools.length > 0) {
-            openaiRequest.tools = claudeRequest.tools.map(tool => ({
+            openaiRequest.tools = claudeRequest.tools.map((tool) => ({
                 type: 'function',
                 function: {
                     name: tool.name,
@@ -443,7 +443,7 @@ export class ResponsesProvider implements provider.Provider {
         }
 
         if (claudeRequest.tools && claudeRequest.tools.length > 0) {
-            openaiRequest.tools = claudeRequest.tools.map(tool => ({
+            openaiRequest.tools = claudeRequest.tools.map((tool) => ({
                 type: 'function',
                 name: tool.name,
                 description: tool.description,
