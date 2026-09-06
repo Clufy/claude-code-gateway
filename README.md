@@ -88,6 +88,24 @@ npx wrangler vars put MODELS
 # value: @cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/meta/llama-3.1-8b-instruct-fast
 ```
 
+### 6. Optional: restrict provider hosts
+
+By default external provider routes can target any host. Set a comma-separated
+`ALLOWED_HOSTS` variable to lock them down (unlisted hosts get `403`):
+
+```bash
+npx wrangler vars put ALLOWED_HOSTS
+# value: api.openai.com,generativelanguage.googleapis.com
+```
+
+### 7. Rate limiting and logging (built in)
+
+Messages endpoints are rate-limited per client IP (100 requests / 60 s) via a
+Cloudflare rate-limiting binding; over-limit requests get `429 rate_limit_error`
+with a `retry-after` header. Each messages request also emits one JSON log line
+(`requestId`, `path`, `status`, `durationMs`) visible in `wrangler tail` and
+Workers Logs.
+
 ## Point Claude Code at the Worker
 
 Edit `~/.claude/settings.json`. Replace the URL and pick a model that works with your

@@ -1,5 +1,10 @@
 export type ClaudeErrorType =
-    'invalid_request_error' | 'authentication_error' | 'not_found_error' | 'api_error' | 'rate_limit_error'
+    | 'invalid_request_error'
+    | 'authentication_error'
+    | 'permission_error'
+    | 'not_found_error'
+    | 'api_error'
+    | 'rate_limit_error'
 
 export function jsonResponse(body: unknown, status: number, requestId?: string): Response {
     const headers = new Headers({ 'Content-Type': 'application/json' })

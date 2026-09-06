@@ -13,5 +13,14 @@
     "ai": {
         "binding": "AI",
         "remote": true
+    },
+    "unsafe": {
+        "bindings": [
+            {
+                "name": "RATE_LIMITER",
+                "type": "ratelimit",
+                "simple": { "limit": 100, "period": 60 }
+            }
+        ]
     }
 }

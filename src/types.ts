@@ -40,6 +40,12 @@ export interface ClaudeRequest {
 
 export type ClaudeStopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence'
 
+export interface ClaudeUsage {
+    input_tokens: number
+    output_tokens: number
+    cache_read_input_tokens?: number
+}
+
 export interface ClaudeResponse {
     id: string
     type: 'message'
@@ -48,10 +54,7 @@ export interface ClaudeResponse {
     content: Array<{ type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: any }>
     stop_reason?: ClaudeStopReason
     stop_sequence?: string | null
-    usage: {
-        input_tokens: number
-        output_tokens: number
-    }
+    usage: ClaudeUsage
 }
 
 export interface GeminiFunctionDeclaration {
@@ -99,6 +102,7 @@ export interface GeminiResponse {
         promptTokenCount: number
         candidatesTokenCount: number
         totalTokenCount: number
+        cachedContentTokenCount?: number
     }
 }
 

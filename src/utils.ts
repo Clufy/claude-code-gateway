@@ -1,3 +1,5 @@
+import * as types from './types'
+
 export function generateId(): string {
     return crypto.randomUUID()
 }
@@ -26,7 +28,7 @@ export function enqueueRawSse(controller: ReadableStreamDefaultController, event
 
 export function sendMessageStart(
     controller: ReadableStreamDefaultController,
-    usage: { input_tokens: number; output_tokens: number } = { input_tokens: 0, output_tokens: 0 }
+    usage: types.ClaudeUsage = { input_tokens: 0, output_tokens: 0 }
 ): void {
     const event = sse('message_start', {
         type: 'message_start',
@@ -44,7 +46,7 @@ export function sendMessageStart(
 export function sendMessageDelta(
     controller: ReadableStreamDefaultController,
     stopReason: string,
-    usage: { input_tokens: number; output_tokens: number } = { input_tokens: 0, output_tokens: 0 }
+    usage: types.ClaudeUsage = { input_tokens: 0, output_tokens: 0 }
 ): void {
     enqueueSse(controller, 'message_delta', {
         type: 'message_delta',
@@ -61,6 +63,10 @@ export function sendMessageStop(controller: ReadableStreamDefaultController): vo
         type: 'message_stop'
     })
     controller.enqueue(encoder.encode(event))
+}
+
+export function sendErrorEvent(controller: ReadableStreamDefaultController, message: string): void {
+    controller.enqueue(encoder.encode(sse('error', { type: 'error', error: { type: 'api_error', message } })))
 }
 
 export function startTextBlock(index: number): string {
@@ -146,7 +152,13 @@ export async function processProviderStream(
         jsonStr: string,
         textIndex: number,
         toolIndex: number
-    ) => { events: string[]; textBlockIndex: number; toolUseBlockIndex: number; stopReason?: string } | null
+    ) => {
+        events: string[]
+        textBlockIndex: number
+        toolUseBlockIndex: number
+        stopReason?: string
+        usage?: types.ClaudeUsage
+    } | null
 ): Promise<Response> {
     const stream = new ReadableStream({
         async start(controller) {
@@ -161,6 +173,7 @@ export async function processProviderStream(
             let textBlockIndex = 0
             let toolUseBlockIndex = 0
             let stopReason = 'end_turn'
+            let usage: types.ClaudeUsage | undefined
 
             sendMessageStart(controller)
 
@@ -185,6 +198,7 @@ export async function processProviderStream(
                             textBlockIndex = result.textBlockIndex
                             toolUseBlockIndex = result.toolUseBlockIndex
                             stopReason = result.stopReason ?? stopReason
+                            if (result.usage) usage = result.usage
 
                             for (const event of result.events) {
                                 controller.enqueue(encoder.encode(event))
@@ -192,19 +206,26 @@ export async function processProviderStream(
                         }
                     }
                 }
-            } finally {
+
                 if (buffer.trim() && buffer.startsWith('data: ')) {
                     const result = processLine(buffer.slice(6), textBlockIndex, toolUseBlockIndex)
                     if (result) {
                         stopReason = result.stopReason ?? stopReason
+                        if (result.usage) usage = result.usage
                         for (const event of result.events) {
                             controller.enqueue(encoder.encode(event))
                         }
                     }
                 }
+
                 reader.releaseLock()
-                sendMessageDelta(controller, stopReason)
+                sendMessageDelta(controller, stopReason, usage)
                 sendMessageStop(controller)
+                controller.close()
+            } catch (error) {
+                console.error(error)
+                reader.releaseLock()
+                sendErrorEvent(controller, error instanceof Error ? error.message : String(error))
                 controller.close()
             }
         }

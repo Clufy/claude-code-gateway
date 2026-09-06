@@ -24,4 +24,9 @@ curl -sS -X POST "${BASE}/v1/messages" \
   | head -c 400
 echo
 
+echo "== unknown provider type =="
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE}/nonexistent-type/api.example.com/v1/messages" \
+  -H 'Content-Type: application/json' -d '{"model":"m","messages":[{"role":"user","content":"hi"}]}')
+[ "$code" = "404" ] && echo "unknown provider -> 404 ok" || echo "FAIL: expected 404, got $code"
+
 echo "Self-test complete."

@@ -16,16 +16,26 @@ const DEFAULT_MODELS = [
     '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b'
 ]
 
+// Real context windows from developers.cloudflare.com/workers-ai/models;
+// conservative default so Claude Code compacts before an unknown model overflows.
+const CONTEXT_TOKENS: Record<string, number> = {
+    '@cf/meta/llama-3.3-70b-instruct-fp8-fast': 24000,
+    '@cf/meta/llama-3.1-8b-instruct-fast': 128000,
+    '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b': 80000,
+    '@cf/zai-org/glm-5.3-flash': 1048576
+}
+const DEFAULT_CONTEXT_TOKENS = 24000
+
 function toModel(id: string): ClaudeModelListing {
     return {
         id,
         type: 'model',
         display_name: id,
         created_at: 0,
-        max_input_tokens: null,
+        max_input_tokens: CONTEXT_TOKENS[id] ?? DEFAULT_CONTEXT_TOKENS,
         max_tokens: null,
         capabilities: {
-            tools: { name: 'tool_use', supported: false },
+            tools: { name: 'tool_use', supported: true },
             vision: { name: 'vision', supported: false },
             multi_tool_use: { name: 'multi_tool_use', supported: false }
         }

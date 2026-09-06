@@ -19,12 +19,37 @@ const PROVIDERS: Record<string, ProviderCtor> = {
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
         const requestId = generateRequestId()
+        const url = new URL(request.url)
+        const isMessages = url.pathname === '/v1/messages' || /\/v1\/messages$/.test(url.pathname)
+        const start = Date.now()
         try {
             const response = await handleRequest(request, env, requestId)
+            if (isMessages) {
+                console.log(
+                    JSON.stringify({
+                        requestId,
+                        method: request.method,
+                        path: url.pathname,
+                        status: response.status,
+                        durationMs: Date.now() - start
+                    })
+                )
+            }
             return withRequestId(response, requestId)
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
             console.error(error)
+            if (isMessages) {
+                console.log(
+                    JSON.stringify({
+                        requestId,
+                        method: request.method,
+                        path: url.pathname,
+                        status: 500,
+                        durationMs: Date.now() - start
+                    })
+                )
+            }
             return anthropicError(500, 'api_error', message, requestId)
         }
     }
@@ -58,6 +83,8 @@ async function handleRequest(request: Request, env: Env, requestId: string): Pro
     }
 
     if (request.method === 'POST' && url.pathname === '/v1/messages') {
+        const limited = await enforceRateLimit(request, env, requestId)
+        if (limited) return limited
         const auth = await requireProxyKey(request, env, requestId)
         if (auth) return auth
         return new WorkersAIProvider(env).handle(request, requestId)
@@ -65,6 +92,8 @@ async function handleRequest(request: Request, env: Env, requestId: string): Pro
 
     const externalMatch = url.pathname.match(/^\/([^/]+)\/(.+)\/v1\/messages$/)
     if (request.method === 'POST' && externalMatch) {
+        const limited = await enforceRateLimit(request, env, requestId)
+        if (limited) return limited
         return handleExternal(
             request,
             env,
@@ -85,6 +114,32 @@ async function requireProxyKey(request: Request, env: Env, requestId: string): P
         return anthropicError(401, 'authentication_error', 'invalid x-api-key', requestId)
     }
     return null
+}
+
+async function enforceRateLimit(request: Request, env: Env, requestId: string): Promise<Response | null> {
+    const limiter = env.RATE_LIMITER
+    if (!limiter) return null
+    const ip = request.headers.get('cf-connecting-ip') ?? 'unknown'
+    const { success } = await limiter.limit({ key: ip })
+    if (success) return null
+    const response = anthropicError(429, 'rate_limit_error', 'Too many requests', requestId)
+    const headers = new Headers(response.headers)
+    headers.set('retry-after', '60')
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers
+    })
+}
+
+function providerHostAllowed(providerUrl: string, env: Env): boolean {
+    const raw = (env as { ALLOWED_HOSTS?: string }).ALLOWED_HOSTS
+    if (!raw) return true
+    const allowed = raw
+        .split(',')
+        .map((h) => h.trim().toLowerCase())
+        .filter(Boolean)
+    return allowed.includes(new URL(providerUrl).hostname.toLowerCase())
 }
 
 async function handleExternal(
@@ -114,6 +169,9 @@ async function handleExternal(
 
     const inboundRequest = new Request(request, { headers: keyResult.headers })
     const baseUrl = normalizeProviderUrl(providerUrl)
+    if (!providerHostAllowed(baseUrl, env)) {
+        return anthropicError(403, 'permission_error', 'Provider host not allowed by ALLOWED_HOSTS', requestId)
+    }
     const provider = new ProviderCtor()
 
     if (provider.handle) {
@@ -121,8 +179,33 @@ async function handleExternal(
     }
 
     const providerRequest = await provider.convertToProviderRequest(inboundRequest, baseUrl, keyResult.apiKey)
-    const providerResponse = await fetch(providerRequest)
+    const providerResponse = await fetchWithRetry(providerRequest)
     return provider.convertToClaudeResponse(providerResponse)
+}
+
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
+
+async function fetchWithRetry(providerRequest: Request, retries = 2): Promise<Response> {
+    let lastResponse: Response | null = null
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        if (lastResponse) {
+            const retryAfter = Number(lastResponse.headers.get('retry-after'))
+            const delay =
+                Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 5000) : 500 * attempt
+            await new Promise((resolve) => setTimeout(resolve, delay))
+        }
+        const response = await fetch(providerRequest.clone())
+        if (response.ok || !RETRYABLE_STATUS.has(response.status)) {
+            return response
+        }
+        try {
+            await response.body?.cancel()
+        } catch {
+            // ignore drain errors
+        }
+        lastResponse = response
+    }
+    return lastResponse as Response
 }
 
 function normalizeProviderUrl(raw: string): string {

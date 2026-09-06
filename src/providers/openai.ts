@@ -24,10 +24,7 @@ type ClaudeStreamState = {
     textBlockIndex: number
     toolUseBlockIndex: number
     stopReason: types.ClaudeStopReason
-    usage: {
-        input_tokens: number
-        output_tokens: number
-    }
+    usage: types.ClaudeUsage
 }
 
 function createClient(apiKey: string, baseUrl: string): OpenAI {
@@ -35,7 +32,7 @@ function createClient(apiKey: string, baseUrl: string): OpenAI {
         apiKey: apiKey.startsWith('Bearer ') ? apiKey.slice('Bearer '.length) : apiKey,
         baseURL: baseUrl,
         timeout: 600_000,
-        maxRetries: 0
+        maxRetries: 2
     })
 }
 
@@ -298,7 +295,8 @@ export class ChatCompletionsProvider implements provider.Provider {
         if (openaiData.usage) {
             claudeResponse.usage = {
                 input_tokens: openaiData.usage.prompt_tokens,
-                output_tokens: openaiData.usage.completion_tokens
+                output_tokens: openaiData.usage.completion_tokens,
+                cache_read_input_tokens: openaiData.usage.prompt_tokens_details?.cached_tokens
             }
         }
 
@@ -319,7 +317,8 @@ export class ChatCompletionsProvider implements provider.Provider {
                         if (chunk.usage) {
                             state.usage = {
                                 input_tokens: chunk.usage.prompt_tokens,
-                                output_tokens: chunk.usage.completion_tokens
+                                output_tokens: chunk.usage.completion_tokens,
+                                cache_read_input_tokens: chunk.usage.prompt_tokens_details?.cached_tokens
                             }
                         }
 
@@ -367,7 +366,8 @@ export class ChatCompletionsProvider implements provider.Provider {
                 } catch (error) {
                     errored = true
                     console.error(error)
-                    controller.error(error)
+                    utils.sendErrorEvent(controller, error instanceof Error ? error.message : String(error))
+                    controller.close()
                     return
                 } finally {
                     if (!errored) {
@@ -561,7 +561,8 @@ export class ResponsesProvider implements provider.Provider {
         if (openaiData.usage) {
             claudeResponse.usage = {
                 input_tokens: openaiData.usage.input_tokens ?? 0,
-                output_tokens: openaiData.usage.output_tokens ?? 0
+                output_tokens: openaiData.usage.output_tokens ?? 0,
+                cache_read_input_tokens: openaiData.usage.input_tokens_details?.cached_tokens
             }
         }
 
@@ -631,7 +632,9 @@ export class ResponsesProvider implements provider.Provider {
                                 if (event.response.usage) {
                                     state.usage = {
                                         input_tokens: event.response.usage.input_tokens ?? 0,
-                                        output_tokens: event.response.usage.output_tokens ?? 0
+                                        output_tokens: event.response.usage.output_tokens ?? 0,
+                                        cache_read_input_tokens:
+                                            event.response.usage.input_tokens_details?.cached_tokens
                                     }
                                 }
                                 break
@@ -641,7 +644,9 @@ export class ResponsesProvider implements provider.Provider {
                                 if (event.response.usage) {
                                     state.usage = {
                                         input_tokens: event.response.usage.input_tokens ?? 0,
-                                        output_tokens: event.response.usage.output_tokens ?? 0
+                                        output_tokens: event.response.usage.output_tokens ?? 0,
+                                        cache_read_input_tokens:
+                                            event.response.usage.input_tokens_details?.cached_tokens
                                     }
                                 }
                                 break
@@ -652,7 +657,8 @@ export class ResponsesProvider implements provider.Provider {
                 } catch (error) {
                     errored = true
                     console.error(error)
-                    controller.error(error)
+                    utils.sendErrorEvent(controller, error instanceof Error ? error.message : String(error))
+                    controller.close()
                     return
                 } finally {
                     if (!errored) {

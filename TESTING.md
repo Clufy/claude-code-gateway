@@ -29,11 +29,11 @@ curl -sS -w "\n[%{http_code}]\n" "$BASE/"
 
 ## 2. Authentication
 
-| # | Command | Expected |
-|---|---------|----------|
-| 2.1 | `curl -sS -w "\n[%{http_code}]\n" "$BASE/v1/models"` (no key) | `401` `authentication_error` `invalid x-api-key` |
-| 2.2 | `curl -sS -H "x-api-key: wrong" -w "\n[%{http_code}]\n" "$BASE/v1/models"` | `401` |
-| 2.3 | `curl -sS -H "x-api-key: $PROXY_KEY" -w "\n[%{http_code}]\n" "$BASE/v1/models"` | `200` JSON |
+| #   | Command                                                                         | Expected                                         |
+| --- | ------------------------------------------------------------------------------- | ------------------------------------------------ |
+| 2.1 | `curl -sS -w "\n[%{http_code}]\n" "$BASE/v1/models"` (no key)                   | `401` `authentication_error` `invalid x-api-key` |
+| 2.2 | `curl -sS -H "x-api-key: wrong" -w "\n[%{http_code}]\n" "$BASE/v1/models"`      | `401`                                            |
+| 2.3 | `curl -sS -H "x-api-key: $PROXY_KEY" -w "\n[%{http_code}]\n" "$BASE/v1/models"` | `200` JSON                                       |
 
 Every error body must have the shape `{"type":"error","error":{"type":...,"message":...},"request_id":"req_..."}`, and the `request-id` header must equal the body's `request_id`.
 
@@ -113,11 +113,65 @@ curl -sS -X POST "$BASE/openai-responses/api.openai.com/v1/messages" \
 
 ## 8. Error paths
 
-| Command | Expected |
-|---------|----------|
-| `curl -sS -X POST "$BASE/nonexistent-type/api.example.com/v1/messages"` | `404` `Provider type 'nonexistent-type' not found` |
-| `curl -sS "$BASE/definitely-not-a-route"` | `404 not_found_error` |
+| Command                                                                                | Expected                                                 |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `curl -sS -X POST "$BASE/nonexistent-type/api.example.com/v1/messages"`                | `404` `Provider type 'nonexistent-type' not found`       |
+| `curl -sS "$BASE/definitely-not-a-route"`                                              | `404 not_found_error`                                    |
 | `curl -sS -H "x-api-key: $PROXY_KEY" -X POST "$BASE/v1/messages" -d '{"messages":[]}'` | `400 invalid_request_error` `missing or invalid 'model'` |
+
+## 8b. Allowlist (optional)
+
+Only active when `ALLOWED_HOSTS` is set (e.g. `npx wrangler dev` with `ALLOWED_HOSTS="api.openai.com"` in `.dev.vars`, or `npx wrangler versions upload` with the var). With `ALLOWED_HOSTS="api.openai.com"`:
+
+```bash
+curl -sS -X POST "$BASE/gemini/generativelanguage.googleapis.com/v1/messages" \
+  -H "x-api-key: $GOOGLE_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"model":"gemini-1.5-flash","messages":[{"role":"user","content":"hi"}]}' \
+  -w "\n[%{http_code}]\n"
+```
+
+**Expected:** `[403]` `permission_error` `Provider host not allowed by ALLOWED_HOSTS`. A request to `/openai/api.openai.com/v1/messages` still succeeds. Without `ALLOWED_HOSTS`, all hosts are allowed (default).
+
+## 8c. Rate limiting
+
+The `RATE_LIMITER` binding allows 100 requests per IP per 60s on the messages endpoints. To verify, fire 101+ rapid requests:
+
+```bash
+for i in $(seq 1 105); do
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST "$BASE/v1/messages/count_tokens" \
+    -H 'Content-Type: application/json' \
+    -d '{"model":"'"$MODEL"'","messages":[{"role":"user","content":"hi"}]}'
+done | sort | uniq -c
+```
+
+**Expected:** a mix of `200`s and at least one `429` once the limit trips. Over-limit responses carry `retry-after: 60` and `rate_limit_error`. (Note: `count_tokens` is not limited, so target `/v1/messages` with a valid model for a definitive check.)
+
+## 8d. Structured logs
+
+In `npx wrangler dev` output (or Workers Logs in the dashboard), each messages request emits one JSON line:
+
+```json
+{ "requestId": "req_...", "method": "POST", "path": "/v1/messages", "status": 200, "durationMs": 812 }
+```
+
+## 8e. Streaming errors surface as Anthropic error events
+
+If a provider stream dies mid-flight (network drop, provider 5xx after headers), the proxy emits an
+Anthropic SSE `error` event and closes the stream — instead of ending the message silently. Verify by
+watching `wrangler tail` while killing the upstream, or trust the unit path: any exception inside
+`processProviderStream` / the OpenAI stream pumps lands in `sendErrorEvent`.
+
+**Expected last events on failure:** `event: error` with `{"type":"error","error":{"type":"api_error",...}}`.
+
+## 8f. Retries
+
+- **OpenAI (both flavors):** the SDK client retries twice on 429/5xx/connection errors before the proxy gives up.
+- **Gemini + generic providers:** `fetchWithRetry` retries twice on 429/500/502/503/504 with backoff
+  (honors `retry-after`, capped at 5 s). Verify in `wrangler tail` — a failing upstream shows repeat
+  request log lines for one inbound request.
+- **Usage:** `cache_read_input_tokens` is forwarded when providers report it (OpenAI
+  `prompt_tokens_details.cached_tokens`, Gemini `cachedContentTokenCount`); Gemini streaming now
+  forwards real token counts in the final `message_delta` instead of zeros.
 
 ## 9. Tool calling (Workers AI)
 
@@ -135,12 +189,12 @@ Set `~/.claude/settings.json`:
 
 ```json
 {
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://claude-workers-ai-proxy.<your-subdomain>.workers.dev",
-    "ANTHROPIC_CUSTOM_HEADERS": "x-api-key: <your-proxy-key>",
-    "ANTHROPIC_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-    "ANTHROPIC_SMALL_FAST_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast"
-  }
+    "env": {
+        "ANTHROPIC_BASE_URL": "https://claude-workers-ai-proxy.<your-subdomain>.workers.dev",
+        "ANTHROPIC_CUSTOM_HEADERS": "x-api-key: <your-proxy-key>",
+        "ANTHROPIC_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "ANTHROPIC_SMALL_FAST_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast"
+    }
 }
 ```
 

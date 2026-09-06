@@ -1,12 +1,10 @@
+import { countTokensForRequest, estimateTokens } from '../tokens'
+
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 function sse(event: string, data: unknown): string {
     return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
-}
-
-function estimateTokens(text: string): number {
-    return Math.max(0, Math.ceil(text.length / 4))
 }
 
 function systemText(system: unknown): string {
@@ -192,6 +190,16 @@ function toolUseId(existing: string | undefined): string {
     return existing || `toolu_${crypto.randomUUID().replace(/-/g, '')}`
 }
 
+// Workers AI sends usage on OpenAI-style payloads (prompt_tokens/completion_tokens);
+// the generic envelope format uses input_tokens/output_tokens. Absent = estimate.
+function extractUsage(payload: any): { prompt: number | null; completion: number | null } {
+    const usage = payload?.usage
+    if (!usage || typeof usage !== 'object') return { prompt: null, completion: null }
+    const prompt = usage.prompt_tokens ?? usage.input_tokens ?? null
+    const completion = usage.completion_tokens ?? usage.output_tokens ?? null
+    return { prompt, completion }
+}
+
 export class WorkersAIProvider {
     private requestId = ''
 
@@ -233,6 +241,9 @@ export class WorkersAIProvider {
             return this.error(502, 'api_error', `Workers AI call failed: ${message}`)
         }
 
+        // ponytail: input token estimate from chars/4 — Workers AI only reports prompt usage on some models
+        const inputEstimate = countTokensForRequest(body).input_tokens
+
         let source: ReadableStream
         if (rawStream instanceof ReadableStream) {
             source = rawStream
@@ -243,10 +254,10 @@ export class WorkersAIProvider {
         }
 
         if (!stream) {
-            return this.handleNonStreaming(source, model, id)
+            return this.handleNonStreaming(source, model, id, inputEstimate)
         }
 
-        return this.handleStreaming(source, model, id)
+        return this.handleStreaming(source, model, id, inputEstimate)
     }
 
     private error(status: number, type: string, message: string): Response {
@@ -256,10 +267,17 @@ export class WorkersAIProvider {
         })
     }
 
-    private async handleNonStreaming(source: ReadableStream, model: string, id: string): Promise<Response> {
+    private async handleNonStreaming(
+        source: ReadableStream,
+        model: string,
+        id: string,
+        inputEstimate: number
+    ): Promise<Response> {
         let text = ''
         const toolCalls = new Map<number, any>()
         let stopReason: any = 'end_turn'
+        let realPrompt: number | null = null
+        let realCompletion: number | null = null
 
         try {
             const reader = source.getReader()
@@ -275,6 +293,9 @@ export class WorkersAIProvider {
                     if (!payload) continue
                     text += extractText(payload)
                     collectToolCalls(payload, toolCalls)
+                    const usage = extractUsage(payload)
+                    if (usage.prompt != null) realPrompt = usage.prompt
+                    if (usage.completion != null) realCompletion = usage.completion
                     if (finishReason(payload) === 'tool_calls') stopReason = 'tool_use'
                     else if (finishReason(payload) === 'length') stopReason = 'max_tokens'
                 }
@@ -284,6 +305,9 @@ export class WorkersAIProvider {
                 if (payload) {
                     text += extractText(payload)
                     collectToolCalls(payload, toolCalls)
+                    const usage = extractUsage(payload)
+                    if (usage.prompt != null) realPrompt = usage.prompt
+                    if (usage.completion != null) realCompletion = usage.completion
                     if (finishReason(payload) === 'tool_calls') stopReason = 'tool_use'
                     else if (finishReason(payload) === 'length') stopReason = 'max_tokens'
                 }
@@ -318,7 +342,10 @@ export class WorkersAIProvider {
                 content,
                 stop_reason: stopReason,
                 stop_sequence: null,
-                usage: { input_tokens: 0, output_tokens: estimateTokens(text) }
+                usage: {
+                    input_tokens: realPrompt ?? inputEstimate,
+                    output_tokens: realCompletion ?? estimateTokens(text)
+                }
             }),
             { status: 200, headers: { 'content-type': 'application/json' } }
         )
@@ -336,7 +363,7 @@ export class WorkersAIProvider {
         }
     }
 
-    private handleStreaming(source: ReadableStream, model: string, id: string): Response {
+    private handleStreaming(source: ReadableStream, model: string, id: string, inputEstimate: number): Response {
         const state = {
             text: '',
             textBlockOpen: false,
@@ -344,6 +371,8 @@ export class WorkersAIProvider {
             toolCalls: new Map<number, any>(),
             toolBlocksEmitted: 0,
             stopReason: 'end_turn' as any,
+            realPrompt: null as number | null,
+            realCompletion: null as number | null,
             _buffer: '' as string
         }
 
@@ -429,6 +458,9 @@ export class WorkersAIProvider {
             const token = extractText(payload)
             if (token) emitText(controller, token)
             collectToolCalls(payload, state.toolCalls)
+            const usage = extractUsage(payload)
+            if (usage.prompt != null) state.realPrompt = usage.prompt
+            if (usage.completion != null) state.realCompletion = usage.completion
             if (finishReason(payload) === 'tool_calls') {
                 emitToolCalls(controller)
             } else if (finishReason(payload) === 'length') {
@@ -450,7 +482,7 @@ export class WorkersAIProvider {
                                 content: [],
                                 stop_reason: null,
                                 stop_sequence: null,
-                                usage: { input_tokens: 0, output_tokens: 0 }
+                                usage: { input_tokens: inputEstimate, output_tokens: 0 }
                             }
                         })
                     )
@@ -479,7 +511,10 @@ export class WorkersAIProvider {
                         sse('message_delta', {
                             type: 'message_delta',
                             delta: { stop_reason: state.stopReason, stop_sequence: null },
-                            usage: { output_tokens: estimateTokens(state.text) }
+                            usage: {
+                                input_tokens: state.realPrompt ?? inputEstimate,
+                                output_tokens: state.realCompletion ?? estimateTokens(state.text)
+                            }
                         })
                     )
                 )

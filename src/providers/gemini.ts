@@ -215,7 +215,8 @@ export class impl implements provider.Provider {
         if (geminiData.usageMetadata) {
             claudeResponse.usage = {
                 input_tokens: geminiData.usageMetadata.promptTokenCount,
-                output_tokens: geminiData.usageMetadata.candidatesTokenCount
+                output_tokens: geminiData.usageMetadata.candidatesTokenCount,
+                cache_read_input_tokens: geminiData.usageMetadata.cachedContentTokenCount
             }
         }
 
@@ -274,11 +275,21 @@ export class impl implements provider.Provider {
                 stopReason = candidate.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn'
             }
 
+            let usage: types.ClaudeUsage | undefined
+            if (geminiData.usageMetadata) {
+                usage = {
+                    input_tokens: geminiData.usageMetadata.promptTokenCount,
+                    output_tokens: geminiData.usageMetadata.candidatesTokenCount,
+                    cache_read_input_tokens: geminiData.usageMetadata.cachedContentTokenCount
+                }
+            }
+
             return {
                 events,
                 textBlockIndex: currentTextIndex,
                 toolUseBlockIndex: currentToolIndex,
-                stopReason
+                stopReason,
+                usage
             }
         })
     }
