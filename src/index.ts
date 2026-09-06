@@ -83,9 +83,11 @@ async function handleRequest(request: Request, env: Env, requestId: string): Pro
     }
 
     if (request.method === 'POST' && url.pathname === '/v1/messages') {
-        const limited = await enforceRateLimit(request, env, requestId)
+        const [limited, auth] = await Promise.all([
+            enforceRateLimit(request, env, requestId),
+            requireProxyKey(request, env, requestId)
+        ])
         if (limited) return limited
-        const auth = await requireProxyKey(request, env, requestId)
         if (auth) return auth
         return new WorkersAIProvider(env).handle(request, requestId)
     }

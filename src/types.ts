@@ -16,8 +16,11 @@ export interface ClaudeTool {
     input_schema: JsonSchema
 }
 
+export type ClaudeImageSource = { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string }
+
 export type ClaudeContentBlock =
     | { type: 'text'; text: string }
+    | { type: 'image'; source: ClaudeImageSource }
     | { type: 'tool_use'; id: string; name: string; input: any }
     | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
 
@@ -28,14 +31,19 @@ export interface ClaudeMessage {
     content: ClaudeContent
 }
 
+export type ClaudeToolChoice =
+    'auto' | 'any' | 'none' | { type: 'tool'; name: string } | { type: string; [key: string]: any }
+
 export interface ClaudeRequest {
     model: string
     messages: ClaudeMessage[]
     system?: string | Array<{ type: 'text'; text: string }>
     max_tokens?: number
     temperature?: number
+    stop_sequences?: string[]
     stream?: boolean
     tools?: ClaudeTool[]
+    tool_choice?: ClaudeToolChoice
 }
 
 export type ClaudeStopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence'
@@ -44,14 +52,20 @@ export interface ClaudeUsage {
     input_tokens: number
     output_tokens: number
     cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
 }
+
+export type ClaudeResponseContentBlock =
+    | { type: 'text'; text: string }
+    | { type: 'thinking'; thinking: string; signature?: string }
+    | { type: 'tool_use'; id: string; name: string; input: any }
 
 export interface ClaudeResponse {
     id: string
     type: 'message'
     role: 'assistant'
     model?: string
-    content: Array<{ type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: any }>
+    content: ClaudeResponseContentBlock[]
     stop_reason?: ClaudeStopReason
     stop_sequence?: string | null
     usage: ClaudeUsage
@@ -69,6 +83,7 @@ export interface GeminiTool {
 
 export type GeminiPart =
     | { text: string }
+    | { inlineData: { mimeType: string; data: string } }
     | { functionCall: { name: string; args: any } }
     | { functionResponse: { name: string; response: any } }
 
@@ -85,6 +100,7 @@ export interface GeminiRequest {
     generationConfig?: {
         temperature?: number
         maxOutputTokens?: number
+        stopSequences?: string[]
     }
 }
 
@@ -106,9 +122,12 @@ export interface GeminiResponse {
     }
 }
 
+export type OpenAIContentPart =
+    { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string; detail?: string } }
+
 export interface OpenAIMessage {
     role: 'system' | 'user' | 'assistant' | 'tool'
-    content?: string | null
+    content?: string | null | OpenAIContentPart[]
     tool_calls?: OpenAIToolCall[]
     tool_call_id?: string
 }
@@ -135,9 +154,12 @@ export interface OpenAIRequest {
     model: string
     messages: OpenAIMessage[]
     tools?: OpenAITool[]
+    tool_choice?: 'none' | 'auto' | 'required' | { type: 'function'; function: { name: string } } | string
+    stop?: string[]
     temperature?: number
     max_tokens?: number
     stream?: boolean
+    stream_options?: { include_usage?: boolean }
 }
 
 export interface OpenAIResponsesRequest {
@@ -150,11 +172,16 @@ export interface OpenAIResponsesRequest {
     stream?: boolean
 }
 
+export type OpenAIResponsesContentPart =
+    | { type: 'input_text'; text: string }
+    | { type: 'output_text'; text: string }
+    | { type: 'input_image'; image_url: string }
+
 export type OpenAIResponsesInputItem =
     | {
           type: 'message'
           role: 'user' | 'assistant' | 'system'
-          content: Array<{ type: 'input_text'; text: string } | { type: 'output_text'; text: string }>
+          content: OpenAIResponsesContentPart[]
       }
     | {
           type: 'function_call'
@@ -195,6 +222,8 @@ export interface OpenAIResponsesResponse {
     usage?: {
         input_tokens?: number
         output_tokens?: number
+        input_tokens_details?: { cached_tokens?: number }
+        cache_creation_input_tokens?: number
     }
 }
 
@@ -214,6 +243,8 @@ export interface OpenAIResponse {
         prompt_tokens: number
         completion_tokens: number
         total_tokens: number
+        prompt_tokens_details?: { cached_tokens?: number }
+        cache_creation_input_tokens?: number
     }
 }
 
@@ -241,4 +272,10 @@ export interface OpenAIStreamResponse {
     created: number
     model: string
     choices: OpenAIStreamChoice[]
+    usage?: {
+        prompt_tokens?: number
+        completion_tokens?: number
+        prompt_tokens_details?: { cached_tokens?: number }
+        cache_creation_input_tokens?: number
+    }
 }

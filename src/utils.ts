@@ -106,36 +106,45 @@ export function processTextPart(text: string, index: number): string[] {
     return events
 }
 
+export function startToolUseBlock(index: number, id: string, name: string): string {
+    return sse('content_block_start', {
+        type: 'content_block_start',
+        index,
+        content_block: { type: 'tool_use', id, name, input: {} }
+    })
+}
+
+export function inputJsonDelta(index: number, partialJson: string): string {
+    return sse('content_block_delta', {
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'input_json_delta', partial_json: partialJson }
+    })
+}
+
 export function processToolUsePart(functionCall: { name: string; args: any }, index: number): string[] {
-    const events: string[] = []
     const toolUseId = generateId()
+    return [
+        startToolUseBlock(index, toolUseId, functionCall.name),
+        inputJsonDelta(index, JSON.stringify(functionCall.args)),
+        stopContentBlock(index)
+    ]
+}
 
-    events.push(
-        sse('content_block_start', {
-            type: 'content_block_start',
-            index,
-            content_block: {
-                type: 'tool_use',
-                id: toolUseId,
-                name: functionCall.name,
-                input: {}
-            }
-        })
-    )
+export function startThinkingBlock(index: number): string {
+    return sse('content_block_start', {
+        type: 'content_block_start',
+        index,
+        content_block: { type: 'thinking', thinking: '' }
+    })
+}
 
-    events.push(
-        sse('content_block_delta', {
-            type: 'content_block_delta',
-            index,
-            delta: {
-                type: 'input_json_delta',
-                partial_json: JSON.stringify(functionCall.args)
-            }
-        })
-    )
-
-    events.push(stopContentBlock(index))
-    return events
+export function thinkingDelta(text: string, index: number): string {
+    return sse('content_block_delta', {
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'thinking_delta', thinking: text }
+    })
 }
 
 export function buildUrl(baseUrl: string, endpoint: string): string {
@@ -158,7 +167,8 @@ export async function processProviderStream(
         toolUseBlockIndex: number
         stopReason?: string
         usage?: types.ClaudeUsage
-    } | null
+    } | null,
+    inputTokens = 0
 ): Promise<Response> {
     const stream = new ReadableStream({
         async start(controller) {
@@ -175,7 +185,7 @@ export async function processProviderStream(
             let stopReason = 'end_turn'
             let usage: types.ClaudeUsage | undefined
 
-            sendMessageStart(controller)
+            sendMessageStart(controller, { input_tokens: inputTokens, output_tokens: 0 })
 
             try {
                 while (true) {

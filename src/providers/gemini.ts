@@ -1,10 +1,14 @@
 import * as types from '../types'
 import * as provider from '../provider'
 import * as utils from '../utils'
+import * as tokens from '../tokens'
 
 export class impl implements provider.Provider {
+    private inputTokensEstimate = 0
+
     async convertToProviderRequest(request: Request, baseUrl: string, apiKey: string): Promise<Request> {
         const claudeRequest = (await request.json()) as types.ClaudeRequest
+        this.inputTokensEstimate = tokens.countTokensForRequest(claudeRequest).input_tokens
         const geminiRequest = this.convertToGeminiRequestBody(claudeRequest)
 
         const endpoint = `models/${claudeRequest.model}:${claudeRequest.stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`
@@ -62,13 +66,20 @@ export class impl implements provider.Provider {
             ]
         }
 
-        if (claudeRequest.temperature !== undefined || claudeRequest.max_tokens !== undefined) {
+        if (
+            claudeRequest.temperature !== undefined ||
+            claudeRequest.max_tokens !== undefined ||
+            (claudeRequest.stop_sequences && claudeRequest.stop_sequences.length > 0)
+        ) {
             geminiRequest.generationConfig = {}
             if (claudeRequest.temperature !== undefined) {
                 geminiRequest.generationConfig.temperature = claudeRequest.temperature
             }
             if (claudeRequest.max_tokens !== undefined) {
                 geminiRequest.generationConfig.maxOutputTokens = claudeRequest.max_tokens
+            }
+            if (claudeRequest.stop_sequences && claudeRequest.stop_sequences.length > 0) {
+                geminiRequest.generationConfig.stopSequences = claudeRequest.stop_sequences
             }
         }
 
@@ -107,6 +118,13 @@ export class impl implements provider.Provider {
         return toolUseMap
     }
 
+    private imagePart(source: types.ClaudeImageSource): types.GeminiPart | undefined {
+        if (source.type === 'base64') {
+            return { inlineData: { mimeType: source.media_type, data: source.data } }
+        }
+        return undefined
+    }
+
     private convertMessages(messages: types.ClaudeMessage[], toolUseMap: Map<string, string>): types.GeminiContent[] {
         const contents: types.GeminiContent[] = []
 
@@ -120,6 +138,7 @@ export class impl implements provider.Provider {
             }
 
             const textParts: types.GeminiPart[] = []
+            const imageParts: types.GeminiPart[] = []
             const toolUseParts: types.GeminiPart[] = []
             const toolResultParts: types.GeminiPart[] = []
 
@@ -128,6 +147,11 @@ export class impl implements provider.Provider {
                     case 'text':
                         textParts.push({ text: content.text })
                         break
+                    case 'image': {
+                        const part = this.imagePart(content.source)
+                        if (part) imageParts.push(part)
+                        break
+                    }
                     case 'tool_use':
                         toolUseParts.push({
                             functionCall: {
@@ -150,9 +174,9 @@ export class impl implements provider.Provider {
                 }
             }
 
-            if (textParts.length > 0 || toolUseParts.length > 0) {
+            if (textParts.length > 0 || imageParts.length > 0 || toolUseParts.length > 0) {
                 contents.push({
-                    parts: [...textParts, ...toolUseParts],
+                    parts: [...textParts, ...imageParts, ...toolUseParts],
                     role: message.role === 'assistant' ? 'model' : 'user'
                 })
             }
@@ -229,68 +253,72 @@ export class impl implements provider.Provider {
     private async convertStreamResponse(geminiResponse: Response): Promise<Response> {
         let textBlockOpen = false
 
-        return utils.processProviderStream(geminiResponse, (jsonStr, textBlockIndex, toolUseBlockIndex) => {
-            const geminiData = JSON.parse(jsonStr) as types.GeminiResponse
-            if (!geminiData.candidates || geminiData.candidates.length === 0) {
-                return null
-            }
+        return utils.processProviderStream(
+            geminiResponse,
+            (jsonStr, textBlockIndex, toolUseBlockIndex) => {
+                const geminiData = JSON.parse(jsonStr) as types.GeminiResponse
+                if (!geminiData.candidates || geminiData.candidates.length === 0) {
+                    return null
+                }
 
-            const candidate = geminiData.candidates[0]
-            const events: string[] = []
-            let currentTextIndex = textBlockIndex
-            let currentToolIndex = toolUseBlockIndex
-            let stopReason: types.ClaudeStopReason | undefined
+                const candidate = geminiData.candidates[0]
+                const events: string[] = []
+                let currentTextIndex = textBlockIndex
+                let currentToolIndex = toolUseBlockIndex
+                let stopReason: types.ClaudeStopReason | undefined
 
-            if (candidate.content) {
-                for (const part of candidate.content.parts) {
-                    if ('text' in part && part.text) {
-                        if (!textBlockOpen) {
-                            events.push(utils.startTextBlock(currentTextIndex))
-                            textBlockOpen = true
-                        }
-                        events.push(utils.textDelta(part.text, currentTextIndex))
-                    } else if ('functionCall' in part) {
-                        if (textBlockOpen) {
-                            events.push(utils.stopContentBlock(currentTextIndex))
-                            currentTextIndex++
-                            textBlockOpen = false
-                        }
-                        events.push(
-                            ...utils.processToolUsePart(
-                                { name: part.functionCall.name, args: part.functionCall.args ?? {} },
-                                currentToolIndex
+                if (candidate.content) {
+                    for (const part of candidate.content.parts) {
+                        if ('text' in part && part.text) {
+                            if (!textBlockOpen) {
+                                events.push(utils.startTextBlock(currentTextIndex))
+                                textBlockOpen = true
+                            }
+                            events.push(utils.textDelta(part.text, currentTextIndex))
+                        } else if ('functionCall' in part) {
+                            if (textBlockOpen) {
+                                events.push(utils.stopContentBlock(currentTextIndex))
+                                currentTextIndex++
+                                textBlockOpen = false
+                            }
+                            events.push(
+                                ...utils.processToolUsePart(
+                                    { name: part.functionCall.name, args: part.functionCall.args ?? {} },
+                                    currentToolIndex
+                                )
                             )
-                        )
-                        currentToolIndex++
+                            currentToolIndex++
+                        }
                     }
                 }
-            }
 
-            if (candidate.finishReason) {
-                if (textBlockOpen) {
-                    events.push(utils.stopContentBlock(currentTextIndex))
-                    currentTextIndex++
-                    textBlockOpen = false
+                if (candidate.finishReason) {
+                    if (textBlockOpen) {
+                        events.push(utils.stopContentBlock(currentTextIndex))
+                        currentTextIndex++
+                        textBlockOpen = false
+                    }
+                    stopReason = candidate.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn'
                 }
-                stopReason = candidate.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn'
-            }
 
-            let usage: types.ClaudeUsage | undefined
-            if (geminiData.usageMetadata) {
-                usage = {
-                    input_tokens: geminiData.usageMetadata.promptTokenCount,
-                    output_tokens: geminiData.usageMetadata.candidatesTokenCount,
-                    cache_read_input_tokens: geminiData.usageMetadata.cachedContentTokenCount
+                let usage: types.ClaudeUsage | undefined
+                if (geminiData.usageMetadata) {
+                    usage = {
+                        input_tokens: geminiData.usageMetadata.promptTokenCount,
+                        output_tokens: geminiData.usageMetadata.candidatesTokenCount,
+                        cache_read_input_tokens: geminiData.usageMetadata.cachedContentTokenCount
+                    }
                 }
-            }
 
-            return {
-                events,
-                textBlockIndex: currentTextIndex,
-                toolUseBlockIndex: currentToolIndex,
-                stopReason,
-                usage
-            }
-        })
+                return {
+                    events,
+                    textBlockIndex: currentTextIndex,
+                    toolUseBlockIndex: currentToolIndex,
+                    stopReason,
+                    usage
+                }
+            },
+            this.inputTokensEstimate
+        )
     }
 }

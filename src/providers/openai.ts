@@ -1,23 +1,8 @@
-import OpenAI from 'openai'
-import type {
-    ChatCompletion,
-    ChatCompletionChunk,
-    ChatCompletionCreateParams,
-    ChatCompletionMessageParam
-} from 'openai/resources/chat/completions'
-import type {
-    FunctionTool,
-    Response as OpenAIResponse,
-    ResponseCreateParams,
-    ResponseFunctionToolCall,
-    ResponseInputItem,
-    ResponseOutputMessage,
-    ResponseStreamEvent
-} from 'openai/resources/responses/responses'
-import type { Stream } from 'openai/streaming'
 import * as types from '../types'
 import * as provider from '../provider'
 import * as utils from '../utils'
+import * as tokens from '../tokens'
+import { jsonResponse } from '../errors'
 
 type ClaudeStreamState = {
     textBlockOpen: boolean
@@ -27,13 +12,14 @@ type ClaudeStreamState = {
     usage: types.ClaudeUsage
 }
 
-function createClient(apiKey: string, baseUrl: string): OpenAI {
-    return new OpenAI({
-        apiKey: apiKey.startsWith('Bearer ') ? apiKey.slice('Bearer '.length) : apiKey,
-        baseURL: baseUrl,
-        timeout: 600_000,
-        maxRetries: 2
-    })
+// ponytail: loose union — only touch the fields we read
+// prettier-ignore
+type ResponsesStreamEvent = {
+    type: string
+    delta?: string
+    output_index?: number
+    item?: { type: string; name?: string; call_id?: string; arguments?: string }
+    response?: types.OpenAIResponsesResponse
 }
 
 function systemText(system: types.ClaudeRequest['system']): string | undefined {
@@ -51,6 +37,21 @@ function contentToText(content: types.ClaudeContent): string {
         .filter((part) => part.type === 'text')
         .map((part) => part.text)
         .join('\n')
+}
+
+function imageSourceToUrl(source: types.ClaudeImageSource): string | undefined {
+    if (source.type === 'url') return source.url
+    return `data:${source.media_type};base64,${source.data}`
+}
+
+function convertToolChoice(toolChoice: types.ClaudeToolChoice): types.OpenAIRequest['tool_choice'] {
+    if (toolChoice === 'auto') return 'auto'
+    if (toolChoice === 'any') return 'required'
+    if (toolChoice === 'none') return 'none'
+    if (typeof toolChoice === 'object' && toolChoice.type === 'tool') {
+        return { type: 'function', function: { name: toolChoice.name } }
+    }
+    return undefined
 }
 
 function toolResultToText(content: string | unknown): string {
@@ -107,44 +108,45 @@ function enqueueEvents(controller: ReadableStreamDefaultController, events: stri
     }
 }
 
-function errorToResponse(error: unknown): Response {
-    if (error instanceof OpenAI.APIError) {
-        const body = error.error ?? { error: { message: error.message, type: error.name } }
-        return jsonResponse(body, error.status ?? 500)
+// ponytail: OpenAI only sends `data:` lines; ignore event:/retry: fields
+function parseSseData(line: string): any | null {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('data:')) return null
+    const data = trimmed.slice(5).trim()
+    if (!data || data === '[DONE]') return null
+    return utils.safeJsonParse(data)
+}
+
+async function iterateSse(response: Response, onEvent: (event: any) => void): Promise<void> {
+    const reader = response.body?.getReader()
+    if (!reader) return
+    const decoder = new TextDecoder()
+    let buffer = ''
+    try {
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() ?? ''
+            for (const line of lines) {
+                const event = parseSseData(line)
+                if (event) onEvent(event)
+            }
+        }
+        const event = parseSseData(buffer)
+        if (event) onEvent(event)
+    } finally {
+        reader.releaseLock()
     }
-    console.error(error)
-    const message = error instanceof Error ? error.message : String(error)
-    return jsonResponse({ type: 'error', error: { type: 'api_error', message } }, 502)
 }
 
 export class ChatCompletionsProvider implements provider.Provider {
-    async handle(request: Request, baseUrl: string, apiKey: string): Promise<Response> {
-        const claudeRequest = (await request.json()) as types.ClaudeRequest
-        const openaiRequest = this.convertToOpenAIRequestBody(claudeRequest)
-        const client = createClient(apiKey, baseUrl)
-
-        try {
-            if (claudeRequest.stream) {
-                const stream = await client.chat.completions.create({
-                    ...openaiRequest,
-                    stream: true,
-                    stream_options: { include_usage: true }
-                } as ChatCompletionCreateParams)
-                return this.convertStreamResponse(stream as Stream<ChatCompletionChunk>)
-            }
-
-            const completion = await client.chat.completions.create({
-                ...openaiRequest,
-                stream: false
-            } as ChatCompletionCreateParams)
-            return this.convertNormalResponse(completion as ChatCompletion)
-        } catch (error) {
-            return errorToResponse(error)
-        }
-    }
+    private inputTokensEstimate = 0
 
     async convertToProviderRequest(request: Request, baseUrl: string, apiKey: string): Promise<Request> {
         const claudeRequest = (await request.json()) as types.ClaudeRequest
+        this.inputTokensEstimate = tokens.countTokensForRequest(claudeRequest).input_tokens
         const openaiRequest = this.convertToOpenAIRequestBody(claudeRequest)
         const finalUrl = utils.buildUrl(baseUrl, 'chat/completions')
 
@@ -163,12 +165,16 @@ export class ChatCompletionsProvider implements provider.Provider {
         if (!openaiResponse.ok) {
             return openaiResponse
         }
-        const openaiData = (await openaiResponse.json()) as ChatCompletion
+        const contentType = openaiResponse.headers.get('content-type') || ''
+        if (contentType.includes('text/event-stream')) {
+            return this.convertStreamResponse(openaiResponse)
+        }
+        const openaiData = (await openaiResponse.json()) as types.OpenAIResponse
         return this.convertNormalResponse(openaiData)
     }
 
-    private convertToOpenAIRequestBody(claudeRequest: types.ClaudeRequest): ChatCompletionCreateParams {
-        const openaiRequest: ChatCompletionCreateParams = {
+    private convertToOpenAIRequestBody(claudeRequest: types.ClaudeRequest): types.OpenAIRequest {
+        const openaiRequest: types.OpenAIRequest = {
             model: claudeRequest.model,
             messages: this.convertMessages(claudeRequest),
             stream: claudeRequest.stream ?? false
@@ -193,11 +199,23 @@ export class ChatCompletionsProvider implements provider.Provider {
             openaiRequest.max_tokens = claudeRequest.max_tokens
         }
 
+        if (claudeRequest.stream) {
+            openaiRequest.stream_options = { include_usage: true }
+        }
+
+        if (claudeRequest.stop_sequences && claudeRequest.stop_sequences.length > 0) {
+            openaiRequest.stop = claudeRequest.stop_sequences
+        }
+
+        if (claudeRequest.tool_choice !== undefined) {
+            openaiRequest.tool_choice = convertToolChoice(claudeRequest.tool_choice)
+        }
+
         return openaiRequest
     }
 
-    private convertMessages(claudeRequest: types.ClaudeRequest): ChatCompletionMessageParam[] {
-        const openaiMessages: ChatCompletionMessageParam[] = []
+    private convertMessages(claudeRequest: types.ClaudeRequest): types.OpenAIMessage[] {
+        const openaiMessages: types.OpenAIMessage[] = []
         const system = systemText(claudeRequest.system)
         if (system) {
             openaiMessages.push({ role: 'system', content: system })
@@ -213,7 +231,8 @@ export class ChatCompletionsProvider implements provider.Provider {
             }
 
             const textContents: string[] = []
-            const toolCalls: NonNullable<types.OpenAIMessage['tool_calls']> = []
+            const imageParts: types.OpenAIContentPart[] = []
+            const toolCalls: types.OpenAIToolCall[] = []
             const toolResults: Array<{ tool_call_id: string; content: string }> = []
 
             for (const content of message.content) {
@@ -221,6 +240,11 @@ export class ChatCompletionsProvider implements provider.Provider {
                     case 'text':
                         textContents.push(content.text)
                         break
+                    case 'image': {
+                        const url = imageSourceToUrl(content.source)
+                        if (url) imageParts.push({ type: 'image_url', image_url: { url } })
+                        break
+                    }
                     case 'tool_use':
                         toolCalls.push({
                             id: content.id,
@@ -240,12 +264,20 @@ export class ChatCompletionsProvider implements provider.Provider {
                 }
             }
 
-            if (textContents.length > 0 || toolCalls.length > 0) {
+            if (imageParts.length > 0) {
+                const content: types.OpenAIContentPart[] = []
+                if (textContents.length > 0) content.push({ type: 'text', text: textContents.join('\n') })
+                content.push(...imageParts)
+                openaiMessages.push({
+                    role: message.role === 'assistant' ? 'assistant' : 'user',
+                    content
+                })
+            } else if (textContents.length > 0 || toolCalls.length > 0) {
                 openaiMessages.push({
                     role: message.role === 'assistant' ? 'assistant' : 'user',
                     content: textContents.length > 0 ? textContents.join('\n') : null,
                     tool_calls: toolCalls.length > 0 ? toolCalls : undefined
-                } as ChatCompletionMessageParam)
+                })
             }
 
             for (const toolResult of toolResults) {
@@ -260,7 +292,7 @@ export class ChatCompletionsProvider implements provider.Provider {
         return openaiMessages
     }
 
-    private convertNormalResponse(openaiData: ChatCompletion): Response {
+    private convertNormalResponse(openaiData: types.OpenAIResponse): Response {
         const claudeResponse: types.ClaudeResponse = {
             id: openaiData.id || utils.generateId(),
             type: 'message',
@@ -273,8 +305,14 @@ export class ChatCompletionsProvider implements provider.Provider {
             const choice = openaiData.choices[0]
             const message = choice.message
 
-            if (message.content) {
+            if (typeof message.content === 'string' && message.content) {
                 claudeResponse.content.push({ type: 'text', text: message.content })
+            } else if (Array.isArray(message.content)) {
+                for (const part of message.content) {
+                    if (part.type === 'text') {
+                        claudeResponse.content.push({ type: 'text', text: part.text })
+                    }
+                }
             }
 
             if (message.tool_calls) {
@@ -296,33 +334,41 @@ export class ChatCompletionsProvider implements provider.Provider {
             claudeResponse.usage = {
                 input_tokens: openaiData.usage.prompt_tokens,
                 output_tokens: openaiData.usage.completion_tokens,
-                cache_read_input_tokens: openaiData.usage.prompt_tokens_details?.cached_tokens
+                cache_read_input_tokens: openaiData.usage.prompt_tokens_details?.cached_tokens,
+                cache_creation_input_tokens: openaiData.usage.cache_creation_input_tokens
             }
         }
 
         return jsonResponse(claudeResponse, 200)
     }
 
-    private convertStreamResponse(openaiStream: Stream<ChatCompletionChunk>): Response {
+    private convertStreamResponse(openaiResponse: Response): Response {
+        const inputTokensEstimate = this.inputTokensEstimate
         const stream = new ReadableStream({
             async start(controller) {
                 const state = initStreamState()
-                const toolCallState = new Map<number, { id?: string; name?: string; args: string }>()
+                const toolCallState = new Map<
+                    number,
+                    { id?: string; name?: string; args: string; blockIndex: number }
+                >()
 
-                utils.sendMessageStart(controller)
+                utils.sendMessageStart(controller, {
+                    input_tokens: inputTokensEstimate,
+                    output_tokens: 0
+                })
 
-                let errored = false
                 try {
-                    for await (const chunk of openaiStream) {
+                    await iterateSse(openaiResponse, (chunk: types.OpenAIStreamResponse) => {
                         if (chunk.usage) {
                             state.usage = {
-                                input_tokens: chunk.usage.prompt_tokens,
-                                output_tokens: chunk.usage.completion_tokens,
-                                cache_read_input_tokens: chunk.usage.prompt_tokens_details?.cached_tokens
+                                input_tokens: chunk.usage.prompt_tokens ?? 0,
+                                output_tokens: chunk.usage.completion_tokens ?? 0,
+                                cache_read_input_tokens: chunk.usage.prompt_tokens_details?.cached_tokens,
+                                cache_creation_input_tokens: chunk.usage.cache_creation_input_tokens
                             }
                         }
 
-                        if (!chunk.choices || chunk.choices.length === 0) continue
+                        if (!chunk.choices || chunk.choices.length === 0) return
 
                         const choice = chunk.choices[0]
                         const delta = choice.delta
@@ -334,26 +380,36 @@ export class ChatCompletionsProvider implements provider.Provider {
                         }
 
                         if (delta.tool_calls) {
+                            closeTextBlockIfNeeded(events, state)
                             for (const toolCall of delta.tool_calls) {
-                                const stateForTool = toolCallState.get(toolCall.index) ?? { args: '' }
-                                stateForTool.id = toolCall.id ?? stateForTool.id
-                                stateForTool.name = toolCall.function?.name ?? stateForTool.name
-                                stateForTool.args += toolCall.function?.arguments ?? ''
-                                toolCallState.set(toolCall.index, stateForTool)
+                                const existing = toolCallState.get(toolCall.index)
+                                if (existing) {
+                                    if (toolCall.id) existing.id = toolCall.id
+                                    if (toolCall.function?.name) existing.name = toolCall.function.name
+                                    if (toolCall.function?.arguments) {
+                                        existing.args += toolCall.function.arguments
+                                        events.push(
+                                            utils.inputJsonDelta(existing.blockIndex, toolCall.function.arguments)
+                                        )
+                                    }
+                                } else {
+                                    const name = toolCall.function?.name
+                                    if (!name && !toolCall.id) continue
+                                    const id = toolCall.id || utils.generateId()
+                                    const blockIndex = state.toolUseBlockIndex++
+                                    toolCallState.set(toolCall.index, { id, name, args: '', blockIndex })
+                                    events.push(utils.startToolUseBlock(blockIndex, id, name || 'unknown'))
+                                    if (toolCall.function?.arguments) {
+                                        events.push(utils.inputJsonDelta(blockIndex, toolCall.function.arguments))
+                                    }
+                                }
                             }
                         }
 
                         if (choice.finish_reason === 'tool_calls' || choice.finish_reason === 'function_call') {
                             closeTextBlockIfNeeded(events, state)
                             for (const [, toolCall] of [...toolCallState].sort(([a], [b]) => a - b)) {
-                                if (!toolCall.name) continue
-                                events.push(
-                                    ...utils.processToolUsePart(
-                                        { name: toolCall.name, args: parseToolArguments(toolCall.args) },
-                                        state.toolUseBlockIndex
-                                    )
-                                )
-                                state.toolUseBlockIndex++
+                                events.push(utils.stopContentBlock(toolCall.blockIndex))
                             }
                             state.stopReason = 'tool_use'
                         } else if (choice.finish_reason) {
@@ -362,22 +418,22 @@ export class ChatCompletionsProvider implements provider.Provider {
                         }
 
                         enqueueEvents(controller, events)
+                    })
+
+                    const events: string[] = []
+                    closeTextBlockIfNeeded(events, state)
+                    for (const [, toolCall] of [...toolCallState].sort(([a], [b]) => a - b)) {
+                        events.push(utils.stopContentBlock(toolCall.blockIndex))
                     }
+                    if (toolCallState.size > 0) state.stopReason = 'tool_use'
+                    enqueueEvents(controller, events)
+                    utils.sendMessageDelta(controller, state.stopReason, state.usage)
+                    utils.sendMessageStop(controller)
                 } catch (error) {
-                    errored = true
                     console.error(error)
                     utils.sendErrorEvent(controller, error instanceof Error ? error.message : String(error))
-                    controller.close()
-                    return
                 } finally {
-                    if (!errored) {
-                        const events: string[] = []
-                        closeTextBlockIfNeeded(events, state)
-                        enqueueEvents(controller, events)
-                        utils.sendMessageDelta(controller, state.stopReason, state.usage)
-                        utils.sendMessageStop(controller)
-                        controller.close()
-                    }
+                    controller.close()
                 }
             }
         })
@@ -387,32 +443,11 @@ export class ChatCompletionsProvider implements provider.Provider {
 }
 
 export class ResponsesProvider implements provider.Provider {
-    async handle(request: Request, baseUrl: string, apiKey: string): Promise<Response> {
-        const claudeRequest = (await request.json()) as types.ClaudeRequest
-        const openaiRequest = this.convertToResponsesRequestBody(claudeRequest)
-        const client = createClient(apiKey, baseUrl)
-
-        try {
-            if (claudeRequest.stream) {
-                const stream = await client.responses.create({
-                    ...openaiRequest,
-                    stream: true
-                } as ResponseCreateParams)
-                return this.convertStreamResponse(stream as Stream<ResponseStreamEvent>)
-            }
-
-            const response = await client.responses.create({
-                ...openaiRequest,
-                stream: false
-            } as ResponseCreateParams)
-            return this.convertNormalResponse(response as OpenAIResponse)
-        } catch (error) {
-            return errorToResponse(error)
-        }
-    }
+    private inputTokensEstimate = 0
 
     async convertToProviderRequest(request: Request, baseUrl: string, apiKey: string): Promise<Request> {
         const claudeRequest = (await request.json()) as types.ClaudeRequest
+        this.inputTokensEstimate = tokens.countTokensForRequest(claudeRequest).input_tokens
         const openaiRequest = this.convertToResponsesRequestBody(claudeRequest)
         const finalUrl = utils.buildUrl(baseUrl, 'responses')
 
@@ -431,12 +466,16 @@ export class ResponsesProvider implements provider.Provider {
         if (!openaiResponse.ok) {
             return openaiResponse
         }
-        const openaiData = (await openaiResponse.json()) as OpenAIResponse
+        const contentType = openaiResponse.headers.get('content-type') || ''
+        if (contentType.includes('text/event-stream')) {
+            return this.convertStreamResponse(openaiResponse)
+        }
+        const openaiData = (await openaiResponse.json()) as types.OpenAIResponsesResponse
         return this.convertNormalResponse(openaiData)
     }
 
-    private convertToResponsesRequestBody(claudeRequest: types.ClaudeRequest): ResponseCreateParams {
-        const openaiRequest: ResponseCreateParams = {
+    private convertToResponsesRequestBody(claudeRequest: types.ClaudeRequest): types.OpenAIResponsesRequest {
+        const openaiRequest: types.OpenAIResponsesRequest = {
             model: claudeRequest.model,
             input: this.convertInput(claudeRequest.messages),
             stream: claudeRequest.stream ?? false
@@ -453,7 +492,7 @@ export class ResponsesProvider implements provider.Provider {
                 name: tool.name,
                 description: tool.description,
                 parameters: utils.cleanJsonSchema(tool.input_schema)
-            })) as FunctionTool[]
+            }))
         }
 
         if (claudeRequest.temperature !== undefined) {
@@ -467,8 +506,8 @@ export class ResponsesProvider implements provider.Provider {
         return openaiRequest
     }
 
-    private convertInput(messages: types.ClaudeMessage[]): ResponseInputItem[] {
-        const input: ResponseInputItem[] = []
+    private convertInput(messages: types.ClaudeMessage[]): types.OpenAIResponsesInputItem[] {
+        const input: types.OpenAIResponsesInputItem[] = []
 
         for (const message of messages) {
             if (typeof message.content === 'string') {
@@ -481,22 +520,34 @@ export class ResponsesProvider implements provider.Provider {
                             text: message.content
                         }
                     ]
-                } as ResponseInputItem)
+                })
                 continue
             }
 
             const text = contentToText(message.content)
+            const contentParts: types.OpenAIResponsesContentPart[] = []
             if (text) {
+                contentParts.push({
+                    type: message.role === 'assistant' ? 'output_text' : 'input_text',
+                    text
+                })
+            }
+
+            for (const content of message.content) {
+                if (content.type === 'image') {
+                    const url = imageSourceToUrl(content.source)
+                    if (url) {
+                        contentParts.push({ type: 'input_image', image_url: url })
+                    }
+                }
+            }
+
+            if (contentParts.length > 0) {
                 input.push({
                     type: 'message',
                     role: message.role,
-                    content: [
-                        {
-                            type: message.role === 'assistant' ? 'output_text' : 'input_text',
-                            text
-                        }
-                    ]
-                } as ResponseInputItem)
+                    content: contentParts
+                })
             }
 
             for (const content of message.content) {
@@ -506,13 +557,13 @@ export class ResponsesProvider implements provider.Provider {
                         call_id: content.id,
                         name: content.name,
                         arguments: JSON.stringify(content.input)
-                    } as ResponseInputItem)
+                    })
                 } else if (content.type === 'tool_result') {
                     input.push({
                         type: 'function_call_output',
                         call_id: content.tool_use_id,
                         output: toolResultToText(content.content)
-                    } as ResponseInputItem)
+                    })
                 }
             }
         }
@@ -520,7 +571,7 @@ export class ResponsesProvider implements provider.Provider {
         return input
     }
 
-    private convertNormalResponse(openaiData: OpenAIResponse): Response {
+    private convertNormalResponse(openaiData: types.OpenAIResponsesResponse): Response {
         const claudeResponse: types.ClaudeResponse = {
             id: openaiData.id || utils.generateId(),
             type: 'message',
@@ -532,19 +583,17 @@ export class ResponsesProvider implements provider.Provider {
 
         for (const output of openaiData.output ?? []) {
             if (output.type === 'message') {
-                const message = output as ResponseOutputMessage
-                for (const content of message.content ?? []) {
+                for (const content of output.content ?? []) {
                     if (content.type === 'output_text') {
                         claudeResponse.content.push({ type: 'text', text: content.text })
                     }
                 }
             } else if (output.type === 'function_call') {
-                const toolCall = output as ResponseFunctionToolCall
                 claudeResponse.content.push({
                     type: 'tool_use',
-                    id: toolCall.call_id,
-                    name: toolCall.name,
-                    input: parseToolArguments(toolCall.arguments)
+                    id: output.call_id,
+                    name: output.name,
+                    input: parseToolArguments(output.arguments)
                 })
                 claudeResponse.stop_reason = 'tool_use'
             }
@@ -562,24 +611,28 @@ export class ResponsesProvider implements provider.Provider {
             claudeResponse.usage = {
                 input_tokens: openaiData.usage.input_tokens ?? 0,
                 output_tokens: openaiData.usage.output_tokens ?? 0,
-                cache_read_input_tokens: openaiData.usage.input_tokens_details?.cached_tokens
+                cache_read_input_tokens: openaiData.usage.input_tokens_details?.cached_tokens,
+                cache_creation_input_tokens: openaiData.usage.cache_creation_input_tokens
             }
         }
 
         return jsonResponse(claudeResponse, 200)
     }
 
-    private convertStreamResponse(openaiStream: Stream<ResponseStreamEvent>): Response {
+    private convertStreamResponse(openaiResponse: Response): Response {
+        const inputTokensEstimate = this.inputTokensEstimate
         const stream = new ReadableStream({
             async start(controller) {
                 const state = initStreamState()
                 const functionCalls = new Map<number, { name?: string; callId?: string; args: string }>()
 
-                utils.sendMessageStart(controller)
+                utils.sendMessageStart(controller, {
+                    input_tokens: inputTokensEstimate,
+                    output_tokens: 0
+                })
 
-                let errored = false
                 try {
-                    for await (const event of openaiStream) {
+                    await iterateSse(openaiResponse, (event: ResponsesStreamEvent) => {
                         const events: string[] = []
 
                         switch (event.type) {
@@ -591,29 +644,29 @@ export class ResponsesProvider implements provider.Provider {
                                 break
                             case 'response.output_item.added':
                                 if (event.item?.type === 'function_call') {
-                                    const item = event.item as ResponseFunctionToolCall
                                     const index = event.output_index ?? functionCalls.size
                                     functionCalls.set(index, {
-                                        name: item.name,
-                                        callId: item.call_id,
-                                        args: item.arguments ?? ''
+                                        name: event.item.name,
+                                        callId: event.item.call_id,
+                                        args: event.item.arguments ?? ''
                                     })
                                 }
                                 break
                             case 'response.function_call_arguments.delta': {
-                                const call = functionCalls.get(event.output_index) ?? { args: '' }
+                                const index = event.output_index ?? 0
+                                const call = functionCalls.get(index) ?? { args: '' }
                                 call.args += event.delta ?? ''
-                                functionCalls.set(event.output_index, call)
+                                functionCalls.set(index, call)
                                 break
                             }
                             case 'response.output_item.done':
                                 if (event.item?.type === 'function_call') {
                                     closeTextBlockIfNeeded(events, state)
-                                    const item = event.item as ResponseFunctionToolCall
-                                    const call = functionCalls.get(event.output_index) ?? { args: '' }
-                                    call.name = item.name ?? call.name
-                                    call.callId = item.call_id ?? call.callId
-                                    call.args = item.arguments ?? call.args
+                                    const index = event.output_index ?? 0
+                                    const call = functionCalls.get(index) ?? { args: '' }
+                                    call.name = event.item.name ?? call.name
+                                    call.callId = event.item.call_id ?? call.callId
+                                    call.args = event.item.arguments ?? call.args
                                     if (call.name) {
                                         events.push(
                                             ...utils.processToolUsePart(
@@ -628,62 +681,51 @@ export class ResponsesProvider implements provider.Provider {
                                 break
                             case 'response.completed':
                                 closeTextBlockIfNeeded(events, state)
-                                state.stopReason = stopReasonFromResponseStatus(event.response.status)
-                                if (event.response.usage) {
+                                state.stopReason = stopReasonFromResponseStatus(event.response?.status)
+                                if (event.response?.usage) {
                                     state.usage = {
                                         input_tokens: event.response.usage.input_tokens ?? 0,
                                         output_tokens: event.response.usage.output_tokens ?? 0,
                                         cache_read_input_tokens:
-                                            event.response.usage.input_tokens_details?.cached_tokens
+                                            event.response.usage.input_tokens_details?.cached_tokens,
+                                        cache_creation_input_tokens: event.response.usage.cache_creation_input_tokens
                                     }
                                 }
                                 break
                             case 'response.incomplete':
                                 closeTextBlockIfNeeded(events, state)
                                 state.stopReason = 'max_tokens'
-                                if (event.response.usage) {
+                                if (event.response?.usage) {
                                     state.usage = {
                                         input_tokens: event.response.usage.input_tokens ?? 0,
                                         output_tokens: event.response.usage.output_tokens ?? 0,
                                         cache_read_input_tokens:
-                                            event.response.usage.input_tokens_details?.cached_tokens
+                                            event.response.usage.input_tokens_details?.cached_tokens,
+                                        cache_creation_input_tokens: event.response.usage.cache_creation_input_tokens
                                     }
                                 }
                                 break
                         }
 
                         enqueueEvents(controller, events)
-                    }
+                    })
+
+                    const events: string[] = []
+                    closeTextBlockIfNeeded(events, state)
+                    enqueueEvents(controller, events)
+                    utils.sendMessageDelta(controller, state.stopReason, state.usage)
+                    utils.sendMessageStop(controller)
                 } catch (error) {
-                    errored = true
                     console.error(error)
                     utils.sendErrorEvent(controller, error instanceof Error ? error.message : String(error))
-                    controller.close()
-                    return
                 } finally {
-                    if (!errored) {
-                        const events: string[] = []
-                        closeTextBlockIfNeeded(events, state)
-                        enqueueEvents(controller, events)
-                        utils.sendMessageDelta(controller, state.stopReason, state.usage)
-                        utils.sendMessageStop(controller)
-                        controller.close()
-                    }
+                    controller.close()
                 }
             }
         })
 
         return streamResponse(stream)
     }
-}
-
-export { ChatCompletionsProvider as impl }
-
-function jsonResponse(body: unknown, status: number): Response {
-    return new Response(JSON.stringify(body), {
-        status,
-        headers: { 'Content-Type': 'application/json' }
-    })
 }
 
 function streamResponse(stream: ReadableStream): Response {

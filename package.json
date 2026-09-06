@@ -11,8 +11,5 @@
         "prettier": "^3.6.2",
         "typescript": "^5.5.2",
         "wrangler": "^4.21.0"
-    },
-    "dependencies": {
-        "openai": "^6.45.0"
     }
 }

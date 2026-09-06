@@ -109,17 +109,35 @@ function extractText(payload: any): string {
 
     push(payload.response)
     push(payload.text)
+
+    const choices = payload.choices
+    if (Array.isArray(choices)) {
+        for (const choice of choices) {
+            push(choice?.delta?.content)
+            push(choice?.message?.content)
+        }
+    }
+
+    return parts.join('')
+}
+
+function extractReasoning(payload: any): string {
+    if (payload == null) return ''
+    const parts: string[] = []
+    const push = (v: any) => {
+        if (typeof v === 'string' && v.length > 0) parts.push(v)
+    }
+
     push(payload.reasoning_content)
     push(payload.reasoning)
 
     const choices = payload.choices
     if (Array.isArray(choices)) {
         for (const choice of choices) {
-            push(choice?.delta?.content)
             push(choice?.delta?.reasoning_content)
             push(choice?.delta?.reasoning)
-            push(choice?.message?.content)
             push(choice?.message?.reasoning_content)
+            push(choice?.message?.reasoning)
         }
     }
 
@@ -274,6 +292,7 @@ export class WorkersAIProvider {
         inputEstimate: number
     ): Promise<Response> {
         let text = ''
+        let reasoning = ''
         const toolCalls = new Map<number, any>()
         let stopReason: any = 'end_turn'
         let realPrompt: number | null = null
@@ -292,6 +311,7 @@ export class WorkersAIProvider {
                     const payload = this.parseSsePayload(line)
                     if (!payload) continue
                     text += extractText(payload)
+                    reasoning += extractReasoning(payload)
                     collectToolCalls(payload, toolCalls)
                     const usage = extractUsage(payload)
                     if (usage.prompt != null) realPrompt = usage.prompt
@@ -304,6 +324,7 @@ export class WorkersAIProvider {
                 const payload = this.parseSsePayload(buffer)
                 if (payload) {
                     text += extractText(payload)
+                    reasoning += extractReasoning(payload)
                     collectToolCalls(payload, toolCalls)
                     const usage = extractUsage(payload)
                     if (usage.prompt != null) realPrompt = usage.prompt
@@ -319,6 +340,7 @@ export class WorkersAIProvider {
         }
 
         const content: any[] = []
+        if (reasoning) content.push({ type: 'thinking', thinking: reasoning })
         if (text) content.push({ type: 'text', text })
 
         const calls = [...toolCalls.entries()].sort(([a], [b]) => a - b)
@@ -344,7 +366,7 @@ export class WorkersAIProvider {
                 stop_sequence: null,
                 usage: {
                     input_tokens: realPrompt ?? inputEstimate,
-                    output_tokens: realCompletion ?? estimateTokens(text)
+                    output_tokens: realCompletion ?? estimateTokens(text + reasoning)
                 }
             }),
             { status: 200, headers: { 'content-type': 'application/json' } }
@@ -366,7 +388,9 @@ export class WorkersAIProvider {
     private handleStreaming(source: ReadableStream, model: string, id: string, inputEstimate: number): Response {
         const state = {
             text: '',
+            reasoning: '',
             textBlockOpen: false,
+            thinkingBlockOpen: false,
             blockIndex: 0,
             toolCalls: new Map<number, any>(),
             toolBlocksEmitted: 0,
@@ -399,8 +423,47 @@ export class WorkersAIProvider {
             state.textBlockOpen = false
         }
 
+        const closeThinkingBlock = (controller: TransformStreamDefaultController) => {
+            if (!state.thinkingBlockOpen) return
+            controller.enqueue(
+                encoder.encode(sse('content_block_stop', { type: 'content_block_stop', index: state.blockIndex }))
+            )
+            state.blockIndex++
+            state.thinkingBlockOpen = false
+        }
+
+        const openThinkingBlock = (controller: TransformStreamDefaultController) => {
+            if (state.thinkingBlockOpen) return
+            closeTextBlock(controller)
+            controller.enqueue(
+                encoder.encode(
+                    sse('content_block_start', {
+                        type: 'content_block_start',
+                        index: state.blockIndex,
+                        content_block: { type: 'thinking', thinking: '' }
+                    })
+                )
+            )
+            state.thinkingBlockOpen = true
+        }
+
+        const emitReasoning = (controller: TransformStreamDefaultController, token: string) => {
+            state.reasoning += token
+            openThinkingBlock(controller)
+            controller.enqueue(
+                encoder.encode(
+                    sse('content_block_delta', {
+                        type: 'content_block_delta',
+                        index: state.blockIndex,
+                        delta: { type: 'thinking_delta', thinking: token }
+                    })
+                )
+            )
+        }
+
         const emitText = (controller: TransformStreamDefaultController, token: string) => {
             state.text += token
+            closeThinkingBlock(controller)
             openTextBlock(controller)
             controller.enqueue(
                 encoder.encode(
@@ -415,6 +478,7 @@ export class WorkersAIProvider {
 
         const emitToolCalls = (controller: TransformStreamDefaultController) => {
             closeTextBlock(controller)
+            closeThinkingBlock(controller)
             const calls = [...state.toolCalls.entries()].sort(([a], [b]) => a - b)
             let emitted = 0
             for (let i = state.toolBlocksEmitted; i < calls.length; i++) {
@@ -455,6 +519,8 @@ export class WorkersAIProvider {
         const processLine = (controller: TransformStreamDefaultController, line: string) => {
             const payload = this.parseSsePayload(line)
             if (!payload) return
+            const reasoning = extractReasoning(payload)
+            if (reasoning) emitReasoning(controller, reasoning)
             const token = extractText(payload)
             if (token) emitText(controller, token)
             collectToolCalls(payload, state.toolCalls)
@@ -504,6 +570,7 @@ export class WorkersAIProvider {
                     emitToolCalls(controller)
                 } else {
                     closeTextBlock(controller)
+                    closeThinkingBlock(controller)
                 }
 
                 controller.enqueue(
@@ -513,7 +580,7 @@ export class WorkersAIProvider {
                             delta: { stop_reason: state.stopReason, stop_sequence: null },
                             usage: {
                                 input_tokens: state.realPrompt ?? inputEstimate,
-                                output_tokens: state.realCompletion ?? estimateTokens(state.text)
+                                output_tokens: state.realCompletion ?? estimateTokens(state.text + state.reasoning)
                             }
                         })
                     )
