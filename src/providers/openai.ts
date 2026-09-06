@@ -3,6 +3,7 @@ import * as provider from '../provider'
 import * as utils from '../utils'
 import * as tokens from '../tokens'
 import * as reasoning from '../reasoning'
+import * as toolChoice from '../tool-choice'
 import { jsonResponse } from '../errors'
 
 type ClaudeStreamState = {
@@ -47,16 +48,6 @@ function imageSourceToUrl(source: types.ClaudeImageSource): string | undefined {
 
 function documentToText(source: types.ClaudeDocumentSource): string | undefined {
     if (source.type === 'text') return source.text
-    return undefined
-}
-
-function convertToolChoice(toolChoice: types.ClaudeToolChoice): types.OpenAIRequest['tool_choice'] {
-    if (toolChoice === 'auto') return 'auto'
-    if (toolChoice === 'any') return 'required'
-    if (toolChoice === 'none') return 'none'
-    if (typeof toolChoice === 'object' && toolChoice.type === 'tool') {
-        return { type: 'function', function: { name: toolChoice.name } }
-    }
     return undefined
 }
 
@@ -214,7 +205,7 @@ export class ChatCompletionsProvider implements provider.Provider {
         }
 
         if (claudeRequest.tool_choice !== undefined) {
-            openaiRequest.tool_choice = convertToolChoice(claudeRequest.tool_choice)
+            openaiRequest.tool_choice = toolChoice.toOpenAIChatToolChoice(claudeRequest.tool_choice)
         }
 
         if (claudeRequest.reasoning_effort !== undefined) {
@@ -521,6 +512,10 @@ export class ResponsesProvider implements provider.Provider {
 
         if (claudeRequest.reasoning_effort !== undefined) {
             openaiRequest.reasoning = { effort: claudeRequest.reasoning_effort }
+        }
+
+        if (claudeRequest.tool_choice !== undefined) {
+            openaiRequest.tool_choice = toolChoice.toOpenAIResponsesToolChoice(claudeRequest.tool_choice)
         }
 
         return openaiRequest

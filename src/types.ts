@@ -114,6 +114,9 @@ export interface GeminiRequest {
     contents: GeminiContent[]
     systemInstruction?: GeminiContent
     tools?: GeminiTool[]
+    toolConfig?: {
+        functionCallingConfig: { mode: 'AUTO' | 'ANY' | 'NONE'; allowedFunctionNames?: string[] }
+    }
     generationConfig?: {
         temperature?: number
         maxOutputTokens?: number
@@ -186,6 +189,7 @@ export interface OpenAIResponsesRequest {
     input: OpenAIResponsesInputItem[]
     instructions?: string
     tools?: OpenAIResponsesTool[]
+    tool_choice?: 'auto' | 'required' | 'none' | { type: 'function'; function: { name: string } }
     temperature?: number
     max_output_tokens?: number
     stream?: boolean

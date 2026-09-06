@@ -8,7 +8,8 @@
         "check": "wrangler types && tsc --noEmit && prettier --check .",
         "check:hermes": "tsc src/hermes.ts --outDir .tmp-check --module es2022 --target es2022 --skipLibCheck && node scripts/hermes-check.mjs",
         "check:blocks": "tsc src/types.ts src/tokens.ts --outDir .tmp-check --module es2022 --target es2022 --skipLibCheck && node scripts/blocks-check.mjs",
-        "check:reasoning": "tsc src/types.ts src/reasoning.ts --outDir .tmp-check --module es2022 --target es2022 --skipLibCheck && node scripts/reasoning-check.mjs"
+        "check:reasoning": "tsc src/types.ts src/reasoning.ts --outDir .tmp-check --module es2022 --target es2022 --skipLibCheck && node scripts/reasoning-check.mjs",
+        "check:tool-choice": "tsc src/types.ts src/tool-choice.ts --outDir .tmp-check --module es2022 --target es2022 --skipLibCheck && node scripts/tool-choice-check.mjs"
     },
     "devDependencies": {
         "@types/node": "^26.4.1",

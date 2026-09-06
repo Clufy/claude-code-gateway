@@ -3,6 +3,7 @@ import * as provider from '../provider'
 import * as utils from '../utils'
 import * as tokens from '../tokens'
 import * as reasoning from '../reasoning'
+import * as toolChoice from '../tool-choice'
 
 export class impl implements provider.Provider {
     private inputTokensEstimate = 0
@@ -65,6 +66,10 @@ export class impl implements provider.Provider {
                     }))
                 }
             ]
+        }
+
+        if (claudeRequest.tool_choice !== undefined) {
+            geminiRequest.toolConfig = toolChoice.toGeminiToolConfig(claudeRequest.tool_choice)
         }
 
         if (
