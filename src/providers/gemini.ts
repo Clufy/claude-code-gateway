@@ -125,6 +125,16 @@ export class impl implements provider.Provider {
         return undefined
     }
 
+    private documentPart(source: types.ClaudeDocumentSource): types.GeminiPart | undefined {
+        if (source.type === 'base64' && source.media_type === 'application/pdf') {
+            return { inlineData: { mimeType: source.media_type, data: source.data } }
+        }
+        if (source.type === 'text') {
+            return { text: source.text }
+        }
+        return undefined
+    }
+
     private convertMessages(messages: types.ClaudeMessage[], toolUseMap: Map<string, string>): types.GeminiContent[] {
         const contents: types.GeminiContent[] = []
 
@@ -139,6 +149,7 @@ export class impl implements provider.Provider {
 
             const textParts: types.GeminiPart[] = []
             const imageParts: types.GeminiPart[] = []
+            const documentParts: types.GeminiPart[] = []
             const toolUseParts: types.GeminiPart[] = []
             const toolResultParts: types.GeminiPart[] = []
 
@@ -150,6 +161,11 @@ export class impl implements provider.Provider {
                     case 'image': {
                         const part = this.imagePart(content.source)
                         if (part) imageParts.push(part)
+                        break
+                    }
+                    case 'document': {
+                        const part = this.documentPart(content.source)
+                        if (part) documentParts.push(part)
                         break
                     }
                     case 'tool_use':
@@ -172,11 +188,12 @@ export class impl implements provider.Provider {
                         }
                         break
                 }
+                // thinking / redacted_thinking / cache_control are silently dropped
             }
 
-            if (textParts.length > 0 || imageParts.length > 0 || toolUseParts.length > 0) {
+            if (textParts.length > 0 || imageParts.length > 0 || documentParts.length > 0 || toolUseParts.length > 0) {
                 contents.push({
-                    parts: [...textParts, ...imageParts, ...toolUseParts],
+                    parts: [...textParts, ...imageParts, ...documentParts, ...toolUseParts],
                     role: message.role === 'assistant' ? 'model' : 'user'
                 })
             }

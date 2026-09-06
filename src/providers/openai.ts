@@ -44,6 +44,11 @@ function imageSourceToUrl(source: types.ClaudeImageSource): string | undefined {
     return `data:${source.media_type};base64,${source.data}`
 }
 
+function documentToText(source: types.ClaudeDocumentSource): string | undefined {
+    if (source.type === 'text') return source.text
+    return undefined
+}
+
 function convertToolChoice(toolChoice: types.ClaudeToolChoice): types.OpenAIRequest['tool_choice'] {
     if (toolChoice === 'auto') return 'auto'
     if (toolChoice === 'any') return 'required'
@@ -245,6 +250,11 @@ export class ChatCompletionsProvider implements provider.Provider {
                         if (url) imageParts.push({ type: 'image_url', image_url: { url } })
                         break
                     }
+                    case 'document': {
+                        const text = documentToText(content.source)
+                        if (text) textContents.push(text)
+                        break
+                    }
                     case 'tool_use':
                         toolCalls.push({
                             id: content.id,
@@ -262,6 +272,7 @@ export class ChatCompletionsProvider implements provider.Provider {
                         })
                         break
                 }
+                // thinking / redacted_thinking / cache_control are silently dropped
             }
 
             if (imageParts.length > 0) {
@@ -539,7 +550,13 @@ export class ResponsesProvider implements provider.Provider {
                     if (url) {
                         contentParts.push({ type: 'input_image', image_url: url })
                     }
+                } else if (content.type === 'document') {
+                    const text = documentToText(content.source)
+                    if (text) {
+                        contentParts.push({ type: 'input_text', text })
+                    }
                 }
+                // thinking / redacted_thinking / cache_control are silently dropped
             }
 
             if (contentParts.length > 0) {

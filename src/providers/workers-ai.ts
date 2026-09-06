@@ -50,6 +50,27 @@ function convertTools(tools: any): any {
         }))
 }
 
+function imagePart(source: any): any | undefined {
+    if (source?.type === 'base64') {
+        return { type: 'image', source: { type: 'base64', media_type: source.media_type, data: source.data } }
+    }
+    if (source?.type === 'url') {
+        return { type: 'image', source: { type: 'url', url: source.url } }
+    }
+    return undefined
+}
+
+function documentPart(source: any): any | undefined {
+    if (source?.type === 'text') {
+        return { type: 'text', text: source.text }
+    }
+    // ponytail: Workers AI document input is spotty; fall back to text placeholder for base64/url PDFs
+    if (source?.type === 'base64' || source?.type === 'url') {
+        return { type: 'text', text: `[document${source.type === 'base64' ? `: ${source.media_type}` : ''}]` }
+    }
+    return undefined
+}
+
 function convertMessages(messages: any[]): any[] {
     const out: any[] = []
     for (const message of messages) {
@@ -63,13 +84,19 @@ function convertMessages(messages: any[]): any[] {
             continue
         }
 
-        const textParts: string[] = []
+        const contentParts: any[] = []
         const toolCalls: any[] = []
         const toolResults: any[] = []
 
         for (const part of message.content) {
             if (part.type === 'text') {
-                textParts.push(part.text ?? '')
+                contentParts.push({ type: 'text', text: part.text ?? '' })
+            } else if (part.type === 'image') {
+                const img = imagePart(part.source)
+                if (img) contentParts.push(img)
+            } else if (part.type === 'document') {
+                const doc = documentPart(part.source)
+                if (doc) contentParts.push(doc)
             } else if (part.type === 'tool_use') {
                 toolCalls.push({
                     id: part.id,
@@ -85,12 +112,21 @@ function convertMessages(messages: any[]): any[] {
                     content: toolResultToText(part.content)
                 })
             }
+            // thinking / redacted_thinking / cache_control are dropped on user turns
         }
 
-        if (textParts.length > 0 || toolCalls.length > 0) {
+        // ponytail: Workers AI chat models accept either a string or an array of content parts.
+        // If the only part is text, keep the simple string form for broader compatibility.
+        if (contentParts.length > 0 || toolCalls.length > 0) {
+            const onlyText = contentParts.length > 0 && contentParts.every((p) => p.type === 'text')
             out.push({
                 role,
-                content: textParts.length > 0 ? textParts.join('\n') : '',
+                content:
+                    onlyText && toolCalls.length === 0
+                        ? contentParts.map((p) => p.text).join('\n')
+                        : contentParts.length > 0
+                          ? contentParts
+                          : '',
                 ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
             })
         }

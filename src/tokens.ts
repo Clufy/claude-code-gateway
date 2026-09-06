@@ -24,6 +24,18 @@ export function countTokensForRequest(body: any): { input_tokens: number } {
                     case 'text':
                         parts.push(content.text)
                         break
+                    case 'document':
+                        // ponytail: rough estimate; provider counters would be better
+                        parts.push(content.title ?? '')
+                        if (content.source?.type === 'text') parts.push(content.source.text)
+                        else if (content.source?.type === 'base64') parts.push(content.source.data)
+                        break
+                    case 'image':
+                        // ponytail: images cost tokens; use base64 length as a coarse proxy
+                        parts.push(
+                            content.source?.type === 'base64' ? content.source.data : (content.source?.url ?? '')
+                        )
+                        break
                     case 'tool_use':
                         parts.push(content.name)
                         parts.push(JSON.stringify(content.input ?? {}))

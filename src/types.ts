@@ -18,11 +18,24 @@ export interface ClaudeTool {
 
 export type ClaudeImageSource = { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string }
 
+export type ClaudeDocumentSource =
+    { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string } | { type: 'text'; text: string }
+
 export type ClaudeContentBlock =
-    | { type: 'text'; text: string }
-    | { type: 'image'; source: ClaudeImageSource }
-    | { type: 'tool_use'; id: string; name: string; input: any }
-    | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+    | { type: 'text'; text: string; cache_control?: any }
+    | { type: 'image'; source: ClaudeImageSource; cache_control?: any }
+    | { type: 'document'; source: ClaudeDocumentSource; title?: string; cache_control?: any }
+    | { type: 'tool_use'; id: string; name: string; input: any; cache_control?: any }
+    | {
+          type: 'tool_result'
+          tool_use_id: string
+          content: string | ClaudeContentBlock[]
+          is_error?: boolean
+          cache_control?: any
+      }
+    | { type: 'thinking'; thinking: string; signature?: string }
+    | { type: 'redacted_thinking'; data: string }
+    | { type: 'cache_control'; cache_control: any }
 
 export type ClaudeContent = string | ClaudeContentBlock[]
 
@@ -58,6 +71,7 @@ export interface ClaudeUsage {
 export type ClaudeResponseContentBlock =
     | { type: 'text'; text: string }
     | { type: 'thinking'; thinking: string; signature?: string }
+    | { type: 'redacted_thinking'; data: string }
     | { type: 'tool_use'; id: string; name: string; input: any }
 
 export interface ClaudeResponse {
