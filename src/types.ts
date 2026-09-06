@@ -47,6 +47,8 @@ export interface ClaudeMessage {
 export type ClaudeToolChoice =
     'auto' | 'any' | 'none' | { type: 'tool'; name: string } | { type: string; [key: string]: any }
 
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
 export interface ClaudeRequest {
     model: string
     messages: ClaudeMessage[]
@@ -57,6 +59,7 @@ export interface ClaudeRequest {
     stream?: boolean
     tools?: ClaudeTool[]
     tool_choice?: ClaudeToolChoice
+    reasoning_effort?: ReasoningEffort
 }
 
 export type ClaudeStopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence'
@@ -115,6 +118,7 @@ export interface GeminiRequest {
         temperature?: number
         maxOutputTokens?: number
         stopSequences?: string[]
+        thinkingConfig?: { thinkingBudget: number }
     }
 }
 
@@ -174,6 +178,7 @@ export interface OpenAIRequest {
     max_tokens?: number
     stream?: boolean
     stream_options?: { include_usage?: boolean }
+    reasoning_effort?: 'low' | 'medium' | 'high'
 }
 
 export interface OpenAIResponsesRequest {
@@ -184,6 +189,7 @@ export interface OpenAIResponsesRequest {
     temperature?: number
     max_output_tokens?: number
     stream?: boolean
+    reasoning?: { effort: ReasoningEffort }
 }
 
 export type OpenAIResponsesContentPart =

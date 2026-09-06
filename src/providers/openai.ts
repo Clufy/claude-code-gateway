@@ -2,6 +2,7 @@ import * as types from '../types'
 import * as provider from '../provider'
 import * as utils from '../utils'
 import * as tokens from '../tokens'
+import * as reasoning from '../reasoning'
 import { jsonResponse } from '../errors'
 
 type ClaudeStreamState = {
@@ -214,6 +215,10 @@ export class ChatCompletionsProvider implements provider.Provider {
 
         if (claudeRequest.tool_choice !== undefined) {
             openaiRequest.tool_choice = convertToolChoice(claudeRequest.tool_choice)
+        }
+
+        if (claudeRequest.reasoning_effort !== undefined) {
+            openaiRequest.reasoning_effort = reasoning.toOpenAIChatEffort(claudeRequest.reasoning_effort)
         }
 
         return openaiRequest
@@ -512,6 +517,10 @@ export class ResponsesProvider implements provider.Provider {
 
         if (claudeRequest.max_tokens !== undefined) {
             openaiRequest.max_output_tokens = claudeRequest.max_tokens
+        }
+
+        if (claudeRequest.reasoning_effort !== undefined) {
+            openaiRequest.reasoning = { effort: claudeRequest.reasoning_effort }
         }
 
         return openaiRequest

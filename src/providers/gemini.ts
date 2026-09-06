@@ -2,6 +2,7 @@ import * as types from '../types'
 import * as provider from '../provider'
 import * as utils from '../utils'
 import * as tokens from '../tokens'
+import * as reasoning from '../reasoning'
 
 export class impl implements provider.Provider {
     private inputTokensEstimate = 0
@@ -69,6 +70,7 @@ export class impl implements provider.Provider {
         if (
             claudeRequest.temperature !== undefined ||
             claudeRequest.max_tokens !== undefined ||
+            claudeRequest.reasoning_effort !== undefined ||
             (claudeRequest.stop_sequences && claudeRequest.stop_sequences.length > 0)
         ) {
             geminiRequest.generationConfig = {}
@@ -80,6 +82,11 @@ export class impl implements provider.Provider {
             }
             if (claudeRequest.stop_sequences && claudeRequest.stop_sequences.length > 0) {
                 geminiRequest.generationConfig.stopSequences = claudeRequest.stop_sequences
+            }
+            if (claudeRequest.reasoning_effort !== undefined) {
+                geminiRequest.generationConfig.thinkingConfig = {
+                    thinkingBudget: reasoning.toGeminiThinkingBudget(claudeRequest.reasoning_effort)
+                }
             }
         }
 
