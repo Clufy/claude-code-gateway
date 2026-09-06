@@ -39,18 +39,14 @@ src/
 
 ```ts
 export interface Provider {
-  // Override for providers that want full control (OpenAI SDK streaming)
-  handle?(request: Request, baseUrl: string, apiKey: string): Promise<Response>
+    // Override for providers that want full control (OpenAI SDK streaming)
+    handle?(request: Request, baseUrl: string, apiKey: string): Promise<Response>
 
-  // Convert an Anthropic request to a provider HTTP request
-  convertToProviderRequest(
-    request: Request,
-    baseUrl: string,
-    apiKey: string
-  ): Promise<Request>
+    // Convert an Anthropic request to a provider HTTP request
+    convertToProviderRequest(request: Request, baseUrl: string, apiKey: string): Promise<Request>
 
-  // Convert a provider HTTP response to an Anthropic response
-  convertToClaudeResponse(providerResponse: Response): Promise<Response>
+    // Convert a provider HTTP response to an Anthropic response
+    convertToClaudeResponse(providerResponse: Response): Promise<Response>
 }
 ```
 
@@ -58,13 +54,13 @@ The `workers-ai` provider returns Anthropic-format responses itself, so it uses 
 
 ## 4. Routes
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET`  | `/` | Health check: `ok` |
-| `POST` | `/v1/messages` | Anthropic Messages API → Workers AI |
-| `GET`  | `/v1/models` | List supported models |
-| `GET`  | `/v1/models/{id}` | Retrieve one model |
-| `POST` | `/v1/messages/count_tokens` | Estimate input token count |
+| Method | Path                                 | Purpose                                                          |
+| ------ | ------------------------------------ | ---------------------------------------------------------------- |
+| `GET`  | `/`                                  | Health check: `ok`                                               |
+| `POST` | `/v1/messages`                       | Anthropic Messages API → Workers AI                              |
+| `GET`  | `/v1/models`                         | List supported models                                            |
+| `GET`  | `/v1/models/{id}`                    | Retrieve one model                                               |
+| `POST` | `/v1/messages/count_tokens`          | Estimate input token count                                       |
 | `POST` | `/{type}/{provider_url}/v1/messages` | External provider proxy (`gemini`, `openai`, `openai-responses`) |
 
 External-provider path parsing mirrors the reference implementation: the first path segment is the `type`, everything before `/v1/messages` is the provider base URL, and `http:/` is normalized to `http://`.
@@ -148,12 +144,12 @@ All errors return JSON:
 
 ```json
 {
-  "type": "error",
-  "error": {
-    "type": "invalid_request_error|authentication_error|not_found_error|api_error|rate_limit_error",
-    "message": "..."
-  },
-  "request_id": "req_..."
+    "type": "error",
+    "error": {
+        "type": "invalid_request_error|authentication_error|not_found_error|api_error|rate_limit_error",
+        "message": "..."
+    },
+    "request_id": "req_..."
 }
 ```
 

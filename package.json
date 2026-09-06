@@ -5,9 +5,11 @@
     "scripts": {
         "deploy": "wrangler types && prettier --write . && wrangler deploy",
         "dev": "wrangler types && prettier --write . && wrangler dev --port 8080",
-        "check": "wrangler types && tsc --noEmit && prettier --check ."
+        "check": "wrangler types && tsc --noEmit && prettier --check .",
+        "check:hermes": "tsc src/hermes.ts --outDir .tmp-check --module es2022 --target es2022 && node scripts/hermes-check.mjs"
     },
     "devDependencies": {
+        "@types/node": "^26.4.1",
         "prettier": "^3.6.2",
         "typescript": "^5.5.2",
         "wrangler": "^4.21.0"

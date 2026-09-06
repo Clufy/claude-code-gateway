@@ -1,4 +1,6 @@
 import { countTokensForRequest, estimateTokens } from '../tokens'
+import { HermesFilter, repairJson } from '../hermes'
+import type { HermesCall } from '../hermes'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -197,11 +199,8 @@ function finishReason(payload: any): string | null {
 
 function parseArguments(str: string): any {
     if (!str) return {}
-    try {
-        return JSON.parse(str)
-    } catch {
-        return {}
-    }
+    // ponytail: repair chain (fences, prose, trailing commas, unbalanced braces) from hermes.ts
+    return repairJson(str) ?? {}
 }
 
 function toolUseId(existing: string | undefined): string {
@@ -271,11 +270,17 @@ export class WorkersAIProvider {
             return this.error(502, 'api_error', 'Workers AI did not return a stream')
         }
 
+        const knownTools = new Set<string>(
+            (Array.isArray(body.tools) ? body.tools : [])
+                .filter((t: any) => t && typeof t.name === 'string')
+                .map((t: any) => t.name)
+        )
+
         if (!stream) {
-            return this.handleNonStreaming(source, model, id, inputEstimate)
+            return this.handleNonStreaming(source, model, id, inputEstimate, knownTools)
         }
 
-        return this.handleStreaming(source, model, id, inputEstimate)
+        return this.handleStreaming(source, model, id, inputEstimate, knownTools)
     }
 
     private error(status: number, type: string, message: string): Response {
@@ -289,7 +294,8 @@ export class WorkersAIProvider {
         source: ReadableStream,
         model: string,
         id: string,
-        inputEstimate: number
+        inputEstimate: number,
+        knownTools: Set<string>
     ): Promise<Response> {
         let text = ''
         let reasoning = ''
@@ -339,9 +345,15 @@ export class WorkersAIProvider {
             return this.error(502, 'api_error', `Workers AI stream failed: ${message}`)
         }
 
+        // Open models often emit tool calls as Hermes-format text instead of native
+        // tool_calls deltas; scan accumulated text and reconstruct them.
+        const hermes = new HermesFilter(knownTools)
+        hermes.push(text)
+        const { text: visibleText, calls: hermesCalls } = hermes.flush()
+
         const content: any[] = []
         if (reasoning) content.push({ type: 'thinking', thinking: reasoning })
-        if (text) content.push({ type: 'text', text })
+        if (visibleText) content.push({ type: 'text', text: visibleText })
 
         const calls = [...toolCalls.entries()].sort(([a], [b]) => a - b)
         for (const [, call] of calls) {
@@ -353,7 +365,10 @@ export class WorkersAIProvider {
                 input: parseArguments(call.arguments)
             })
         }
-        if (calls.length > 0) stopReason = 'tool_use'
+        for (const call of hermesCalls) {
+            content.push({ type: 'tool_use', id: toolUseId(undefined), name: call.name, input: call.input })
+        }
+        if (calls.length > 0 || hermesCalls.length > 0) stopReason = 'tool_use'
 
         return new Response(
             JSON.stringify({
@@ -385,7 +400,16 @@ export class WorkersAIProvider {
         }
     }
 
-    private handleStreaming(source: ReadableStream, model: string, id: string, inputEstimate: number): Response {
+    private handleStreaming(
+        source: ReadableStream,
+        model: string,
+        id: string,
+        inputEstimate: number,
+        knownTools: Set<string>
+    ): Response {
+        // Scans streamed visible text for tool calls emitted as Hermes-format text.
+        const hermes = new HermesFilter(knownTools)
+
         const state = {
             text: '',
             reasoning: '',
@@ -516,13 +540,48 @@ export class WorkersAIProvider {
             state.stopReason = 'tool_use'
         }
 
+        const emitHermesCalls = (controller: TransformStreamDefaultController, calls: HermesCall[]) => {
+            closeTextBlock(controller)
+            closeThinkingBlock(controller)
+            for (const call of calls) {
+                const blockIndex = state.blockIndex
+                controller.enqueue(
+                    encoder.encode(
+                        sse('content_block_start', {
+                            type: 'content_block_start',
+                            index: blockIndex,
+                            content_block: { type: 'tool_use', id: toolUseId(undefined), name: call.name, input: {} }
+                        })
+                    )
+                )
+                controller.enqueue(
+                    encoder.encode(
+                        sse('content_block_delta', {
+                            type: 'content_block_delta',
+                            index: blockIndex,
+                            delta: { type: 'input_json_delta', partial_json: JSON.stringify(call.input) }
+                        })
+                    )
+                )
+                controller.enqueue(
+                    encoder.encode(sse('content_block_stop', { type: 'content_block_stop', index: blockIndex }))
+                )
+                state.blockIndex++
+            }
+            state.stopReason = 'tool_use'
+        }
+
         const processLine = (controller: TransformStreamDefaultController, line: string) => {
             const payload = this.parseSsePayload(line)
             if (!payload) return
             const reasoning = extractReasoning(payload)
             if (reasoning) emitReasoning(controller, reasoning)
             const token = extractText(payload)
-            if (token) emitText(controller, token)
+            if (token) {
+                const { text: visible, calls } = hermes.push(token)
+                if (visible) emitText(controller, visible)
+                if (calls.length > 0) emitHermesCalls(controller, calls)
+            }
             collectToolCalls(payload, state.toolCalls)
             const usage = extractUsage(payload)
             if (usage.prompt != null) state.realPrompt = usage.prompt
@@ -565,6 +624,10 @@ export class WorkersAIProvider {
             flush(controller) {
                 if (state._buffer) processLine(controller, state._buffer)
                 state._buffer = ''
+
+                const { text, calls } = hermes.flush()
+                if (text) emitText(controller, text)
+                if (calls.length > 0) emitHermesCalls(controller, calls)
 
                 if (state.toolCalls.size > state.toolBlocksEmitted) {
                     emitToolCalls(controller)

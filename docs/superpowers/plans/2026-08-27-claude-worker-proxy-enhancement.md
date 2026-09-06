@@ -24,32 +24,33 @@
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `package.json` | Dependencies (`openai`, `wrangler`, `typescript`, `prettier`) and scripts. |
-| `.prettierrc` | Formatting rules matching the reference repo. |
-| `tsconfig.json` | TypeScript options, include generated `worker-configuration.d.ts`. |
-| `wrangler.jsonc` | Wrangler config with AI binding, compatibility flags, observability. |
-| `src/provider.ts` | Shared `Provider` interface. |
-| `src/types.ts` | Anthropic-compatible and provider types. |
-| `src/utils.ts` | SSE helpers, id generation, URL builder, schema cleaner. |
-| `src/request-id.ts` | Generate `req_<uuid>`. |
-| `src/errors.ts` | Anthropic error response helper and base JSON response helper. |
-| `src/auth.ts` | Proxy-key verification and provider key extraction. |
-| `src/models.ts` | `GET /v1/models` and `GET /v1/models/{id}`. |
-| `src/tokens.ts` | `POST /v1/messages/count_tokens`. |
-| `src/providers/workers-ai.ts` | Ported existing JS backend that calls `env.AI.run`. |
-| `src/providers/gemini.ts` | Gemini multi-turn + tool-call provider. |
-| `src/providers/openai.ts` | OpenAI Chat Completions and Responses providers. |
-| `src/index.ts` | Router, auth, request-id wrapping, error handling. |
-| `README.md` | Updated docs covering Workers AI and external providers. |
-| `scripts/self-test.sh` | `curl` health, models, count_tokens and message smoke tests. |
+| File                          | Purpose                                                                    |
+| ----------------------------- | -------------------------------------------------------------------------- |
+| `package.json`                | Dependencies (`openai`, `wrangler`, `typescript`, `prettier`) and scripts. |
+| `.prettierrc`                 | Formatting rules matching the reference repo.                              |
+| `tsconfig.json`               | TypeScript options, include generated `worker-configuration.d.ts`.         |
+| `wrangler.jsonc`              | Wrangler config with AI binding, compatibility flags, observability.       |
+| `src/provider.ts`             | Shared `Provider` interface.                                               |
+| `src/types.ts`                | Anthropic-compatible and provider types.                                   |
+| `src/utils.ts`                | SSE helpers, id generation, URL builder, schema cleaner.                   |
+| `src/request-id.ts`           | Generate `req_<uuid>`.                                                     |
+| `src/errors.ts`               | Anthropic error response helper and base JSON response helper.             |
+| `src/auth.ts`                 | Proxy-key verification and provider key extraction.                        |
+| `src/models.ts`               | `GET /v1/models` and `GET /v1/models/{id}`.                                |
+| `src/tokens.ts`               | `POST /v1/messages/count_tokens`.                                          |
+| `src/providers/workers-ai.ts` | Ported existing JS backend that calls `env.AI.run`.                        |
+| `src/providers/gemini.ts`     | Gemini multi-turn + tool-call provider.                                    |
+| `src/providers/openai.ts`     | OpenAI Chat Completions and Responses providers.                           |
+| `src/index.ts`                | Router, auth, request-id wrapping, error handling.                         |
+| `README.md`                   | Updated docs covering Workers AI and external providers.                   |
+| `scripts/self-test.sh`        | `curl` health, models, count_tokens and message smoke tests.               |
 
 ---
 
 ### Task 1: Tooling and Configuration
 
 **Files:**
+
 - Create: `package.json`
 - Create: `.prettierrc`
 - Create: `tsconfig.json`
@@ -57,6 +58,7 @@
 - Modify: `.gitignore`
 
 **Interfaces:**
+
 - Produces: `Env` from `wrangler types`, install ready.
 
 - [ ] **Step 1: Create `package.json`**
@@ -175,10 +177,12 @@ git commit -m "chore: typescript build config and wrangler structure"
 ### Task 2: Provider Interface and Shared Types
 
 **Files:**
+
 - Create: `src/provider.ts`
 - Create: `src/types.ts`
 
 **Interfaces:**
+
 - Produces: `Provider`, `ClaudeRequest`, `ClaudeResponse`, `ClaudeMessage`, `ClaudeTool`, `Gemini*`, `OpenAI*` types used by all later tasks.
 
 - [ ] **Step 1: Create `src/provider.ts`**
@@ -246,10 +250,7 @@ export interface ClaudeResponse {
     type: 'message'
     role: 'assistant'
     model?: string
-    content: Array<
-        | { type: 'text'; text: string }
-        | { type: 'tool_use'; id: string; name: string; input: any }
-    >
+    content: Array<{ type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: any }>
     stop_reason?: ClaudeStopReason
     stop_sequence?: string | null
     usage: {
@@ -456,12 +457,14 @@ git commit -m "feat: provider interface and shared request/response types"
 ### Task 3: Utilities, Request IDs, Errors, and Auth
 
 **Files:**
+
 - Create: `src/utils.ts`
 - Create: `src/request-id.ts`
 - Create: `src/errors.ts`
 - Create: `src/auth.ts`
 
 **Interfaces:**
+
 - Consumes: types from Task 2.
 - Produces: `generateId`, `sse`, `processProviderStream`, `cleanJsonSchema`, `generateRequestId`, `anthropicError`, `jsonResponse`, `verifyProxyKey`, `extractProviderKey` for use by the router and providers.
 
@@ -727,11 +730,7 @@ export function generateRequestId(): string {
 
 ```ts
 export type ClaudeErrorType =
-    | 'invalid_request_error'
-    | 'authentication_error'
-    | 'not_found_error'
-    | 'api_error'
-    | 'rate_limit_error'
+    'invalid_request_error' | 'authentication_error' | 'not_found_error' | 'api_error' | 'rate_limit_error'
 
 export function jsonResponse(body: unknown, status: number, requestId?: string): Response {
     const headers = new Headers({ 'Content-Type': 'application/json' })
@@ -741,12 +740,7 @@ export function jsonResponse(body: unknown, status: number, requestId?: string):
     return new Response(JSON.stringify(body), { status, headers })
 }
 
-export function anthropicError(
-    status: number,
-    type: ClaudeErrorType,
-    message: string,
-    requestId: string
-): Response {
+export function anthropicError(status: number, type: ClaudeErrorType, message: string, requestId: string): Response {
     return jsonResponse(
         {
             type: 'error',
@@ -810,10 +804,12 @@ git commit -m "feat: shared utilities, request-id, errors and auth helpers"
 ### Task 4: Supporting Endpoints (`/v1/models`, `/v1/models/{id}`, `/v1/messages/count_tokens`)
 
 **Files:**
+
 - Create: `src/models.ts`
 - Create: `src/tokens.ts`
 
 **Interfaces:**
+
 - Consumes: `jsonResponse`, `anthropicError`, `Env` (generated).
 - Produces: `listModels(env)`, `getModel(id, env, requestId)` return `Response`; `countTokensForRequest(body)` returns `{ input_tokens: number }`.
 
@@ -912,7 +908,7 @@ function toModel(id: string): ClaudeModelListing {
 function configuredModelIds(env: Env): string[] {
     return (
         env.MODELS?.split(',')
-            .map(s => s.trim())
+            .map((s) => s.trim())
             .filter(Boolean) ?? DEFAULT_MODELS
     )
 }
@@ -951,10 +947,12 @@ git commit -m "feat: /v1/models and /v1/messages/count_tokens compatibility endp
 ### Task 5: Port the Workers AI Backend
 
 **Files:**
+
 - Delete: `src/index.js` (keep until final verification).
 - Create: `src/providers/workers-ai.ts`
 
 **Interfaces:**
+
 - Consumes: `sse`, `estimateTokens` (own copy), `Env`.
 - Produces: `WorkersAIProvider.handle(request): Response` returning Anthropic-format JSON or SSE.
 
@@ -977,8 +975,8 @@ function systemText(system: unknown): string {
     if (typeof system === 'string') return system
     if (Array.isArray(system)) {
         return system
-            .filter(p => p && p.type === 'text')
-            .map(p => p.text ?? '')
+            .filter((p) => p && p.type === 'text')
+            .map((p) => p.text ?? '')
             .join('\n')
     }
     return String(system)
@@ -1002,8 +1000,8 @@ function cleanSchema(schema: any): any {
 function convertTools(tools: any): any {
     if (!Array.isArray(tools) || tools.length === 0) return undefined
     return tools
-        .filter(t => t && t.name)
-        .map(t => ({
+        .filter((t) => t && t.name)
+        .map((t) => ({
             type: 'function',
             function: {
                 name: t.name,
@@ -1477,9 +1475,11 @@ git commit -m "feat: port existing Workers AI backend to TypeScript provider"
 ### Task 6: Add the Gemini Provider
 
 **Files:**
+
 - Create: `src/providers/gemini.ts`
 
 **Interfaces:**
+
 - Consumes: `ClaudeRequest`/`Gemini*` types, `utils.buildUrl`, `utils.cleanJsonSchema`, `utils.processProviderStream`, SSE builders.
 - Produces: `gemini.impl` class implementing `Provider`.
 
@@ -1541,7 +1541,7 @@ export class impl implements provider.Provider {
         if (claudeRequest.tools && claudeRequest.tools.length > 0) {
             geminiRequest.tools = [
                 {
-                    functionDeclarations: claudeRequest.tools.map(tool => ({
+                    functionDeclarations: claudeRequest.tools.map((tool) => ({
                         name: tool.name,
                         description: tool.description,
                         parameters: utils.cleanJsonSchema(tool.input_schema)
@@ -1569,8 +1569,8 @@ export class impl implements provider.Provider {
             typeof system === 'string'
                 ? system
                 : system
-                      .filter(part => part.type === 'text')
-                      .map(part => part.text)
+                      .filter((part) => part.type === 'text')
+                      .map((part) => part.text)
                       .join('\n')
 
         if (!text) return undefined
@@ -1785,9 +1785,11 @@ git commit -m "feat: add Gemini provider"
 ### Task 7: Add the OpenAI Providers
 
 **Files:**
+
 - Create: `src/providers/openai.ts`
 
 **Interfaces:**
+
 - Consumes: `ClaudeRequest`/`OpenAI*` types, `openai` SDK, `utils` SSE helpers.
 - Produces: `ChatCompletionsProvider` and `ResponsesProvider` classes, both implementing `Provider`. The file also re-exports `ChatCompletionsProvider as impl` for symmetry.
 
@@ -1839,16 +1841,16 @@ function systemText(system: types.ClaudeRequest['system']): string | undefined {
     if (!system) return undefined
     if (typeof system === 'string') return system
     return system
-        .filter(part => part.type === 'text')
-        .map(part => part.text)
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
         .join('\n')
 }
 
 function contentToText(content: types.ClaudeContent): string {
     if (typeof content === 'string') return content
     return content
-        .filter(part => part.type === 'text')
-        .map(part => part.text)
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
         .join('\n')
 }
 
@@ -1973,7 +1975,7 @@ export class ChatCompletionsProvider implements provider.Provider {
         }
 
         if (claudeRequest.tools && claudeRequest.tools.length > 0) {
-            openaiRequest.tools = claudeRequest.tools.map(tool => ({
+            openaiRequest.tools = claudeRequest.tools.map((tool) => ({
                 type: 'function',
                 function: {
                     name: tool.name,
@@ -2239,7 +2241,7 @@ export class ResponsesProvider implements provider.Provider {
         }
 
         if (claudeRequest.tools && claudeRequest.tools.length > 0) {
-            openaiRequest.tools = claudeRequest.tools.map(tool => ({
+            openaiRequest.tools = claudeRequest.tools.map((tool) => ({
                 type: 'function',
                 name: tool.name,
                 description: tool.description,
@@ -2492,9 +2494,11 @@ git commit -m "feat: add OpenAI Chat Completions and Responses providers"
 ### Task 8: Router and Entry Point
 
 **Files:**
+
 - Create: `src/index.ts`
 
 **Interfaces:**
+
 - Consumes: all prior tasks.
 - Produces: default Worker fetch handler.
 
@@ -2626,9 +2630,7 @@ async function handleExternal(
 }
 
 function normalizeProviderUrl(raw: string): string {
-    let url = raw
-        .replace(/^http:\/\/([^/])/, 'http:///$1')
-        .replace(/^https:\/\/([^/])/, 'https:///$1')
+    let url = raw.replace(/^http:\/\/([^/])/, 'http:///$1').replace(/^https:\/\/([^/])/, 'https:///$1')
     if (!/^(https?):\/\//i.test(url)) {
         url = `https://${url}`
     }
@@ -2672,12 +2674,14 @@ git commit -m "feat: add router, auth, request-id wrapping and external-provider
 ### Task 9: Cleanup, README, and Self-Test
 
 **Files:**
+
 - Delete: `src/index.js`
 - Delete: `wrangler.toml` (replaced by `wrangler.jsonc`)
 - Modify: `README.md`
 - Create: `scripts/self-test.sh`
 
 **Interfaces:**
+
 - All prior tasks integrated; no new public interfaces.
 
 - [ ] **Step 1: Delete the legacy files**
@@ -2690,7 +2694,7 @@ Verify `src/index.ts` is now the only `main` file referenced by `wrangler.jsonc`
 
 - [ ] **Step 2: Replace `README.md` with updated documentation**
 
-```markdown
+````markdown
 # claude-worker-proxy
 
 A Cloudflare Worker that lets [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
@@ -2702,14 +2706,14 @@ the OpenAI Responses API using the provider path convention.
 
 ## Supported routes
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET`  | `/` | Health check: `ok` |
-| `GET`  | `/v1/models` | List supported models |
-| `GET`  | `/v1/models/{id}` | Retrieve one model |
-| `POST` | `/v1/messages/count_tokens` | Estimate input token count |
-| `POST` | `/v1/messages` | Anthropic Messages API -> Workers AI |
-| `POST` | `/{type}/{provider_url}/v1/messages` | External provider proxy |
+| Method | Path                                 | Purpose                              |
+| ------ | ------------------------------------ | ------------------------------------ |
+| `GET`  | `/`                                  | Health check: `ok`                   |
+| `GET`  | `/v1/models`                         | List supported models                |
+| `GET`  | `/v1/models/{id}`                    | Retrieve one model                   |
+| `POST` | `/v1/messages/count_tokens`          | Estimate input token count           |
+| `POST` | `/v1/messages`                       | Anthropic Messages API -> Workers AI |
+| `POST` | `/{type}/{provider_url}/v1/messages` | External provider proxy              |
 
 ## External provider path convention
 
@@ -2737,6 +2741,7 @@ curl -X POST https://<worker>/openai-responses/api.openai.com/v1/messages \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
 ```
+````
 
 ## Deploy
 
@@ -2790,11 +2795,11 @@ chosen backend.
 
 ```json
 {
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://<worker-subdomain>.workers.dev",
-    "ANTHROPIC_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-    "ANTHROPIC_SMALL_FAST_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast"
-  }
+    "env": {
+        "ANTHROPIC_BASE_URL": "https://<worker-subdomain>.workers.dev",
+        "ANTHROPIC_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "ANTHROPIC_SMALL_FAST_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast"
+    }
 }
 ```
 
@@ -2802,12 +2807,12 @@ chosen backend.
 
 ```json
 {
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://<worker-subdomain>.workers.dev",
-    "ANTHROPIC_CUSTOM_HEADERS": "x-api-key: your-proxy-key-value",
-    "ANTHROPIC_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-    "ANTHROPIC_SMALL_FAST_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast"
-  }
+    "env": {
+        "ANTHROPIC_BASE_URL": "https://<worker-subdomain>.workers.dev",
+        "ANTHROPIC_CUSTOM_HEADERS": "x-api-key: your-proxy-key-value",
+        "ANTHROPIC_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "ANTHROPIC_SMALL_FAST_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast"
+    }
 }
 ```
 
@@ -2848,7 +2853,8 @@ unset ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL ANTHROPIC_AP
   implemented.
 - `PROXY_KEY` is a single shared secret with no per-user rate limiting beyond
   Cloudflare's platform controls.
-```
+
+````
 
 - [ ] **Step 3: Create `scripts/self-test.sh`**
 
@@ -2880,7 +2886,7 @@ curl -sS -X POST "${BASE}/v1/messages" \
 echo
 
 echo "Self-test complete."
-```
+````
 
 Make it executable:
 
@@ -2901,6 +2907,7 @@ git commit -m "docs: update README and add self-test script; remove legacy JS/to
 ### Task 10: Validation and Deploy
 
 **Files:**
+
 - All files created/modified in prior tasks.
 
 - [ ] **Step 1: Type-check and lint**
@@ -2956,13 +2963,13 @@ git tag -a v0.1.0 -m "Multi-provider Claude worker proxy"
 ## Self-Review
 
 - [ ] **Spec coverage:** every design-spec section maps to a task:
-  - Workers AI `/v1/messages` -> Task 5
-  - External providers (`gemini`, `openai`, `openai-responses`) -> Tasks 6, 7, 8
-  - `/v1/models`, `/v1/models/{id}`, `/v1/messages/count_tokens` -> Task 4
-  - Auth, request-id, error shape -> Tasks 3, 8
-  - SSE streaming -> Tasks 2, 3, 5, 6, 7
-  - Tool calls -> Tasks 5, 6, 7
-  - Files API / Batches API / prompt caching -> explicitly excluded (extended features section of spec).
+    - Workers AI `/v1/messages` -> Task 5
+    - External providers (`gemini`, `openai`, `openai-responses`) -> Tasks 6, 7, 8
+    - `/v1/models`, `/v1/models/{id}`, `/v1/messages/count_tokens` -> Task 4
+    - Auth, request-id, error shape -> Tasks 3, 8
+    - SSE streaming -> Tasks 2, 3, 5, 6, 7
+    - Tool calls -> Tasks 5, 6, 7
+    - Files API / Batches API / prompt caching -> explicitly excluded (extended features section of spec).
 - [ ] **Placeholder scan:** no `TBD`, `TODO`, "add appropriate error handling", or "etc." remain.
 - [ ] **Type consistency:** `Provider.handle?` and `Provider.convertToProviderRequest`/`convertToClaudeResponse` are implemented by all providers; `WorkersAIProvider.handle(request, requestId)` matches the router; `countTokensForRequest` accepts the parsed request body.
 - [ ] **Naming consistency:** `request-id` header and `request_id` body field use the same generated value; `ClaudeStopReason` literals match the Anthropic spec.

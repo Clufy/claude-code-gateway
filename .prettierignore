@@ -1,5 +1,7 @@
-.superpowers/
-.wrangler/
 node_modules/
+.wrangler/
+.dev.vars
+*.log
 worker-configuration.d.ts
-docs/
+dist/
+.tmp-check/
