@@ -6,7 +6,7 @@
         "deploy": "wrangler types && prettier --write . && wrangler deploy",
         "dev": "wrangler types && prettier --write . && wrangler dev --port 8080",
         "check": "wrangler types && tsc --noEmit && prettier --check .",
-        "check:hermes": "tsc src/hermes.ts --outDir .tmp-check --module es2022 --target es2022 && node scripts/hermes-check.mjs"
+        "check:hermes": "tsc src/hermes.ts --outDir .tmp-check --module es2022 --target es2022 --skipLibCheck && node scripts/hermes-check.mjs"
     },
     "devDependencies": {
         "@types/node": "^26.4.1",

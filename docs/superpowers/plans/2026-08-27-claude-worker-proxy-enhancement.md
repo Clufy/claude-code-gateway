@@ -1,6 +1,6 @@
 # Claude Worker Proxy Enhancement Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical / complete.** This plan was used for the initial TypeScript rewrite (2026-08-27) and has been fully implemented. Checkboxes are left as-is to preserve the original task list; see [TESTING.md](../../../TESTING.md) for current runtime validation. For later enhancements, use `docs/superpowers/specs/2026-08-27-claude-worker-proxy-enhancement-design.md` section 15.
 
 **Goal:** Rewrite the existing Cloudflare Workers AI Claude proxy in TypeScript, preserve the `/v1/messages` Workers AI backend exactly, and add multi-provider support (Gemini, OpenAI Chat Completions, OpenAI Responses) plus Anthropic compatibility endpoints (`/v1/models`, `/v1/messages/count_tokens`).
 
