@@ -10,19 +10,14 @@ interface ClaudeModelListing {
     capabilities: Record<string, { name: string; supported: boolean }>
 }
 
-const DEFAULT_MODELS = [
-    '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-    '@cf/meta/llama-3.1-8b-instruct-fast',
-    '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b'
-]
+const DEFAULT_MODELS = ['@cf/zai-org/glm-5.3', '@cf/moonshotai/kimi-k2.6', '@cf/deepseek-ai/deepseek-v4-pro-0813']
 
 // Real context windows from developers.cloudflare.com/workers-ai/models;
 // conservative default so Claude Code compacts before an unknown model overflows.
 const CONTEXT_TOKENS: Record<string, number> = {
-    '@cf/meta/llama-3.3-70b-instruct-fp8-fast': 24000,
-    '@cf/meta/llama-3.1-8b-instruct-fast': 128000,
-    '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b': 80000,
-    '@cf/zai-org/glm-5.3-flash': 1048576
+    '@cf/zai-org/glm-5.3': 1048576,
+    '@cf/moonshotai/kimi-k2.6': 262144,
+    '@cf/deepseek-ai/deepseek-v4-pro-0813': 1048576
 }
 const DEFAULT_CONTEXT_TOKENS = 24000
 
