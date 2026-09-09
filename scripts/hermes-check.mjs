@@ -126,4 +126,17 @@ assert.strictEqual(repairJson(''), null)
     assert.strictEqual(r.calls.length, 0)
 }
 
+// 10. push() drains complete text AND calls; flush() returns only the tail.
+// The non-streaming path must merge BOTH returns — flush() alone sees an empty buffer.
+{
+    const f = new HermesFilter(new Set(['get_weather']))
+    const pushed = f.push(`Answer. ${OPEN}{"name": "get_weather", "arguments": {"city": "Paris"}}${CLOSE}`)
+    const flushed = f.flush()
+    assert.strictEqual(pushed.text, 'Answer. ')
+    assert.strictEqual(pushed.calls.length, 1)
+    assert.deepStrictEqual(pushed.calls[0].input, { city: 'Paris' })
+    assert.strictEqual(flushed.text, '')
+    assert.strictEqual(flushed.calls.length, 0)
+}
+
 console.log('hermes check ok')

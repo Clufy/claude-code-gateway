@@ -9,7 +9,9 @@ import { jsonResponse } from '../errors'
 type ClaudeStreamState = {
     textBlockOpen: boolean
     textBlockIndex: number
-    toolUseBlockIndex: number
+    // ponytail: text and tool_use blocks share ONE index space — the Anthropic
+    // stream protocol requires sequential, non-repeating content_block indices.
+    nextBlockIndex: number
     stopReason: types.ClaudeStopReason
     usage: types.ClaudeUsage
 }
@@ -76,18 +78,20 @@ function parseToolArguments(args: string): unknown {
     return utils.safeJsonParse(args || '{}')
 }
 
-function initStreamState(): ClaudeStreamState {
+function initStreamState(inputTokensEstimate: number): ClaudeStreamState {
     return {
         textBlockOpen: false,
         textBlockIndex: 0,
-        toolUseBlockIndex: 0,
+        nextBlockIndex: 0,
         stopReason: 'end_turn',
-        usage: { input_tokens: 0, output_tokens: 0 }
+        // ponytail: estimate as fallback — some providers never send a usage chunk
+        usage: { input_tokens: inputTokensEstimate, output_tokens: 0 }
     }
 }
 
 function openTextBlockIfNeeded(events: string[], state: ClaudeStreamState): void {
     if (state.textBlockOpen) return
+    state.textBlockIndex = state.nextBlockIndex++
     events.push(utils.startTextBlock(state.textBlockIndex))
     state.textBlockOpen = true
 }
@@ -95,7 +99,6 @@ function openTextBlockIfNeeded(events: string[], state: ClaudeStreamState): void
 function closeTextBlockIfNeeded(events: string[], state: ClaudeStreamState): void {
     if (!state.textBlockOpen) return
     events.push(utils.stopContentBlock(state.textBlockIndex))
-    state.textBlockIndex++
     state.textBlockOpen = false
 }
 
@@ -337,6 +340,14 @@ export class ChatCompletionsProvider implements provider.Provider {
             claudeResponse.stop_reason = stopReasonFromOpenAI(choice.finish_reason)
         }
 
+        // some providers set finish_reason 'stop' alongside tool_calls — mirror the streaming safety net
+        if (
+            claudeResponse.stop_reason === 'end_turn' &&
+            claudeResponse.content.some((block) => block.type === 'tool_use')
+        ) {
+            claudeResponse.stop_reason = 'tool_use'
+        }
+
         if (openaiData.usage) {
             claudeResponse.usage = {
                 input_tokens: openaiData.usage.prompt_tokens,
@@ -353,7 +364,7 @@ export class ChatCompletionsProvider implements provider.Provider {
         const inputTokensEstimate = this.inputTokensEstimate
         const stream = new ReadableStream({
             async start(controller) {
-                const state = initStreamState()
+                const state = initStreamState(inputTokensEstimate)
                 const toolCallState = new Map<
                     number,
                     { id?: string; name?: string; args: string; blockIndex: number }
@@ -403,7 +414,7 @@ export class ChatCompletionsProvider implements provider.Provider {
                                     const name = toolCall.function?.name
                                     if (!name && !toolCall.id) continue
                                     const id = toolCall.id || utils.generateId()
-                                    const blockIndex = state.toolUseBlockIndex++
+                                    const blockIndex = state.nextBlockIndex++
                                     toolCallState.set(toolCall.index, { id, name, args: '', blockIndex })
                                     events.push(utils.startToolUseBlock(blockIndex, id, name || 'unknown'))
                                     if (toolCall.function?.arguments) {
@@ -415,10 +426,8 @@ export class ChatCompletionsProvider implements provider.Provider {
 
                         if (choice.finish_reason === 'tool_calls' || choice.finish_reason === 'function_call') {
                             closeTextBlockIfNeeded(events, state)
-                            for (const [, toolCall] of [...toolCallState].sort(([a], [b]) => a - b)) {
-                                events.push(utils.stopContentBlock(toolCall.blockIndex))
-                            }
-                            state.stopReason = 'tool_use'
+                            // tool blocks are stopped once, after the stream loop below
+                            if (toolCallState.size > 0) state.stopReason = 'tool_use'
                         } else if (choice.finish_reason) {
                             closeTextBlockIfNeeded(events, state)
                             state.stopReason = stopReasonFromOpenAI(choice.finish_reason)
@@ -432,6 +441,7 @@ export class ChatCompletionsProvider implements provider.Provider {
                     for (const [, toolCall] of [...toolCallState].sort(([a], [b]) => a - b)) {
                         events.push(utils.stopContentBlock(toolCall.blockIndex))
                     }
+                    // some providers send finish_reason 'stop' alongside tool_calls deltas
                     if (toolCallState.size > 0) state.stopReason = 'tool_use'
                     enqueueEvents(controller, events)
                     utils.sendMessageDelta(controller, state.stopReason, state.usage)
@@ -644,7 +654,7 @@ export class ResponsesProvider implements provider.Provider {
         const inputTokensEstimate = this.inputTokensEstimate
         const stream = new ReadableStream({
             async start(controller) {
-                const state = initStreamState()
+                const state = initStreamState(inputTokensEstimate)
                 const functionCalls = new Map<number, { name?: string; callId?: string; args: string }>()
 
                 utils.sendMessageStart(controller, {
@@ -692,17 +702,20 @@ export class ResponsesProvider implements provider.Provider {
                                         events.push(
                                             ...utils.processToolUsePart(
                                                 { name: call.name, args: parseToolArguments(call.args) },
-                                                state.toolUseBlockIndex
+                                                state.nextBlockIndex
                                             )
                                         )
-                                        state.toolUseBlockIndex++
+                                        state.nextBlockIndex++
                                         state.stopReason = 'tool_use'
                                     }
                                 }
                                 break
                             case 'response.completed':
                                 closeTextBlockIfNeeded(events, state)
-                                state.stopReason = stopReasonFromResponseStatus(event.response?.status)
+                                // tool_use must survive response.completed — it fires after the calls
+                                if (state.stopReason !== 'tool_use') {
+                                    state.stopReason = stopReasonFromResponseStatus(event.response?.status)
+                                }
                                 if (event.response?.usage) {
                                     state.usage = {
                                         input_tokens: event.response.usage.input_tokens ?? 0,
@@ -715,7 +728,9 @@ export class ResponsesProvider implements provider.Provider {
                                 break
                             case 'response.incomplete':
                                 closeTextBlockIfNeeded(events, state)
-                                state.stopReason = 'max_tokens'
+                                if (state.stopReason !== 'tool_use') {
+                                    state.stopReason = 'max_tokens'
+                                }
                                 if (event.response?.usage) {
                                     state.usage = {
                                         input_tokens: event.response.usage.input_tokens ?? 0,

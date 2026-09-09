@@ -157,14 +157,8 @@ export function buildUrl(baseUrl: string, endpoint: string): string {
 
 export async function processProviderStream(
     providerResponse: Response,
-    processLine: (
-        jsonStr: string,
-        textIndex: number,
-        toolIndex: number
-    ) => {
+    processLine: (jsonStr: string) => {
         events: string[]
-        textBlockIndex: number
-        toolUseBlockIndex: number
         stopReason?: string
         usage?: types.ClaudeUsage
     } | null,
@@ -180,8 +174,6 @@ export async function processProviderStream(
 
             const decoder = new TextDecoder()
             let buffer = ''
-            let textBlockIndex = 0
-            let toolUseBlockIndex = 0
             let stopReason = 'end_turn'
             let usage: types.ClaudeUsage | undefined
 
@@ -203,10 +195,8 @@ export async function processProviderStream(
                         const jsonStr = line.slice(6)
                         if (jsonStr === '[DONE]') continue
 
-                        const result = processLine(jsonStr, textBlockIndex, toolUseBlockIndex)
+                        const result = processLine(jsonStr)
                         if (result) {
-                            textBlockIndex = result.textBlockIndex
-                            toolUseBlockIndex = result.toolUseBlockIndex
                             stopReason = result.stopReason ?? stopReason
                             if (result.usage) usage = result.usage
 
@@ -218,7 +208,7 @@ export async function processProviderStream(
                 }
 
                 if (buffer.trim() && buffer.startsWith('data: ')) {
-                    const result = processLine(buffer.slice(6), textBlockIndex, toolUseBlockIndex)
+                    const result = processLine(buffer.slice(6))
                     if (result) {
                         stopReason = result.stopReason ?? stopReason
                         if (result.usage) usage = result.usage
@@ -229,7 +219,8 @@ export async function processProviderStream(
                 }
 
                 reader.releaseLock()
-                sendMessageDelta(controller, stopReason, usage)
+                // ponytail: estimate fallback — not every provider sends usage
+                sendMessageDelta(controller, stopReason, usage ?? { input_tokens: inputTokens, output_tokens: 0 })
                 sendMessageStop(controller)
                 controller.close()
             } catch (error) {

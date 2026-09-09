@@ -239,7 +239,7 @@ export class impl implements provider.Provider {
             const candidate = geminiData.candidates[0]
             let hasToolUse = false
 
-            for (const part of candidate.content.parts) {
+            for (const part of candidate.content?.parts ?? []) {
                 if ('text' in part) {
                     claudeResponse.content.push({
                         type: 'text',
@@ -266,9 +266,10 @@ export class impl implements provider.Provider {
         }
 
         if (geminiData.usageMetadata) {
+            // blocked/empty responses report promptTokenCount but omit candidatesTokenCount
             claudeResponse.usage = {
-                input_tokens: geminiData.usageMetadata.promptTokenCount,
-                output_tokens: geminiData.usageMetadata.candidatesTokenCount,
+                input_tokens: geminiData.usageMetadata.promptTokenCount ?? 0,
+                output_tokens: geminiData.usageMetadata.candidatesTokenCount ?? 0,
                 cache_read_input_tokens: geminiData.usageMetadata.cachedContentTokenCount
             }
         }
@@ -280,72 +281,75 @@ export class impl implements provider.Provider {
     }
 
     private async convertStreamResponse(geminiResponse: Response): Promise<Response> {
+        // ponytail: block state lives in this closure — text and tool_use share ONE
+        // index space, and functionCall must pin stop_reason to 'tool_use'.
         let textBlockOpen = false
+        let openTextIndex = 0
+        let nextBlockIndex = 0
+        let sawToolUse = false
 
         return utils.processProviderStream(
             geminiResponse,
-            (jsonStr, textBlockIndex, toolUseBlockIndex) => {
+            (jsonStr) => {
                 const geminiData = JSON.parse(jsonStr) as types.GeminiResponse
+
+                // usage can arrive on a candidates-less chunk — read it before the early return
+                let usage: types.ClaudeUsage | undefined
+                if (geminiData.usageMetadata) {
+                    // blocked/empty responses report promptTokenCount but omit candidatesTokenCount
+                    usage = {
+                        input_tokens: geminiData.usageMetadata.promptTokenCount ?? 0,
+                        output_tokens: geminiData.usageMetadata.candidatesTokenCount ?? 0,
+                        cache_read_input_tokens: geminiData.usageMetadata.cachedContentTokenCount
+                    }
+                }
+
                 if (!geminiData.candidates || geminiData.candidates.length === 0) {
-                    return null
+                    return usage ? { events: [], stopReason: undefined, usage } : null
                 }
 
                 const candidate = geminiData.candidates[0]
                 const events: string[] = []
-                let currentTextIndex = textBlockIndex
-                let currentToolIndex = toolUseBlockIndex
                 let stopReason: types.ClaudeStopReason | undefined
 
-                if (candidate.content) {
-                    for (const part of candidate.content.parts) {
-                        if ('text' in part && part.text) {
-                            if (!textBlockOpen) {
-                                events.push(utils.startTextBlock(currentTextIndex))
-                                textBlockOpen = true
-                            }
-                            events.push(utils.textDelta(part.text, currentTextIndex))
-                        } else if ('functionCall' in part) {
-                            if (textBlockOpen) {
-                                events.push(utils.stopContentBlock(currentTextIndex))
-                                currentTextIndex++
-                                textBlockOpen = false
-                            }
-                            events.push(
-                                ...utils.processToolUsePart(
-                                    { name: part.functionCall.name, args: part.functionCall.args ?? {} },
-                                    currentToolIndex
-                                )
-                            )
-                            currentToolIndex++
+                // blocked/empty candidates can carry content without parts
+                for (const part of candidate.content?.parts ?? []) {
+                    if ('text' in part && part.text) {
+                        if (!textBlockOpen) {
+                            openTextIndex = nextBlockIndex++
+                            events.push(utils.startTextBlock(openTextIndex))
+                            textBlockOpen = true
                         }
+                        events.push(utils.textDelta(part.text, openTextIndex))
+                    } else if ('functionCall' in part) {
+                        if (textBlockOpen) {
+                            events.push(utils.stopContentBlock(openTextIndex))
+                            textBlockOpen = false
+                        }
+                        sawToolUse = true
+                        events.push(
+                            ...utils.processToolUsePart(
+                                { name: part.functionCall.name, args: part.functionCall.args ?? {} },
+                                nextBlockIndex
+                            )
+                        )
+                        nextBlockIndex++
                     }
                 }
 
                 if (candidate.finishReason) {
                     if (textBlockOpen) {
-                        events.push(utils.stopContentBlock(currentTextIndex))
-                        currentTextIndex++
+                        events.push(utils.stopContentBlock(openTextIndex))
                         textBlockOpen = false
                     }
-                    stopReason = candidate.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn'
-                }
-
-                let usage: types.ClaudeUsage | undefined
-                if (geminiData.usageMetadata) {
-                    usage = {
-                        input_tokens: geminiData.usageMetadata.promptTokenCount,
-                        output_tokens: geminiData.usageMetadata.candidatesTokenCount,
-                        cache_read_input_tokens: geminiData.usageMetadata.cachedContentTokenCount
+                    if (sawToolUse) {
+                        stopReason = 'tool_use'
+                    } else {
+                        stopReason = candidate.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn'
                     }
                 }
 
-                return {
-                    events,
-                    textBlockIndex: currentTextIndex,
-                    toolUseBlockIndex: currentToolIndex,
-                    stopReason,
-                    usage
-                }
+                return { events, stopReason, usage }
             },
             this.inputTokensEstimate
         )

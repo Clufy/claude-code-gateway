@@ -78,7 +78,8 @@ async function handleRequest(request: Request, env: Env, requestId: string): Pro
     if (request.method === 'POST' && url.pathname === '/v1/messages/count_tokens') {
         const auth = await requireProxyKey(request, env, requestId)
         if (auth) return auth
-        const body = await request.json()
+        const body = await parseJsonBody(request, requestId)
+        if (body instanceof Response) return body
         return jsonResponse(tokens.countTokensForRequest(body), 200, requestId)
     }
 
@@ -116,6 +117,18 @@ async function requireProxyKey(request: Request, env: Env, requestId: string): P
         return anthropicError(401, 'authentication_error', 'invalid x-api-key', requestId)
     }
     return null
+}
+
+// Malformed JSON is a 400, not a 500 — the body came from the client.
+async function parseJsonBody(request: Request, requestId: string): Promise<any | Response> {
+    try {
+        return await request.json()
+    } catch (error) {
+        if (error instanceof SyntaxError) {
+            return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
+        }
+        throw error
+    }
 }
 
 async function enforceRateLimit(request: Request, env: Env, requestId: string): Promise<Response | null> {
@@ -180,7 +193,15 @@ async function handleExternal(
         return provider.handle(inboundRequest, baseUrl, keyResult.apiKey)
     }
 
-    const providerRequest = await provider.convertToProviderRequest(inboundRequest, baseUrl, keyResult.apiKey)
+    let providerRequest: Request
+    try {
+        providerRequest = await provider.convertToProviderRequest(inboundRequest, baseUrl, keyResult.apiKey)
+    } catch (error) {
+        if (error instanceof SyntaxError) {
+            return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
+        }
+        throw error
+    }
     const providerResponse = await fetchWithRetry(providerRequest)
     return provider.convertToClaudeResponse(providerResponse)
 }

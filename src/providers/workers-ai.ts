@@ -256,11 +256,17 @@ function extractUsage(payload: any): { prompt: number | null; completion: number
 export class WorkersAIProvider {
     private requestId = ''
 
-    constructor(private env: Env) {}
+    // ponytail: structural — only AI.run is needed; lets this file compile standalone (check:nonstream)
+    constructor(private env: { AI: { run(model: any, options: any, env?: any): Promise<any> } }) {}
 
     async handle(request: Request, requestId: string): Promise<Response> {
         this.requestId = requestId
-        const body = (await request.json()) as any
+        let body: any
+        try {
+            body = (await request.json()) as any
+        } catch {
+            return this.error(400, 'invalid_request_error', 'invalid JSON body')
+        }
         const model = body?.model
         const messages = body?.messages
         const id = `msg_${crypto.randomUUID()}`
@@ -383,9 +389,13 @@ export class WorkersAIProvider {
 
         // Open models often emit tool calls as Hermes-format text instead of native
         // tool_calls deltas; scan accumulated text and reconstruct them.
+        // push() drains completed text AND calls; flush() only returns the tail —
+        // both returns must be merged or the whole answer is dropped.
         const hermes = new HermesFilter(knownTools)
-        hermes.push(text)
-        const { text: visibleText, calls: hermesCalls } = hermes.flush()
+        const pushed = hermes.push(text)
+        const flushed = hermes.flush()
+        const visibleText = pushed.text + flushed.text
+        const hermesCalls = [...pushed.calls, ...flushed.calls]
 
         const content: any[] = []
         if (reasoning) content.push({ type: 'thinking', thinking: reasoning })
@@ -404,7 +414,8 @@ export class WorkersAIProvider {
         for (const call of hermesCalls) {
             content.push({ type: 'tool_use', id: toolUseId(undefined), name: call.name, input: call.input })
         }
-        if (calls.length > 0 || hermesCalls.length > 0) stopReason = 'tool_use'
+        // 'tool_use' only when a tool_use block actually exists — nameless calls are skipped above
+        if (content.some((block) => block.type === 'tool_use')) stopReason = 'tool_use'
 
         return new Response(
             JSON.stringify({
@@ -573,7 +584,7 @@ export class WorkersAIProvider {
             }
             state.blockIndex += emitted
             state.toolBlocksEmitted = calls.length
-            state.stopReason = 'tool_use'
+            if (emitted > 0) state.stopReason = 'tool_use'
         }
 
         const emitHermesCalls = (controller: TransformStreamDefaultController, calls: HermesCall[]) => {
