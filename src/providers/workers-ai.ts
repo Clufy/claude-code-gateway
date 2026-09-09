@@ -384,8 +384,11 @@ export class WorkersAIProvider {
         // Open models often emit tool calls as Hermes-format text instead of native
         // tool_calls deltas; scan accumulated text and reconstruct them.
         const hermes = new HermesFilter(knownTools)
-        hermes.push(text)
-        const { text: visibleText, calls: hermesCalls } = hermes.flush()
+        // push() already drains plain text — keep its return value, only flush()
+        // would leave the buffer empty and drop the whole answer.
+        const pushed = hermes.push(text)
+        const { text: flushedText, calls: hermesCalls } = hermes.flush()
+        const visibleText = pushed.text + flushedText
 
         const content: any[] = []
         if (reasoning) content.push({ type: 'thinking', thinking: reasoning })
