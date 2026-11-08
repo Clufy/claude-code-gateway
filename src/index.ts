@@ -229,7 +229,7 @@ async function handleExternal(
     }
     let stream = false
     try {
-        stream = JSON.parse(limitedBody.text)?.stream === true
+        stream = Boolean(JSON.parse(limitedBody.text)?.stream)
     } catch {
         // the converter reports invalid JSON itself
     }

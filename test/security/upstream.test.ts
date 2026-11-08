@@ -38,10 +38,13 @@ describe('upstream timeouts', () => {
 
     it('non-streaming total timeout covers the body', async () => {
         fetchStub = stubFetch(
-            () =>
+            (req) =>
                 new Response(
                     new ReadableStream({
                         start(c) {
+                            req.signal.addEventListener('abort', () =>
+                                c.error(new DOMException('aborted', 'AbortError'))
+                            )
                             c.enqueue(encoder.encode('{"choices":'))
                         }
                     }),
@@ -54,10 +57,13 @@ describe('upstream timeouts', () => {
 
     it('streaming body may outlast ttfb', async () => {
         fetchStub = stubFetch(
-            () =>
+            (req) =>
                 new Response(
                     new ReadableStream({
                         async start(c) {
+                            req.signal.addEventListener('abort', () =>
+                                c.error(new DOMException('aborted', 'AbortError'))
+                            )
                             for (let i = 0; i < 3; i++) {
                                 c.enqueue(
                                     encoder.encode(
@@ -92,6 +98,14 @@ describe('upstream retries and scrubbing', () => {
         expect(fetchStub.calls).toHaveLength(2)
         expect(res.status).toBe(200)
     })
+
+    it('returns provider error text after retries are exhausted', async () => {
+        fetchStub = stubFetch(() => new Response('{"error":{"message":"overloaded"}}', { status: 503 }))
+        const res = await post(false, makeEnv())
+        expect(fetchStub.calls).toHaveLength(3)
+        expect(res.status).toBe(503)
+        expect(await res.text()).toContain('overloaded')
+    }, 10000)
 
     it('scrubs key and bearer from provider errors', async () => {
         fetchStub = stubFetch(

@@ -55,10 +55,12 @@ export async function fetchUpstream(
         if (response.ok || !RETRYABLE_STATUS.has(response.status)) {
             return response
         }
-        try {
-            await response.body?.cancel()
-        } catch {
-            // ignore drain errors
+        if (attempt < retries) {
+            try {
+                await response.body?.cancel()
+            } catch {
+                // ignore drain errors
+            }
         }
         lastResponse = response
     }
