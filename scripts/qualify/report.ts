@@ -25,6 +25,7 @@ export interface ModelReport {
     totalP95: number
     outputTokens: number
     errors: number
+    fallbackRuns: number
     verdict: Verdict
     verdictReasons: string[]
 }
@@ -85,11 +86,20 @@ export function buildModelReport(model: string, runs: ScenarioRun[], tools: Fixt
             `toolScenarioPassRate ${num(toolScenarioPassRate)} < ${t.subagentOnly.toolScenarioPassRate}`
         )
 
-    const verdict: Verdict =
-        fitFailures.length === 0 ? 'fit' : subagentFailures.length === 0 ? 'subagent-only' : 'unfit'
+    // No gating evidence is never a pass.
+    const noEvidence = gating.length === 0
+    const verdict: Verdict = noEvidence
+        ? 'unfit'
+        : fitFailures.length === 0
+          ? 'fit'
+          : subagentFailures.length === 0
+            ? 'subagent-only'
+            : 'unfit'
     const verdictReasons = [...fitFailures, ...subagentFailures]
     if (modeScope === null) verdictReasons.push(MODE_SCOPE_NOTE)
-    if (gating.length === 0) verdictReasons.push('no tool scenarios were measured')
+    if (noEvidence) verdictReasons.push('no tool scenarios were measured')
+    const fallbackRuns = runs.filter((r) => r.collected.some((c) => c.proxyStats?.fallbackUsed)).length
+    if (fallbackRuns > 0) verdictReasons.push(`${fallbackRuns} runs answered by a fallback backend`)
 
     return {
         model,
@@ -115,6 +125,7 @@ export function buildModelReport(model: string, runs: ScenarioRun[], tools: Fixt
         ),
         outputTokens: collected.reduce((n, c) => n + (c.usage.output_tokens ?? 0), 0),
         errors: runs.filter((r) => r.collected.some((c) => c.error)).length,
+        fallbackRuns,
         verdict,
         verdictReasons
     }
@@ -135,12 +146,12 @@ export function renderMarkdown(
         `- Fixture: ${meta.fixture}`,
         `- Started: ${meta.startedAt}`,
         '',
-        '| Model | Verdict | Valid tool calls | From text | Unparsed | Errors | TTFB p50/p95 (ms) | Total p50/p95 (ms) | Output tokens |',
-        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |'
+        '| Model | Verdict | Valid tool calls | From text | Unparsed | Errors | Fallback runs | TTFB p50/p95 (ms) | Total p50/p95 (ms) | Output tokens |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |'
     ]
     for (const r of reports)
         out.push(
-            `| ${cell(r.model)} | ${r.verdict} | ${pct(r.validToolCallRate)} | ${pct(r.toolCallsFromTextRate)} | ${r.unparsedCount} | ${r.errors} | ${r.ttfbP50}/${r.ttfbP95} | ${r.totalP50}/${r.totalP95} | ${r.outputTokens} |`
+            `| ${cell(r.model)} | ${r.verdict} | ${pct(r.validToolCallRate)} | ${pct(r.toolCallsFromTextRate)} | ${r.unparsedCount} | ${r.errors} | ${r.fallbackRuns} | ${r.ttfbP50}/${r.ttfbP95} | ${r.totalP50}/${r.totalP95} | ${r.outputTokens} |`
         )
     for (const r of reports) {
         out.push('', `## ${r.model}: ${r.verdict}`, '')

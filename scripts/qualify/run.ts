@@ -70,7 +70,12 @@ export async function runQualification(opts: QualifyOptions, fetchImpl: typeof f
                             collected.push(failed(`request failed: ${e instanceof Error ? e.message : String(e)}`))
                         }
                     }
-                    const check = scenario.check(collected, fx)
+                    let check: { pass: boolean; detail: string }
+                    try {
+                        check = scenario.check(collected, fx)
+                    } catch (e) {
+                        check = { pass: false, detail: `check threw: ${e instanceof Error ? e.message : String(e)}` }
+                    }
                     result = {
                         scenarioId: scenario.id,
                         run: n,

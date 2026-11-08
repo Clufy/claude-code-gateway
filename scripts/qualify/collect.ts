@@ -4,6 +4,7 @@ export interface CollectedBlock {
     name?: string
     input?: unknown
     inputError?: string
+    rawInput?: string // joined partial_json, kept when it failed to parse
 }
 
 // Mirrors the proxy's debug stats shape on purpose; scripts/ never imports from src/.
@@ -166,6 +167,7 @@ function parseSse(raw: string, out: Collected): void {
                 block.input = json === '' ? {} : JSON.parse(json)
             } catch (e) {
                 block.inputError = e instanceof Error ? e.message : String(e)
+                block.rawInput = json
             }
         }
         out.blocks.push(block)

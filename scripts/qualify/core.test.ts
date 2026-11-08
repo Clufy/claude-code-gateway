@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { dirname, join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 import { collectResponse } from './collect.ts'
 import { isValidToolCall, validateToolInput } from './validate.ts'
 import { loadFixture, redactFixture } from './fixture.ts'
@@ -248,9 +248,13 @@ describe('loadFixture', () => {
         return p
     }
     it('resolves an explicit relative path against the current directory', () => {
-        const p = tmp({ system: 's', tools: [] })
-        const rel = relative(process.cwd(), p)
-        expect(loadFixture(rel).tools).toEqual([])
+        const dir = dirname(tmp({ system: 's', tools: [] }))
+        const spy = vi.spyOn(process, 'cwd').mockReturnValue(dir)
+        try {
+            expect(loadFixture('f.json').tools).toEqual([])
+        } finally {
+            spy.mockRestore()
+        }
     })
     it('rejects a fixture without a tools array, naming the file', () => {
         const p = tmp({ system: 's' })

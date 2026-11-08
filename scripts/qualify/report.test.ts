@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Collected } from './collect.ts'
 import { loadFixture } from './fixture.ts'
 import { buildModelReport, renderMarkdown, type ScenarioRun } from './report.ts'
+import { SCENARIOS } from './scenarios.ts'
 import { keyFromCustomHeaders, runQualification } from './run.ts'
 
 const fx = loadFixture('test/fixtures/claude-code-request.synthetic.json')
@@ -92,6 +93,51 @@ describe('buildModelReport', () => {
         expect(r.verdictReasons.join(' ')).toContain('mode.scope')
     })
 
+    it('is unfit when no gating tool scenario was measured', () => {
+        const runs = [run('turn.stop', 0, true), ...modeSkips()]
+        const r = buildModelReport('m', runs, fx.tools)
+        expect(r.verdict).toBe('unfit')
+        expect(r.verdictReasons).toContain('no tool scenarios were measured')
+    })
+
+    it('counts fallback runs without changing the verdict', () => {
+        const runs = make(10)
+        const stats = {
+            backend: 'b',
+            model: 'm',
+            fallbackUsed: true,
+            ttfbMs: 1,
+            toolCallsFromText: 0,
+            unparsedToolText: false
+        }
+        runs[0].collected = [
+            { ...collected(), proxyStats: stats },
+            { ...collected(), proxyStats: stats }
+        ]
+        runs[1].collected = [{ ...collected(), proxyStats: stats }]
+        const r = buildModelReport('m', runs, fx.tools)
+        expect(r.fallbackRuns).toBe(2)
+        expect(r.verdict).toBe('fit')
+        expect(r.verdictReasons).toContain('2 runs answered by a fallback backend')
+        const md = renderMarkdown([r], { base: 'b', runs: 1, fixture: 'f', startedAt: 's' })
+        expect(md).toContain('Fallback runs')
+        expect(md).toContain('2 runs answered by a fallback backend')
+    })
+
+    it('uses nearest-rank percentiles', () => {
+        const runs = make(10)
+        runs.forEach((r) => {
+            r.collected = []
+        })
+        runs[0].collected = Array.from({ length: 20 }, (_, i) => ({
+            ...collected(),
+            ttfbMs: i + 1,
+            totalMs: (i + 1) * 10
+        }))
+        const r = buildModelReport('m', runs, fx.tools)
+        expect([r.ttfbP50, r.ttfbP95, r.totalP50, r.totalP95]).toEqual([10, 19, 100, 190])
+    })
+
     it('counts errors, unparsed text and percentiles', () => {
         const runs = make(10)
         runs[0].collected = [{ ...collected(), error: 'boom', ttfbMs: 1000, totalMs: 2000 }]
@@ -123,7 +169,7 @@ describe('buildModelReport', () => {
             fixture: 'synthetic',
             startedAt: '2026-11-08T00:00:00Z'
         })
-        expect(md).toContain('fit')
+        expect(md).toContain('## m: fit')
         expect(md).toContain('tool.single')
         expect(md).toContain('mode.scope not measurable before Phase 3')
     })
@@ -178,6 +224,30 @@ describe('runQualification', () => {
         expect(report.errors).toBeGreaterThanOrEqual(2)
         expect(report.validToolCallRate).toBeLessThan(1)
         expect(report.verdict).toBe('unfit')
+    })
+
+    it('records a throwing check as a failed run', async () => {
+        const fetchImpl = (async () => json('{}')) as unknown as typeof fetch
+        const spy = vi.spyOn(SCENARIOS[5], 'check').mockImplementation(() => {
+            throw new Error('kaboom')
+        })
+        try {
+            const runs: ScenarioRun[] = []
+            await runQualification(
+                {
+                    base: 'http://x',
+                    key: 'k',
+                    models: ['m'],
+                    runs: 1,
+                    only: ['turn.stop'],
+                    onRun: (_m, r) => runs.push(r)
+                },
+                fetchImpl
+            )
+            expect(runs[0]).toMatchObject({ pass: false, detail: 'check threw: kaboom' })
+        } finally {
+            spy.mockRestore()
+        }
     })
 
     it('survives a network failure', async () => {

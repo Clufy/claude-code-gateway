@@ -136,34 +136,39 @@ Each route has these keys (unknown keys are rejected):
 
 - **Matching:** a key without `*` is an exact match and always wins. Otherwise the first
   glob key (in the order written) whose `*` wildcards match the name is used.
-- **Fallback:** only before the first byte reaches the client. The proxy moves to the next
+- **Fallback:** only before a backend's response is accepted (before any backend content is
+  relayed; keepalive pings may already have reached the client). The proxy moves to the next
   name in `fallback` on a `429`, any `5xx` (including a timeout `504`) or a connection error.
   Each fallback name is routed through `MODEL_ROUTES` too, and duplicates are skipped. The
   last target's result is returned as is.
 - **Errors:** a malformed `MODEL_ROUTES`, or a `keySecret` that is not set, makes the
-  request fail with `500 invalid config: <VAR>`.
+  request fail with `500 invalid config: <VAR>`. Secrets are resolved up front, so a missing
+  secret for a fallback target fails every request on that route, even when the primary is
+  healthy.
 
 #### Keepalive
 
 Claude Code gives up on a silent connection, and slow models can take a while to start. If
-the backend has not started its stream after 5 s, the proxy commits to a `200` SSE
+a streaming `POST /v1/messages` request (`stream: true`) has not had its backend stream
+start after 5 s, the proxy commits to a `200` SSE
 response, sends `message_start`, then a `ping` every 10 s until the backend answers. A
 backend failure after that point arrives as an SSE `error` event, because the status is
 already sent. Keepalive covers only the wait for the stream to start; silence between
 chunks after that is bounded by `UPSTREAM_TTFB_MS` (the idle timeout), which ends the stream
-with an SSE `error` event.
+with an SSE `error` event. Keepalive has no opt-out and does not apply to non-stream
+requests or to the `/{type}/{provider_url}/v1/messages` path.
 
 ### 6. Security defaults (since Phase 1)
 
-| Default           | Behavior and opt-out                                                                                                                                                    | Error text                                                                                                                    |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Auth required     | With no `PROXY_KEY`, API requests fail with `500`. Opt out with `ALLOW_ANONYMOUS=true`. A wrong or missing key gets `401`.                                              | `proxy not configured: set PROXY_KEY or ALLOW_ANONYMOUS=true`; `invalid x-api-key` / `invalid x-proxy-key`                    |
-| Host allowlist    | External routes only reach hosts in `ALLOWED_HOSTS` (`403`). IP literals and custom ports are also rejected. Opt out with `ALLOWED_HOSTS=*`.                            | `Provider host not allowed by ALLOWED_HOSTS`; `IP-literal provider hosts are not allowed`; `custom ports are not allowed`     |
-| HTTPS only        | `http://` provider URLs get `403`. Opt out with `ALLOW_HTTP=true`. Credentials in the URL and unparseable URLs (`400`) are always rejected.                             | `http provider URLs are disabled; set ALLOW_HTTP=true`; `credentials in provider URL are not allowed`; `invalid provider URL` |
-| Body limit        | POST bodies over the limit get `413`. Tune with `MAX_BODY_BYTES`.                                                                                                       | `request body exceeds MAX_BODY_BYTES (<n> bytes)`                                                                             |
-| Upstream timeouts | Slow upstreams get `504`. Tune with `UPSTREAM_TTFB_MS` and `UPSTREAM_TOTAL_MS`.                                                                                         | `upstream timed out after <n> ms`                                                                                             |
-| Header allowlist  | Only allowlisted client headers are forwarded upstream; the rest are stripped. There is no opt-out variable.                                                            | none                                                                                                                          |
-| Invalid config    | A malformed var (e.g. `MAX_BODY_BYTES=abc`, `ALLOW_HTTP=yes`) makes every request fail with `500` instead of silently using a default. Fix the var in `wrangler.jsonc`. | `invalid config: <VAR>` (e.g. `invalid config: MAX_BODY_BYTES`)                                                               |
+| Default           | Behavior and opt-out                                                                                                                                                                                                     | Error text                                                                                                                    |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Auth required     | With no `PROXY_KEY`, API requests fail with `500`. Opt out with `ALLOW_ANONYMOUS=true`. A wrong or missing key gets `401`.                                                                                               | `proxy not configured: set PROXY_KEY or ALLOW_ANONYMOUS=true`; `invalid x-api-key` / `invalid x-proxy-key`                    |
+| Host allowlist    | External routes only reach hosts in `ALLOWED_HOSTS` (`403`). IP literals and custom ports are also rejected. Opt out with `ALLOWED_HOSTS=*`.                                                                             | `Provider host not allowed by ALLOWED_HOSTS`; `IP-literal provider hosts are not allowed`; `custom ports are not allowed`     |
+| HTTPS only        | `http://` provider URLs get `403`. Opt out with `ALLOW_HTTP=true`. Credentials in the URL and unparseable URLs (`400`) are always rejected.                                                                              | `http provider URLs are disabled; set ALLOW_HTTP=true`; `credentials in provider URL are not allowed`; `invalid provider URL` |
+| Body limit        | POST bodies over the limit get `413`. Tune with `MAX_BODY_BYTES`.                                                                                                                                                        | `request body exceeds MAX_BODY_BYTES (<n> bytes)`                                                                             |
+| Upstream timeouts | Slow upstreams get `504`; on streaming `/v1/messages` a 504 after keepalive has committed arrives as a `200` plus an SSE `error` event (keepalive has no opt-out). Tune with `UPSTREAM_TTFB_MS` and `UPSTREAM_TOTAL_MS`. | `upstream timed out after <n> ms`                                                                                             |
+| Header allowlist  | Only allowlisted client headers are forwarded upstream; the rest are stripped. There is no opt-out variable.                                                                                                             | none                                                                                                                          |
+| Invalid config    | A malformed var (e.g. `MAX_BODY_BYTES=abc`, `ALLOW_HTTP=yes`) makes every request fail with `500` instead of silently using a default. Fix the var in `wrangler.jsonc`.                                                  | `invalid config: <VAR>` (e.g. `invalid config: MAX_BODY_BYTES`)                                                               |
 
 Provider API keys are scrubbed from upstream error text before it is returned.
 
@@ -283,13 +288,15 @@ tool calls recovered from text and fallback use.
 | `mode.format`        | Skipped until Phase 3                                                            |
 | `mode.scope`         | Skipped until Phase 3                                                            |
 
-Verdicts, checked in this order (the report lists every failed threshold):
+Verdicts, checked in this order (the report lists every failed threshold). A model with no
+measured tool scenario is `unfit`. Runs answered by a fallback backend are counted and
+noted in the reasons, but do not change the verdict.
 
 | Verdict         | Valid tool-call rate | Tool scenario pass rate | `mode.scope`       |
 | --------------- | -------------------- | ----------------------- | ------------------ |
 | `fit`           | at least 95%         | at least 90%            | 100% when measured |
 | `subagent-only` | at least 85%         | at least 70%            | not gated          |
-| `unfit`         | below                | below                   | not gated          |
+| `unfit`         | otherwise            | otherwise               | not gated          |
 
 The tool scenario pass rate is the mean of `tool.single`, `tool.args_complex`,
 `tool.choice`, `tool.after_result` and `context.long`. Until the `mode.*` scenarios turn on
@@ -306,6 +313,10 @@ npm run qualify:capture                       # listens on 127.0.0.1:8787
 # in another terminal:
 ANTHROPIC_BASE_URL=http://127.0.0.1:8787 ANTHROPIC_API_KEY=dummy claude -p "hi"
 ```
+
+If `~/.claude/settings.json` has an `env` block that sets `ANTHROPIC_BASE_URL`, it may
+override the shell variable. Remove it temporarily for the capture, or check that the
+capture server printed a capture.
 
 The first request that carries `tools` is saved, redacted (home directory, user name and
 common API key patterns), to `test/fixtures/local/claude-code-request.json`, which is

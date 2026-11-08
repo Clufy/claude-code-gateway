@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
+import { loadFixture } from './fixture.ts'
 import { renderMarkdown } from './report.ts'
 import type { ScenarioRun } from './report.ts'
 import { keyFromCustomHeaders, runQualification } from './run.ts'
@@ -13,7 +14,7 @@ function usageError(message: string): never {
 
 function stamp(d: Date): string {
     const p = (n: number) => String(n).padStart(2, '0')
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
 }
 
 const csv = (s: string) =>
@@ -56,6 +57,11 @@ if (only) {
 }
 
 const startedAt = new Date()
+try {
+    loadFixture(values.fixture)
+} catch (e) {
+    usageError(`cannot load fixture: ${e instanceof Error ? e.message : String(e)}`)
+}
 const rawRuns: { model: string; run: ScenarioRun }[] = []
 const reports = await runQualification({
     base,

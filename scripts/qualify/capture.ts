@@ -13,6 +13,8 @@ if (!/^[0-9]+$/.test(values.port) || Number(values.port) > 65535) {
 
 const target = resolve(import.meta.dirname, '../..', LOCAL_FIXTURE_PATH)
 
+const MAX_BODY = 64 * 1024 * 1024
+
 const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 
 function message(model: string, stream: boolean): { type: string; body: string } {
@@ -70,8 +72,19 @@ const server = createServer((req, res) => {
         return
     }
     const chunks: Buffer[] = []
-    req.on('data', (c: Buffer) => chunks.push(c))
+    let size = 0
+    let tooLarge = false
+    req.on('data', (c: Buffer) => {
+        size += c.length
+        if (size > MAX_BODY) tooLarge = true
+        else chunks.push(c)
+    })
     req.on('end', () => {
+        if (tooLarge) {
+            res.writeHead(413, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ type: 'error', error: { type: 'request_too_large', message: 'body too large' } }))
+            return
+        }
         let body: any
         try {
             body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
