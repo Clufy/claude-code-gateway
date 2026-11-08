@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { verifyProxyKey } from '../../src/auth'
 import { callWorker, makeEnv } from '../helpers'
 
 const msg = { model: 'm', messages: [{ role: 'user', content: 'hi' }] }
@@ -49,5 +50,29 @@ describe('proxy auth', () => {
         expect(anon.status).toBe(401)
         const authed = await callWorker('/nope/example.com/v1/messages', post('', { 'x-proxy-key': 'test-key' }))
         expect(authed.status).toBe(404)
+    })
+    it('verifyProxyKey fails closed when expected is empty', async () => {
+        expect(await verifyProxyKey('anything', '')).toBe(false)
+    })
+    it('missing x-api-key on an internal route -> 401', async () => {
+        const res = await callWorker('/v1/models')
+        expect(res.status).toBe(401)
+        const body = await res.json<any>()
+        expect(body.error.type).toBe('authentication_error')
+        expect(body.error.message).toBe('invalid x-api-key')
+    })
+    it('missing x-proxy-key on the external route -> 401', async () => {
+        const res = await callWorker('/openai/api.openai.com/v1/messages', post('', { 'x-api-key': 'sk-provider' }))
+        expect(res.status).toBe(401)
+        const body = await res.json<any>()
+        expect(body.error.type).toBe('authentication_error')
+        expect(body.error.message).toBe('invalid x-proxy-key')
+    })
+    it('malformed escape without x-proxy-key -> 401, with it -> 400', async () => {
+        const path = '/openai/%E0%A4%A/v1/messages'
+        expect((await callWorker(path, post('', {}))).status).toBe(401)
+        const res = await callWorker(path, post('', { 'x-proxy-key': 'test-key' }))
+        expect(res.status).toBe(400)
+        expect((await res.json<any>()).error.message).toBe('invalid provider URL')
     })
 })

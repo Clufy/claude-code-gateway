@@ -120,15 +120,7 @@ async function handleRequest(request: Request, env: Env, requestId: string, conf
     if (request.method === 'POST' && externalMatch) {
         const limited = await enforceRateLimit(request, env, requestId)
         if (limited) return limited
-        let type: string
-        let providerUrl: string
-        try {
-            type = decodeURIComponent(externalMatch[1])
-            providerUrl = decodeURIComponent(externalMatch[2])
-        } catch {
-            return anthropicError(400, 'invalid_request_error', 'invalid provider URL', requestId)
-        }
-        return handleExternal(request, type, providerUrl, requestId, config)
+        return handleExternal(request, externalMatch[1], externalMatch[2], requestId, config)
     }
 
     return anthropicError(404, 'not_found_error', 'Not found', requestId)
@@ -180,8 +172,8 @@ async function enforceRateLimit(request: Request, env: Env, requestId: string): 
 
 async function handleExternal(
     request: Request,
-    type: string,
-    providerUrl: string,
+    rawType: string,
+    rawProviderUrl: string,
     requestId: string,
     config: ProxyConfig
 ): Promise<Response> {

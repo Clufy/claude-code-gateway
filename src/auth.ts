@@ -1,10 +1,7 @@
 import type { ProxyConfig } from './config'
 
-export async function verifyProxyKey(provided: string | null, expected: string | undefined): Promise<boolean> {
-    if (!expected) {
-        return true
-    }
-    if (!provided) {
+export async function verifyProxyKey(provided: string | null, expected: string): Promise<boolean> {
+    if (!expected || !provided) {
         return false
     }
     const enc = new TextEncoder()
