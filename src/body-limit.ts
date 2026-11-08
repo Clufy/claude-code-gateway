@@ -9,7 +9,8 @@ export async function readLimitedBody(request: Request, maxBytes: number): Promi
     if (!request.body) return { ok: true, text: '' }
 
     const reader = request.body.getReader()
-    const chunks: Uint8Array[] = []
+    const decoder = new TextDecoder()
+    const parts: string[] = []
     let total = 0
     for (;;) {
         const { done, value } = await reader.read()
@@ -19,13 +20,8 @@ export async function readLimitedBody(request: Request, maxBytes: number): Promi
             await reader.cancel()
             return { ok: false }
         }
-        chunks.push(value)
+        parts.push(decoder.decode(value, { stream: true }))
     }
-    const bytes = new Uint8Array(total)
-    let offset = 0
-    for (const chunk of chunks) {
-        bytes.set(chunk, offset)
-        offset += chunk.byteLength
-    }
-    return { ok: true, text: new TextDecoder().decode(bytes) }
+    parts.push(decoder.decode())
+    return { ok: true, text: parts.join('') }
 }
