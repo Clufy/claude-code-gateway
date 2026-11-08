@@ -17,17 +17,27 @@ export default {
         const url = new URL(request.url)
         const isMessages = url.pathname === '/v1/messages' || /\/v1\/messages$/.test(url.pathname)
         const start = Date.now()
-        let config: ProxyConfig
         try {
-            config = loadConfig(env)
-        } catch (e) {
-            if (e instanceof ConfigError) {
-                console.error(e.message)
-                return anthropicError(500, 'api_error', `invalid config: ${e.variable}`, requestId)
+            let config: ProxyConfig
+            try {
+                config = loadConfig(env)
+            } catch (e) {
+                if (e instanceof ConfigError) {
+                    console.error(e.message)
+                    const response = anthropicError(500, 'api_error', `invalid config: ${e.variable}`, requestId)
+                    if (isMessages) {
+                        logRequest({
+                            requestId,
+                            method: request.method,
+                            path: url.pathname,
+                            status: 500,
+                            durationMs: Date.now() - start
+                        })
+                    }
+                    return response
+                }
+                throw e
             }
-            throw e
-        }
-        try {
             const response = await handleRequest(request, env, requestId, config, start)
             if (isMessages && !finalized.has(response)) {
                 logRequest({

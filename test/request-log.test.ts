@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { callWorker, fakeAI, makeEnv, readSse, stubFetch } from './helpers'
 import { tapSse } from '../src/sse-tap'
+import { finalizeMessagesResponse } from '../src/request-log'
+import { newStats } from '../src/stats'
 
 const ROUTES = JSON.stringify({
     'claude-*': {
@@ -124,16 +126,116 @@ describe('request log', () => {
         expect(lines[0].route).toBeUndefined()
     })
 
-    it('thrown exception logs one 500 line', async () => {
-        const ai = {
-            run: async () => {
+    it('thrown exception hits the catch and logs one 500 line', async () => {
+        const env = makeEnv()
+        Object.defineProperty(env, 'MODEL_ROUTES', {
+            get() {
                 throw new Error('boom')
             }
-        }
+        })
         const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-        const res = await post(makeEnv({ AI: ai }))
+        const res = await post(env)
         errSpy.mockRestore()
-        expect(res.status).toBeGreaterThanOrEqual(500)
+        expect(res.status).toBe(500)
+        expect((await res.json<any>()).error.message).toBe('boom')
+        expect(requestLines()).toHaveLength(1)
+        expect(requestLines()[0].status).toBe(500)
+    })
+
+    it('config error from loadConfig logs one line', async () => {
+        const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const res = await post(makeEnv({ MODEL_ROUTES: '{not json' }))
+        errSpy.mockRestore()
+        expect(res.status).toBe(500)
+        expect(requestLines()).toHaveLength(1)
+        expect(requestLines()[0]).toMatchObject({ status: 500, path: '/v1/messages' })
+    })
+
+    it('planTargets config error logs one line', async () => {
+        const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const res = await post(makeEnv({ MODEL_ROUTES: ROUTES }), {}, {}, 'claude-opus-4-1')
+        errSpy.mockRestore()
+        expect(res.status).toBe(500)
+        expect(requestLines()).toHaveLength(1)
+        expect(requestLines()[0].status).toBe(500)
+    })
+
+    it('rate limited request logs one line', async () => {
+        const res = await post(makeEnv({ RATE_LIMITER: { limit: async () => ({ success: false }) } }))
+        expect(res.status).toBe(429)
+        expect(requestLines()).toHaveLength(1)
+        expect(requestLines()[0].status).toBe(429)
+    })
+
+    it('413 over body limit logs one line', async () => {
+        const res = await post(makeEnv({ MAX_BODY_BYTES: '10' }))
+        expect(res.status).toBe(413)
+        expect(requestLines()).toHaveLength(1)
+        expect(requestLines()[0].status).toBe(413)
+    })
+
+    it('client cancel logs one line after the cancel', async () => {
+        const enc = new TextEncoder()
+        let sent = false
+        const ai = fakeAI(
+            () =>
+                new Response(
+                    new ReadableStream({
+                        pull(c) {
+                            if (sent) return new Promise(() => {})
+                            sent = true
+                            c.enqueue(enc.encode(`data: ${JSON.stringify({ response: 'hi' })}\n\n`))
+                        }
+                    }),
+                    { status: 200, headers: { 'content-type': 'text/event-stream' } }
+                )
+        )
+        const res = await post(makeEnv({ AI: ai }), { stream: true })
+        const reader = res.body!.getReader()
+        await reader.read()
+        expect(requestLines()).toHaveLength(0)
+        await reader.cancel()
+        expect(requestLines()).toHaveLength(1)
+        expect(requestLines()[0]).toMatchObject({ streamed: true, status: 200 })
+    })
+
+    it('upstream source error mid-stream logs one line', async () => {
+        const enc = new TextEncoder()
+        let sent = false
+        const ai = fakeAI(
+            () =>
+                new Response(
+                    new ReadableStream({
+                        pull(c) {
+                            if (!sent) {
+                                sent = true
+                                c.enqueue(enc.encode(`data: ${JSON.stringify({ response: 'hi' })}\n\n`))
+                                return
+                            }
+                            c.error(new Error('source died'))
+                        }
+                    }),
+                    { status: 200, headers: { 'content-type': 'text/event-stream' } }
+                )
+        )
+        const res = await post(makeEnv({ AI: ai }), { stream: true })
+        await res.text().catch(() => {})
+        expect(requestLines()).toHaveLength(1)
+        expect(requestLines()[0]).toMatchObject({ streamed: true, status: 200 })
+    })
+
+    it('SSE 200 with a null body still logs one line', async () => {
+        const res = new Response(null, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+        const out = await finalizeMessagesResponse(res, {
+            request: new Request('https://proxy.test/v1/messages', { method: 'POST' }),
+            requestId: 'r',
+            start: Date.now(),
+            backend: 'b',
+            fallbackUsed: false,
+            ttfbMs: 1,
+            stats: newStats()
+        })
+        expect(out.status).toBe(200)
         expect(requestLines()).toHaveLength(1)
     })
 })
@@ -232,5 +334,17 @@ describe('tapSse', () => {
         await reader.cancel()
         expect(ends).toBe(1)
         expect(seen).toEqual(['a'])
+    })
+
+    it('throwing hooks never break the stream', async () => {
+        const out = tapSse(make([body]), {
+            onEvent() {
+                throw new Error('hook')
+            },
+            onEnd() {
+                throw new Error('end')
+            }
+        })
+        expect(await out.text()).toBe(body)
     })
 })

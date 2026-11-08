@@ -76,7 +76,7 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
     })
 
     let out: Response
-    const isStream = response.ok && response.headers.get('content-type')?.includes('text/event-stream')
+    const isStream = response.ok && response.body && response.headers.get('content-type')?.includes('text/event-stream')
     if (isStream) {
         let inputTokens: number | undefined
         let outputTokens: number | undefined
