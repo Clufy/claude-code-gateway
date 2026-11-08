@@ -73,7 +73,9 @@ describe('provider URL policy in the router', () => {
     it('never fetches another host for encoded paths', async () => {
         const stub = stubFetch(() => new Response('{}'))
         restore = stub.restore
-        await post('/openai/api.openai.com%2F..%2F..%40evil.com/v1/messages')
+        const res = await post('/openai/api.openai.com%2F..%2F..%40evil.com/v1/messages')
+        expect(res.status).toBe(200)
+        expect(stub.calls.length).toBeGreaterThan(0)
         for (const c of stub.calls) expect(new URL(c.url).hostname).toBe('api.openai.com')
     })
 
