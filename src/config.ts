@@ -1,3 +1,19 @@
+import { resolveProviderUrl } from './provider-url'
+
+export type BackendType = 'workers-ai' | 'openai' | 'openai-responses' | 'gemini'
+export interface Route {
+    provider: BackendType
+    model: string
+    baseUrl?: string
+    keySecret?: string
+    fallback: string[]
+    contextTokens?: number
+}
+export interface RouteEntry {
+    pattern: string
+    route: Route
+}
+
 export interface ProxyConfig {
     proxyKey: string | null
     allowAnonymous: boolean
@@ -6,6 +22,7 @@ export interface ProxyConfig {
     maxBodyBytes: number
     upstreamTtfbMs: number
     upstreamTotalMs: number
+    routes: RouteEntry[]
 }
 
 export class ConfigError extends Error {
@@ -79,15 +96,89 @@ function parseHosts(raw: Raw): ReadonlySet<string> | '*' {
     return new Set(entries)
 }
 
+const BACKENDS: readonly string[] = ['workers-ai', 'openai', 'openai-responses', 'gemini']
+const ROUTE_KEYS = new Set(['provider', 'model', 'baseUrl', 'keySecret', 'fallback', 'contextTokens'])
+
+function parseRoutes(raw: Raw, urlCfg: Pick<ProxyConfig, 'allowedHosts' | 'allowHttp'>): RouteEntry[] {
+    const text = str(raw, 'MODEL_ROUTES')
+    if (text === undefined || text.trim() === '') return []
+    const bad = (reason: string): never => {
+        throw new ConfigError('MODEL_ROUTES', reason)
+    }
+    let parsed: unknown
+    try {
+        parsed = JSON.parse(text)
+    } catch {
+        return bad('MODEL_ROUTES is not valid JSON')
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return bad('MODEL_ROUTES must be a JSON object')
+    }
+    const entries: RouteEntry[] = []
+    for (const [pattern, value] of Object.entries(parsed)) {
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+            return bad(`route "${pattern}" must be an object`)
+        }
+        const r = value as Record<string, unknown>
+        for (const k of Object.keys(r)) {
+            if (!ROUTE_KEYS.has(k)) return bad(`route "${pattern}" has unknown key "${k}"`)
+        }
+        if (typeof r.provider !== 'string' || !BACKENDS.includes(r.provider)) {
+            return bad(`route "${pattern}" has invalid provider`)
+        }
+        const provider = r.provider as BackendType
+        if (typeof r.model !== 'string' || r.model === '') {
+            return bad(`route "${pattern}" requires a non-empty model`)
+        }
+        const route: Route = { provider, model: r.model, fallback: [] }
+        if (provider !== 'workers-ai' && (r.baseUrl === undefined || r.keySecret === undefined)) {
+            return bad(`route "${pattern}" requires baseUrl and keySecret`)
+        }
+        if (r.baseUrl !== undefined) {
+            if (typeof r.baseUrl !== 'string') return bad(`route "${pattern}" baseUrl must be a string`)
+            const u = resolveProviderUrl(r.baseUrl, urlCfg)
+            if (!u.ok) return bad(`route "${pattern}" baseUrl rejected: ${u.message}`)
+            route.baseUrl = u.baseUrl
+        }
+        if (r.keySecret !== undefined) {
+            if (typeof r.keySecret !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(r.keySecret)) {
+                return bad(`route "${pattern}" keySecret must match /^[A-Z][A-Z0-9_]*$/`)
+            }
+            route.keySecret = r.keySecret
+        }
+        if (r.fallback !== undefined) {
+            if (
+                !Array.isArray(r.fallback) ||
+                r.fallback.length > 3 ||
+                !r.fallback.every((f) => typeof f === 'string')
+            ) {
+                return bad(`route "${pattern}" fallback must be an array of at most 3 strings`)
+            }
+            route.fallback = r.fallback as string[]
+        }
+        if (r.contextTokens !== undefined) {
+            if (typeof r.contextTokens !== 'number' || !Number.isSafeInteger(r.contextTokens) || r.contextTokens < 1) {
+                return bad(`route "${pattern}" contextTokens must be a positive integer`)
+            }
+            route.contextTokens = r.contextTokens
+        }
+        entries.push({ pattern, route })
+    }
+    return entries
+}
+
 export function loadConfig(env: unknown): ProxyConfig {
     const raw: Raw = typeof env === 'object' && env !== null ? (env as Raw) : {}
+    const allowedHosts = parseHosts(raw)
+    const allowHttp = parseBool(raw, 'ALLOW_HTTP')
     return {
         proxyKey: str(raw, 'PROXY_KEY') || null,
         allowAnonymous: parseBool(raw, 'ALLOW_ANONYMOUS'),
-        allowedHosts: parseHosts(raw),
-        allowHttp: parseBool(raw, 'ALLOW_HTTP'),
+        allowedHosts,
+        allowHttp,
         maxBodyBytes: parseInt10(raw, 'MAX_BODY_BYTES', DEFAULT_MAX_BODY_BYTES),
         upstreamTtfbMs: parseInt10(raw, 'UPSTREAM_TTFB_MS', DEFAULT_UPSTREAM_TTFB_MS),
-        upstreamTotalMs: parseInt10(raw, 'UPSTREAM_TOTAL_MS', DEFAULT_UPSTREAM_TOTAL_MS)
+        upstreamTotalMs: parseInt10(raw, 'UPSTREAM_TOTAL_MS', DEFAULT_UPSTREAM_TOTAL_MS),
+        routes: parseRoutes(raw, { allowedHosts, allowHttp })
     }
 }
