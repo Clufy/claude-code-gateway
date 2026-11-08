@@ -5,7 +5,8 @@ import { readLimitedBody } from './body-limit'
 import { resolveProviderUrl } from './provider-url'
 import { BackendType, ConfigError, loadConfig, ProxyConfig } from './config'
 import { callTarget, dispatchWithFallback, PROVIDERS } from './dispatch'
-import { planTargets, Target } from './routing'
+import { findRouteEntry, planTargets, Target } from './routing'
+import { finalized, finalizeMessagesResponse, logRequest } from './request-log'
 import { newStats } from './stats'
 import * as models from './models'
 import * as tokens from './tokens'
@@ -27,39 +28,41 @@ export default {
             throw e
         }
         try {
-            const response = await handleRequest(request, env, requestId, config)
-            if (isMessages) {
-                console.log(
-                    JSON.stringify({
-                        requestId,
-                        method: request.method,
-                        path: url.pathname,
-                        status: response.status,
-                        durationMs: Date.now() - start
-                    })
-                )
+            const response = await handleRequest(request, env, requestId, config, start)
+            if (isMessages && !finalized.has(response)) {
+                logRequest({
+                    requestId,
+                    method: request.method,
+                    path: url.pathname,
+                    status: response.status,
+                    durationMs: Date.now() - start
+                })
             }
             return withRequestId(response, requestId)
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
             console.error(error)
             if (isMessages) {
-                console.log(
-                    JSON.stringify({
-                        requestId,
-                        method: request.method,
-                        path: url.pathname,
-                        status: 500,
-                        durationMs: Date.now() - start
-                    })
-                )
+                logRequest({
+                    requestId,
+                    method: request.method,
+                    path: url.pathname,
+                    status: 500,
+                    durationMs: Date.now() - start
+                })
             }
             return anthropicError(500, 'api_error', message, requestId)
         }
     }
 }
 
-async function handleRequest(request: Request, env: Env, requestId: string, config: ProxyConfig): Promise<Response> {
+async function handleRequest(
+    request: Request,
+    env: Env,
+    requestId: string,
+    config: ProxyConfig,
+    start: number
+): Promise<Response> {
     const url = new URL(request.url)
 
     if (request.method === 'GET' && url.pathname === '/') {
@@ -120,14 +123,25 @@ async function handleRequest(request: Request, env: Env, requestId: string, conf
             throw e
         }
         const ctx = { env, cfg: config, requestId, inboundHeaders: request.headers, stats: newStats() }
-        return (await dispatchWithFallback(targets, body, ctx)).response
+        const result = await dispatchWithFallback(targets, body, ctx)
+        return finalizeMessagesResponse(result.response, {
+            request,
+            requestId,
+            start,
+            model: typeof model === 'string' ? model : undefined,
+            route: typeof model === 'string' ? findRouteEntry(model, config.routes)?.pattern : undefined,
+            backend: result.target.label,
+            fallbackUsed: result.fallbackUsed,
+            ttfbMs: result.ttfbMs,
+            stats: ctx.stats
+        })
     }
 
     const externalMatch = url.pathname.match(/^\/([^/]+)\/(.+)\/v1\/messages$/)
     if (request.method === 'POST' && externalMatch) {
         const limited = await enforceRateLimit(request, env, requestId)
         if (limited) return limited
-        return handleExternal(request, env, externalMatch[1], externalMatch[2], requestId, config)
+        return handleExternal(request, env, externalMatch[1], externalMatch[2], requestId, config, start)
     }
 
     return anthropicError(404, 'not_found_error', 'Not found', requestId)
@@ -183,7 +197,8 @@ async function handleExternal(
     rawType: string,
     rawProviderUrl: string,
     requestId: string,
-    config: ProxyConfig
+    config: ProxyConfig,
+    start: number
 ): Promise<Response> {
     const authError = await requireProxyKey(request, config, requestId, 'x-proxy-key')
     if (authError) return authError
@@ -226,7 +241,18 @@ async function handleExternal(
         label: type
     }
     const ctx = { env, cfg: config, requestId, inboundHeaders: keyResult.headers, stats: newStats() }
-    return callTarget(target, body, ctx)
+    const callStart = Date.now()
+    const response = await callTarget(target, body, ctx)
+    return finalizeMessagesResponse(response, {
+        request,
+        requestId,
+        start,
+        model: typeof body.model === 'string' ? body.model : undefined,
+        backend: target.label,
+        fallbackUsed: false,
+        ttfbMs: Date.now() - callStart,
+        stats: ctx.stats
+    })
 }
 
 function parseBodyObject(text: string): Record<string, unknown> | null {
