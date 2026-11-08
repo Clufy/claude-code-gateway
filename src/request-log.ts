@@ -17,6 +17,7 @@ export interface RequestLog {
     outputTokens?: number
     toolCallsFromText?: number
     unparsedToolText?: boolean
+    keepalive?: boolean // keepalive committed: client saw 200 before the backend answered
 }
 
 export interface ProxyStats {
@@ -45,6 +46,9 @@ export interface FinalizeInput {
     fallbackUsed: boolean
     ttfbMs: number
     stats: BackendStats
+    /** Real backend status when it differs from the response (committed keepalive). Read at log time. */
+    status?: number
+    keepalive?: boolean
 }
 
 /** Log (once) and optionally attach debug stats to a dispatched messages response. */
@@ -55,7 +59,7 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
         requestId: input.requestId,
         method: request.method,
         path: new URL(request.url).pathname,
-        status: response.status,
+        status: input.status ?? response.status,
         durationMs: Date.now() - input.start,
         model: input.model,
         route: input.route,
@@ -64,6 +68,7 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
         ttfbMs: input.ttfbMs,
         toolCallsFromText: stats.toolCallsFromText,
         unparsedToolText: stats.unparsedToolText,
+        ...(input.keepalive ? { keepalive: true } : {}),
         ...extra
     })
     const proxyStats = (): ProxyStats => ({

@@ -6,7 +6,8 @@ import { resolveProviderUrl } from './provider-url'
 import { BackendType, ConfigError, loadConfig, ProxyConfig } from './config'
 import { callTarget, dispatchWithFallback, PROVIDERS } from './dispatch'
 import { findRouteEntry, planTargets, Target } from './routing'
-import { finalized, finalizeMessagesResponse, logRequest } from './request-log'
+import { finalized, finalizeMessagesResponse, logRequest, type FinalizeInput } from './request-log'
+import { keepaliveTiming, withKeepalive } from './keepalive'
 import { newStats } from './stats'
 import * as models from './models'
 import * as tokens from './tokens'
@@ -133,18 +134,45 @@ async function handleRequest(
             throw e
         }
         const ctx = { env, cfg: config, requestId, inboundHeaders: request.headers, stats: newStats() }
-        const result = await dispatchWithFallback(targets, body, ctx)
-        return finalizeMessagesResponse(result.response, {
+        const input: FinalizeInput = {
             request,
             requestId,
             start,
             model: typeof model === 'string' ? model : undefined,
             route: typeof model === 'string' ? findRouteEntry(model, config.routes)?.pattern : undefined,
-            backend: result.target.label,
-            fallbackUsed: result.fallbackUsed,
-            ttfbMs: result.ttfbMs,
+            backend: targets[0].label,
+            fallbackUsed: false,
+            ttfbMs: 0,
             stats: ctx.stats
-        })
+        }
+        const dispatched = dispatchWithFallback(targets, body, ctx)
+        // Lazy log metadata: filled from the dispatch outcome, read when the line is written.
+        let settled: Response | undefined
+        dispatched.then(
+            (result) => {
+                settled = result.response
+                input.backend = result.target.label
+                input.fallbackUsed = result.fallbackUsed
+                input.ttfbMs = result.ttfbMs
+                input.status = result.response.status
+            },
+            () => {
+                input.status = 500
+            }
+        )
+        if (!body.stream) {
+            return finalizeMessagesResponse((await dispatched).response, input)
+        }
+        const response = await withKeepalive(
+            dispatched.then((r) => r.response),
+            {
+                requestedModel: typeof model === 'string' ? model : '',
+                inputTokens: tokens.countTokensForRequest(body).input_tokens,
+                ...keepaliveTiming
+            }
+        )
+        if (response !== settled) input.keepalive = true
+        return finalizeMessagesResponse(response, input)
     }
 
     const externalMatch = url.pathname.match(/^\/([^/]+)\/(.+)\/v1\/messages$/)
