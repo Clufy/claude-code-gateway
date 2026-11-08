@@ -1,32 +1,47 @@
 #!/usr/bin/env bash
+# Smoke test. Usage: scripts/self-test.sh <base-url> <proxy-key> [model]
 set -euo pipefail
 
-BASE="${1:-http://127.0.0.1:8080}"
-MODEL="${2:-@cf/meta/llama-3.1-8b-instruct-fast}"
+if [ $# -lt 2 ]; then
+  echo "usage: $0 <base-url> <proxy-key> [model]" >&2
+  exit 2
+fi
+BASE="${1%/}"
+KEY="$2"
+MODEL="${3:-@cf/meta/llama-3.1-8b-instruct-fast}"
 
-echo "== health =="
-curl -sS "${BASE}/" | grep -q '^ok$' && echo "health ok"
+BODY=$(mktemp)
+trap 'rm -f "$BODY"' EXIT
 
-echo "== list models =="
-curl -sS "${BASE}/v1/models" | head -c 200
-echo
+fail() { echo "FAIL: $1" >&2; [ -s "$BODY" ] && head -c 400 "$BODY" >&2 && echo >&2; exit 1; }
 
-echo "== count tokens =="
-curl -sS -X POST "${BASE}/v1/messages/count_tokens" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"'"${MODEL}"'","messages":[{"role":"user","content":"hello world"}]}'
-echo
+# check <name> <expected-status> <curl args...>; response body is left in $BODY
+check() {
+  local name="$1" want="$2" code
+  shift 2
+  code=$(curl -sS -o "$BODY" -w '%{http_code}' "$@") || fail "$name: curl failed"
+  [ "$code" = "$want" ] || fail "$name: expected HTTP $want, got $code"
+  echo "ok   $name ($code)"
+}
 
-echo "== non-streaming chat =="
-curl -sS -X POST "${BASE}/v1/messages" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"'"${MODEL}"'","messages":[{"role":"user","content":"say hi"}],"max_tokens":50}' \
-  | head -c 400
-echo
+JSON='Content-Type: application/json'
+CHAT='{"model":"'"$MODEL"'","max_tokens":50,"messages":[{"role":"user","content":"say hi"}]}'
 
-echo "== unknown provider type =="
-code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE}/nonexistent-type/api.example.com/v1/messages" \
-  -H 'Content-Type: application/json' -d '{"model":"m","messages":[{"role":"user","content":"hi"}]}')
-[ "$code" = "404" ] && echo "unknown provider -> 404 ok" || echo "FAIL: expected 404, got $code"
+check "health" 200 "$BASE/"
+grep -q '^ok' "$BODY" || fail "health: body is not 'ok'"
 
-echo "Self-test complete."
+check "models" 200 -H "x-api-key: $KEY" "$BASE/v1/models"
+
+check "count_tokens" 200 -H "x-api-key: $KEY" -H "$JSON" -X POST \
+  -d '{"model":"'"$MODEL"'","messages":[{"role":"user","content":"hello world"}]}' \
+  "$BASE/v1/messages/count_tokens"
+
+check "chat (non-streaming)" 200 -H "x-api-key: $KEY" -H "$JSON" -X POST -d "$CHAT" "$BASE/v1/messages"
+grep -q '"type":"message"' "$BODY" || fail "chat: response lacks \"type\":\"message\""
+
+check "missing key rejected" 401 -H "$JSON" -X POST -d "$CHAT" "$BASE/v1/messages"
+
+check "open relay blocked" 403 -H "x-proxy-key: $KEY" -H "x-api-key: dummy" -H "$JSON" -X POST \
+  -d "$CHAT" "$BASE/openai/evil.example/v1/messages"
+
+echo "Smoke test passed."

@@ -5,6 +5,21 @@
     "compatibility_date": "2026-08-27",
     "workers_dev": true,
     "preview_urls": false,
+    // This file is the source of truth for non-sensitive config: dashboard vars are
+    // deleted on deploy; secrets (PROXY_KEY) are not. Set vars below, e.g.
+    // "vars": { "ALLOWED_HOSTS": "api.openai.com" }. Values are strings. Defaults:
+    //   ALLOWED_HOSTS     api.openai.com, generativelanguage.googleapis.com, api.anthropic.com,
+    //                     openrouter.ai, api.groq.com, api.deepseek.com, api.mistral.ai, api.x.ai
+    //                     ("*" allows any host)
+    //   ALLOW_HTTP        false  (http:// provider URLs are rejected)
+    //   ALLOW_ANONYMOUS   false  (without PROXY_KEY the proxy refuses requests)
+    //   MAX_BODY_BYTES    33554432  (32 MiB)
+    //   UPSTREAM_TTFB_MS  120000  (time to first byte)
+    //   UPSTREAM_TOTAL_MS 600000  (whole upstream request)
+    //   MODELS            built-in Workers AI list (comma-separated model ids)
+    //   VISION_MODELS     none (comma-separated model ids)
+    //   MULTI_TOOL_MODELS none (comma-separated model ids)
+    // Secret: PROXY_KEY (set with `npx wrangler secret put PROXY_KEY`).
     "vars": {},
     "observability": {
         "enabled": true

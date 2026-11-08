@@ -6,7 +6,7 @@
 
 ## Prerequisites
 
-- A `PROXY_KEY` secret is set. It protects **internal routes** (`/v1/models*`, `/v1/messages*`) via the `x-api-key` header, and **external routes** (`/{type}/{provider_url}/v1/messages`) via the `x-proxy-key` header.
+- A `PROXY_KEY` secret is set (required unless `ALLOW_ANONYMOUS=true`). It protects **internal routes** (`/v1/models*`, `/v1/messages*`) via the `x-api-key` header, and **external routes** (`/{type}/{provider_url}/v1/messages`) via the `x-proxy-key` header.
 - For external providers you need the provider API key: Gemini (`GOOGLE_API_KEY`) or OpenAI (`OPENAI_API_KEY`).
 
 Set these shell variables before copying any command:
@@ -119,9 +119,9 @@ curl -sS -X POST "$BASE/openai-responses/api.openai.com/v1/messages" \
 | `curl -sS "$BASE/definitely-not-a-route"`                                              | `404 not_found_error`                                    |
 | `curl -sS -H "x-api-key: $PROXY_KEY" -X POST "$BASE/v1/messages" -d '{"messages":[]}'` | `400 invalid_request_error` `missing or invalid 'model'` |
 
-## 8b. Allowlist (optional)
+## 8b. Allowlist
 
-Only active when `ALLOWED_HOSTS` is set (e.g. `npx wrangler dev` with `ALLOWED_HOSTS="api.openai.com"` in `.dev.vars`, or `npx wrangler versions upload` with the var). With `ALLOWED_HOSTS="api.openai.com"`:
+The allowlist is always active (defaults in README). With `ALLOWED_HOSTS="api.openai.com"`:
 
 ```bash
 curl -sS -X POST "$BASE/gemini/generativelanguage.googleapis.com/v1/messages" \
@@ -130,7 +130,39 @@ curl -sS -X POST "$BASE/gemini/generativelanguage.googleapis.com/v1/messages" \
   -w "\n[%{http_code}]\n"
 ```
 
-**Expected:** `[403]` `permission_error` `Provider host not allowed by ALLOWED_HOSTS`. A request to `/openai/api.openai.com/v1/messages` still succeeds. Without `ALLOWED_HOSTS`, all hosts are allowed (default).
+**Expected:** `[403]` `permission_error` `Provider host not allowed by ALLOWED_HOSTS`. A request to `/openai/api.openai.com/v1/messages` still succeeds.
+
+## 8b2. Hardening behaviors
+
+**Open-relay check:** a request to an unlisted host must return 403.
+
+```bash
+curl -sS -X POST "$BASE/openai/evil.example/v1/messages" \
+  -H "x-proxy-key: $PROXY_KEY" -H "x-api-key: dummy" -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}' \
+  -w "\n[%{http_code}]\n"
+```
+
+Anything other than `[403]` means the proxy is an open relay.
+
+| #   | Scenario                                                                                         | Expected                                                            |
+| --- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| a   | Open relay (command above)                                                                       | `403` `Provider host not allowed by ALLOWED_HOSTS`                  |
+| b   | Oversized body: see command below                                                                | `413` `request body exceeds MAX_BODY_BYTES (33554432 bytes)`        |
+| c   | Upstream timeout: set `UPSTREAM_TTFB_MS` to `1` in `wrangler.jsonc` vars, call an external route | `504` `upstream timed out after 1 ms`                               |
+| d   | Not configured: no `PROXY_KEY` and no `ALLOW_ANONYMOUS` (empty `.dev.vars`), `GET /v1/models`    | `500` `proxy not configured: set PROXY_KEY or ALLOW_ANONYMOUS=true` |
+| e   | Invalid config: `MAX_BODY_BYTES` set to `abc` in vars, any request                               | `500` `invalid config: MAX_BODY_BYTES`                              |
+
+Oversized body (row b):
+
+```bash
+head -c 40000000 /dev/zero | curl -sS -X POST "$BASE/v1/messages" \
+  -H "x-api-key: $PROXY_KEY" -H 'Content-Type: application/json' --data-binary @- \
+  -w "\n[%{http_code}]\n"
+```
+
+Automated smoke test (health, models, count_tokens, chat, 401, open-relay 403):
+`npm run smoke -- "$BASE" "$PROXY_KEY"`.
 
 ## 8c. Rate limiting
 

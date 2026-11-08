@@ -6,7 +6,8 @@
         "deploy": "wrangler types && prettier --write . && wrangler deploy",
         "dev": "wrangler types && prettier --write . && wrangler dev --port 8080",
         "check": "wrangler types && tsc --noEmit && tsc -p test/tsconfig.json --noEmit && prettier --check .",
-        "test": "vitest run"
+        "test": "vitest run",
+        "smoke": "bash scripts/self-test.sh"
     },
     "devDependencies": {
         "@cloudflare/vitest-plugin": "^1.6.0",

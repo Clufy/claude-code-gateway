@@ -68,35 +68,59 @@ npm run deploy
 
 After deploy, note the Worker URL.
 
-### 4. Optional: protect the proxy
+### 4. Set the proxy key
 
-Set a proxy-scoped secret. If set, internal routes require `x-api-key`; external
-provider routes require `x-proxy-key` (so `x-api-key`/`Authorization` can be the
-provider key).
+Auth is required by default (see Security defaults below). Set a proxy-scoped secret.
+Internal routes require `x-api-key`; external provider routes require `x-proxy-key` (so
+`x-api-key`/`Authorization` can be the provider key).
 
 ```bash
 npx wrangler secret put PROXY_KEY
 ```
 
-### 5. Optional: configure the model list
+For local dev, put `PROXY_KEY=dev-key` in `.dev.vars` (gitignored).
 
-The `GET /v1/models` endpoint uses a default Workers AI model list. Override it with a
-comma-separated `MODELS` variable:
+### 5. Configure vars in `wrangler.jsonc`
 
-```bash
-npx wrangler vars put MODELS
-# value: @cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/meta/llama-3.1-8b-instruct-fast
+`wrangler.jsonc` is the source of truth for non-sensitive config. Dashboard vars are
+deleted on deploy; secrets (`PROXY_KEY`) are not. Edit the `vars` block, then deploy:
+
+```jsonc
+"vars": {
+    "MODELS": "@cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/meta/llama-3.1-8b-instruct-fast",
+    "ALLOWED_HOSTS": "api.openai.com,generativelanguage.googleapis.com"
+}
 ```
 
-### 6. Optional: restrict provider hosts
+| Var                 | Default                   | Purpose                                          |
+| ------------------- | ------------------------- | ------------------------------------------------ |
+| `ALLOWED_HOSTS`     | built-in list (see below) | Comma-separated provider hosts; `*` allows any   |
+| `ALLOW_HTTP`        | `false`                   | Allow `http://` provider URLs                    |
+| `ALLOW_ANONYMOUS`   | `false`                   | Run without `PROXY_KEY`                          |
+| `MAX_BODY_BYTES`    | `33554432` (32 MiB)       | Max POST body size                               |
+| `UPSTREAM_TTFB_MS`  | `120000`                  | Time to first upstream byte                      |
+| `UPSTREAM_TOTAL_MS` | `600000`                  | Total upstream time                              |
+| `MODELS`            | built-in Workers AI list  | Models returned by `GET /v1/models`              |
+| `VISION_MODELS`     | none                      | Models flagged as vision-capable                 |
+| `MULTI_TOOL_MODELS` | none                      | Models flagged as supporting multiple tool calls |
 
-By default external provider routes can target any host. Set a comma-separated
-`ALLOWED_HOSTS` variable to lock them down (unlisted hosts get `403`):
+Default `ALLOWED_HOSTS`: `api.openai.com`, `generativelanguage.googleapis.com`,
+`api.anthropic.com`, `openrouter.ai`, `api.groq.com`, `api.deepseek.com`,
+`api.mistral.ai`, `api.x.ai`.
 
-```bash
-npx wrangler vars put ALLOWED_HOSTS
-# value: api.openai.com,generativelanguage.googleapis.com
-```
+### 6. Security defaults (since Phase 1)
+
+| Default           | Behavior and opt-out                                                                                                                                                    | Error text                                                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Auth required     | With no `PROXY_KEY`, requests fail with `500`. Opt out with `ALLOW_ANONYMOUS=true`. A wrong or missing key gets `401`.                                                  | `proxy not configured: set PROXY_KEY or ALLOW_ANONYMOUS=true`; `invalid x-api-key` / `invalid x-proxy-key`                    |
+| Host allowlist    | External routes only reach hosts in `ALLOWED_HOSTS` (`403`). IP literals and custom ports are also rejected. Opt out with `ALLOWED_HOSTS=*`.                            | `Provider host not allowed by ALLOWED_HOSTS`; `IP-literal provider hosts are not allowed`; `custom ports are not allowed`     |
+| HTTPS only        | `http://` provider URLs get `403`. Opt out with `ALLOW_HTTP=true`. Credentials in the URL and unparseable URLs (`400`) are always rejected.                             | `http provider URLs are disabled; set ALLOW_HTTP=true`; `credentials in provider URL are not allowed`; `invalid provider URL` |
+| Body limit        | POST bodies over the limit get `413`. Tune with `MAX_BODY_BYTES`.                                                                                                       | `request body exceeds MAX_BODY_BYTES (<n> bytes)`                                                                             |
+| Upstream timeouts | Slow upstreams get `504`. Tune with `UPSTREAM_TTFB_MS` and `UPSTREAM_TOTAL_MS`.                                                                                         | `upstream timed out after <n> ms`                                                                                             |
+| Header allowlist  | Only allowlisted client headers are forwarded upstream; the rest are stripped. There is no opt-out variable.                                                            | none                                                                                                                          |
+| Invalid config    | A malformed var (e.g. `MAX_BODY_BYTES=abc`, `ALLOW_HTTP=yes`) makes every request fail with `500` instead of silently using a default. Fix the var in `wrangler.jsonc`. | `invalid config: <VAR>` (e.g. `invalid config: MAX_BODY_BYTES`)                                                               |
+
+Provider API keys are scrubbed from upstream error text before it is returned.
 
 ### 7. Rate limiting and logging (built in)
 
@@ -145,9 +169,21 @@ export ANTHROPIC_API_KEY="sk-ant-dummy"
 ## Test locally
 
 ```bash
-npx wrangler dev --port 8080
-./scripts/self-test.sh http://127.0.0.1:8080
+npm test                                      # offline unit tests
+npx wrangler dev --port 8080                  # needs PROXY_KEY in .dev.vars
+npm run smoke -- http://127.0.0.1:8080 <key>  # live smoke test
 ```
+
+The smoke test calls Workers AI through the remote AI binding, so you must be logged in
+to wrangler.
+
+## Running Claude Code on open-source models
+
+- `WebSearch` is expected not to work: it is a server-side Anthropic tool that the
+  backends do not implement.
+- There is no prompt caching, so long sessions resend the full context every turn.
+- Unknown models report a 24k context window, so Claude Code compacts often. Add the
+  model to `CONTEXT_TOKENS` in `src/models.ts` to give it its real window.
 
 ## Revert to Anthropic's API
 
