@@ -1,0 +1,195 @@
+{
+    "system": [
+        {
+            "type": "text",
+            "text": "You are a coding agent working inside a user's project directory. Help with software tasks by reading and editing files, running shell commands and searching the codebase. Prefer the dedicated file tools over shell commands for reading and searching. Read a file before you edit it. Keep changes small and focused, and explain what you did in a few plain sentences. When a task has several steps, keep a todo list and update it as you go. Ask the user before doing anything destructive."
+        }
+    ],
+    "tools": [
+        {
+            "name": "Read",
+            "description": "Read a file from the local filesystem, optionally a window of lines.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "file_path": { "type": "string", "description": "Absolute path of the file." },
+                    "offset": { "type": "integer", "description": "First line to read." },
+                    "limit": { "type": "integer", "description": "Number of lines to read." }
+                },
+                "required": ["file_path"]
+            }
+        },
+        {
+            "name": "Write",
+            "description": "Create or overwrite a file with the given content.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "file_path": { "type": "string", "description": "Absolute path to write." },
+                    "content": { "type": "string", "description": "Full file content." }
+                },
+                "required": ["file_path", "content"]
+            }
+        },
+        {
+            "name": "Edit",
+            "description": "Replace an exact string in a file with a new string.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "file_path": { "type": "string", "description": "Absolute path of the file." },
+                    "old_string": { "type": "string", "description": "Text to replace." },
+                    "new_string": { "type": "string", "description": "Replacement text." },
+                    "replace_all": { "type": "boolean", "description": "Replace every occurrence." }
+                },
+                "required": ["file_path", "old_string", "new_string"]
+            }
+        },
+        {
+            "name": "Bash",
+            "description": "Run a shell command and return its output.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "The command to run." },
+                    "timeout": { "type": "integer", "description": "Timeout in milliseconds." },
+                    "description": { "type": "string", "description": "Short note on what the command does." }
+                },
+                "required": ["command"]
+            }
+        },
+        {
+            "name": "Grep",
+            "description": "Search file contents with a regular expression.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "Regular expression to look for." },
+                    "path": { "type": "string", "description": "Directory or file to search." },
+                    "glob": { "type": "string", "description": "Only search files matching this glob." }
+                },
+                "required": ["pattern"]
+            }
+        },
+        {
+            "name": "Glob",
+            "description": "Find files by name pattern.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "Glob such as src/**/*.ts." },
+                    "path": { "type": "string", "description": "Directory to search in." }
+                },
+                "required": ["pattern"]
+            }
+        },
+        {
+            "name": "WebFetch",
+            "description": "Fetch a web page and answer a question about it.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Page to fetch." },
+                    "prompt": { "type": "string", "description": "What to extract from the page." }
+                },
+                "required": ["url", "prompt"]
+            }
+        },
+        {
+            "name": "TodoWrite",
+            "description": "Replace the current todo list.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "description": "The full list of todo items.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content": { "type": "string" },
+                                "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] }
+                            },
+                            "required": ["content", "status"]
+                        }
+                    }
+                },
+                "required": ["todos"]
+            }
+        },
+        {
+            "name": "Task",
+            "description": "Hand a self-contained job to a helper agent.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "description": { "type": "string", "description": "Three to five word label." },
+                    "prompt": { "type": "string", "description": "Full instructions for the helper." },
+                    "subagent_type": { "type": "string", "description": "Which kind of helper to use." }
+                },
+                "required": ["description", "prompt", "subagent_type"]
+            }
+        },
+        {
+            "name": "NotebookEdit",
+            "description": "Replace, insert or delete a cell in a notebook.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "notebook_path": { "type": "string", "description": "Absolute path of the notebook." },
+                    "cell_index": { "type": "integer", "description": "Zero-based cell position." },
+                    "new_source": { "type": "string", "description": "New cell source." },
+                    "edit_mode": { "type": "string", "enum": ["replace", "insert", "delete"] }
+                },
+                "required": ["notebook_path", "cell_index", "new_source"]
+            }
+        },
+        {
+            "name": "WebSearch",
+            "description": "Search the web and return result snippets.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Search query." },
+                    "allowed_domains": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "BashOutput",
+            "description": "Read new output from a background shell.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "shell_id": { "type": "string", "description": "Id of the background shell." },
+                    "filter": { "type": "string", "description": "Only return lines matching this regex." }
+                },
+                "required": ["shell_id"]
+            }
+        },
+        {
+            "name": "KillShell",
+            "description": "Stop a background shell.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "shell_id": { "type": "string", "description": "Id of the background shell." }
+                },
+                "required": ["shell_id"]
+            }
+        },
+        {
+            "name": "ListDir",
+            "description": "List the entries of a directory.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute directory path." },
+                    "ignore": { "type": "array", "items": { "type": "string" }, "description": "Globs to skip." }
+                },
+                "required": ["path"]
+            }
+        }
+    ]
+}
