@@ -1,6 +1,7 @@
 import { generateRequestId } from './request-id'
 import { anthropicError, jsonResponse } from './errors'
 import { verifyProxyKey, extractProviderKey } from './auth'
+import { ConfigError, loadConfig, ProxyConfig } from './config'
 import { Provider } from './provider'
 import * as models from './models'
 import * as tokens from './tokens'
@@ -22,8 +23,18 @@ export default {
         const url = new URL(request.url)
         const isMessages = url.pathname === '/v1/messages' || /\/v1\/messages$/.test(url.pathname)
         const start = Date.now()
+        let config: ProxyConfig
         try {
-            const response = await handleRequest(request, env, requestId)
+            config = loadConfig(env)
+        } catch (e) {
+            if (e instanceof ConfigError) {
+                console.error(e.message)
+                return anthropicError(500, 'api_error', `invalid config: ${e.variable}`, requestId)
+            }
+            throw e
+        }
+        try {
+            const response = await handleRequest(request, env, requestId, config)
             if (isMessages) {
                 console.log(
                     JSON.stringify({
@@ -55,7 +66,8 @@ export default {
     }
 }
 
-async function handleRequest(request: Request, env: Env, requestId: string): Promise<Response> {
+// config is parsed now; later tasks consume it.
+async function handleRequest(request: Request, env: Env, requestId: string, _config: ProxyConfig): Promise<Response> {
     const url = new URL(request.url)
 
     if (request.method === 'GET' && url.pathname === '/') {
