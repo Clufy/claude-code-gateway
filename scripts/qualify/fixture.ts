@@ -11,11 +11,17 @@ export const SYNTHETIC_FIXTURE_PATH = 'test/fixtures/claude-code-request.synthet
 
 const repoRoot = resolve(import.meta.dirname, '../..')
 
-/** Explicit path, else the local (real) capture if present, else the synthetic one. */
+/** Explicit path (relative to the current directory), else the local (real) capture if present, else the synthetic one. */
 export function loadFixture(path?: string): Fixture {
     const local = resolve(repoRoot, LOCAL_FIXTURE_PATH)
-    const file = path ? resolve(repoRoot, path) : existsSync(local) ? local : resolve(repoRoot, SYNTHETIC_FIXTURE_PATH)
-    return JSON.parse(readFileSync(file, 'utf8')) as Fixture
+    const file = path
+        ? resolve(process.cwd(), path)
+        : existsSync(local)
+          ? local
+          : resolve(repoRoot, SYNTHETIC_FIXTURE_PATH)
+    const f = JSON.parse(readFileSync(file, 'utf8')) as Fixture
+    if (!Array.isArray(f.tools)) throw new Error(`fixture ${file} has no tools array`)
+    return f
 }
 
 const SECRET = /sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}/g

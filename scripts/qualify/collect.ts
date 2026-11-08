@@ -86,7 +86,7 @@ export async function collectResponse(res: Response, startedAt: number): Promise
     } catch (e) {
         out.error ??= `unparseable body: ${e instanceof Error ? e.message : String(e)}`
     }
-    if (!out.error && res.status >= 400) out.error = `HTTP ${res.status}`
+    if (res.status >= 400) out.error ??= `HTTP ${res.status}`
     return out
 }
 
@@ -95,7 +95,8 @@ function parseJson(raw: string, out: Collected): void {
     try {
         body = JSON.parse(raw)
     } catch {
-        out.error = `unparseable body: ${raw.slice(0, 80)}`
+        out.error =
+            out.status >= 400 ? `HTTP ${out.status}: ${raw.slice(0, 200)}` : `unparseable body: ${raw.slice(0, 80)}`
         return
     }
     if (out.status >= 400) {
@@ -155,7 +156,7 @@ function parseSse(raw: string, out: Collected): void {
             if (delta.type === 'text_delta') block.text = (block.text ?? '') + delta.text
             else if (delta.type === 'thinking_delta') block.text = (block.text ?? '') + delta.thinking
             else if (delta.type === 'input_json_delta')
-                jsonParts.set(d.index, (jsonParts.get(d.index) ?? '') + delta.partial_json)
+                jsonParts.set(d.index, (jsonParts.get(d.index) ?? '') + (delta.partial_json ?? ''))
         }
     }
     for (const [index, block] of [...blocks.entries()].sort((a, b) => a[0] - b[0])) {

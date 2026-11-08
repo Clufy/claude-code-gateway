@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { collectResponse } from './collect.ts'
 import { isValidToolCall, validateToolInput } from './validate.ts'
@@ -152,6 +154,29 @@ describe('collectResponse', () => {
     })
 })
 
+describe('collectResponse edge cases', () => {
+    it('keeps the status for an HTML error page', async () => {
+        const res = new Response('<html>Bad gateway</html>', { status: 502, headers: { 'content-type': 'text/html' } })
+        const c = await collectResponse(res, Date.now())
+        expect(c.error).toMatch(/^HTTP 502:/)
+    })
+
+    it('keeps the status when a JSON content-type body is not JSON', async () => {
+        const res = new Response('<html>', { status: 502, headers: { 'content-type': 'application/json' } })
+        const c = await collectResponse(res, Date.now())
+        expect(c.error).toMatch(/^HTTP 502:/)
+    })
+
+    it('ignores a missing partial_json fragment', async () => {
+        const c = await collectResponse(
+            sseRes(toolStream(['{"file_path":', undefined as unknown as string, '"/a"}'])),
+            Date.now()
+        )
+        expect(c.blocks[0].inputError).toBeUndefined()
+        expect(c.blocks[0].input).toEqual({ file_path: '/a' })
+    })
+})
+
 describe('validateToolInput', () => {
     const schema = tools[0].input_schema
     it('reports missing required', () => {
@@ -216,6 +241,21 @@ describe('redactFixture', () => {
 })
 
 describe('loadFixture', () => {
+    const tmp = (obj: unknown) => {
+        mkdirSync(join(process.cwd(), '.tmp-check'), { recursive: true })
+        const p = join(mkdtempSync(join(process.cwd(), '.tmp-check', 'fx-')), 'f.json')
+        writeFileSync(p, JSON.stringify(obj))
+        return p
+    }
+    it('resolves an explicit relative path against the current directory', () => {
+        const p = tmp({ system: 's', tools: [] })
+        const rel = relative(process.cwd(), p)
+        expect(loadFixture(rel).tools).toEqual([])
+    })
+    it('rejects a fixture without a tools array, naming the file', () => {
+        const p = tmp({ system: 's' })
+        expect(() => loadFixture(p)).toThrow(/f.json/)
+    })
     it('falls back to synthetic', () => {
         const f = loadFixture()
         expect(f.tools.length).toBeGreaterThanOrEqual(14)
