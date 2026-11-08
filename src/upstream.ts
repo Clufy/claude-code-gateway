@@ -1,9 +1,7 @@
 export class UpstreamTimeoutError extends Error {
-    readonly timeoutMs: number
     constructor(timeoutMs: number) {
         super(`upstream timed out after ${timeoutMs} ms`)
         this.name = 'UpstreamTimeoutError'
-        this.timeoutMs = timeoutMs
     }
 }
 
@@ -54,13 +52,6 @@ export async function fetchUpstream(
         }
         if (response.ok || !RETRYABLE_STATUS.has(response.status)) {
             return response
-        }
-        if (attempt < retries) {
-            try {
-                await response.body?.cancel()
-            } catch {
-                // ignore drain errors
-            }
         }
         lastResponse = response
     }

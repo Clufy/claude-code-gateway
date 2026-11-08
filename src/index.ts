@@ -228,12 +228,7 @@ async function handleExternal(
         }
         throw error
     }
-    let stream = false
-    try {
-        stream = Boolean(JSON.parse(limitedBody.text)?.stream)
-    } catch {
-        // the converter reports invalid JSON itself
-    }
+    const stream = Boolean(JSON.parse(limitedBody.text).stream)
     let providerResponse: Response
     try {
         providerResponse = await fetchUpstream(providerRequest, {
@@ -243,12 +238,13 @@ async function handleExternal(
         })
     } catch (error) {
         if (error instanceof UpstreamTimeoutError) {
-            return anthropicError(504, 'api_error', `upstream timed out after ${error.timeoutMs} ms`, requestId)
+            return anthropicError(504, 'api_error', error.message, requestId)
         }
         throw error
     }
     providerResponse = await scrubUpstreamError(providerResponse, [
-        ...new Set([keyResult.apiKey, keyResult.apiKey.replace(/^Bearer\s+/i, '')].filter(Boolean))
+        keyResult.apiKey,
+        keyResult.apiKey.replace(/^Bearer\s+/i, '')
     ])
     return provider.convertToClaudeResponse(providerResponse)
 }
