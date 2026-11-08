@@ -1,6 +1,8 @@
 import { countTokensForRequest, estimateTokens } from '../tokens'
 import { HermesFilter, repairJson } from '../hermes'
 import type { HermesCall } from '../hermes'
+import { newStats } from '../stats'
+import type { BackendStats } from '../stats'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -253,11 +255,58 @@ function extractUsage(payload: any): { prompt: number | null; completion: number
     return { prompt, completion }
 }
 
+export interface WorkersAIOptions {
+    ttfbMs?: number
+    totalMs?: number
+    retries?: number
+    stats?: BackendStats
+}
+
+const NON_RETRYABLE = /\b(400|401|403|404|413|422)\b|invalid|not found/i
+const UNPARSED_TOOL_TEXT = /<tool_call|<function|"name"\s*:\s*"[^"]+"\s*,\s*"(arguments|parameters)"\s*:/
+
+const TIMED_OUT = Symbol('timed out')
+
+// Resolves with the promise's value, or TIMED_OUT. The timer is always cleared and the
+// promise always has handlers attached, so a late rejection can't go unhandled.
+function raceTimeout<T>(promise: Promise<T>, ms: number, onLate?: (value: T) => void): Promise<T | typeof TIMED_OUT> {
+    return new Promise((resolve, reject) => {
+        let done = false
+        const timer = setTimeout(() => {
+            done = true
+            resolve(TIMED_OUT)
+        }, ms)
+        promise.then(
+            (value) => {
+                clearTimeout(timer)
+                if (done) onLate?.(value)
+                else resolve(value)
+            },
+            (e) => {
+                clearTimeout(timer)
+                if (!done) reject(e)
+            }
+        )
+    })
+}
+
 export class WorkersAIProvider {
     private requestId = ''
+    private ttfbMs: number
+    private totalMs: number
+    private retries: number
+    private stats: BackendStats
 
     // ponytail: structural — only AI.run is needed; lets this file compile standalone (check:nonstream)
-    constructor(private env: { AI: { run(model: any, options: any, env?: any): Promise<any> } }) {}
+    constructor(
+        private env: { AI: { run(model: any, options: any, env?: any): Promise<any> } },
+        opts: WorkersAIOptions = {}
+    ) {
+        this.ttfbMs = opts.ttfbMs ?? 120000
+        this.totalMs = opts.totalMs ?? 600000
+        this.retries = opts.retries ?? 2
+        this.stats = opts.stats ?? newStats()
+    }
 
     async handle(request: Request, requestId: string): Promise<Response> {
         this.requestId = requestId
@@ -292,13 +341,50 @@ export class WorkersAIProvider {
         if (body.max_tokens != null) options.max_tokens = body.max_tokens
         if (body.temperature != null) options.temperature = body.temperature
 
+        if (!stream) {
+            const result = await raceTimeout(this.runAndRespond(body, model, id, options, stream), this.totalMs)
+            return result === TIMED_OUT ? this.timeoutError(this.totalMs) : result
+        }
+        return this.runAndRespond(body, model, id, options, stream)
+    }
+
+    private timeoutError(ms: number): Response {
+        return this.error(504, 'api_error', `upstream timed out after ${ms} ms`)
+    }
+
+    // Calls AI.run, retrying thrown errors; streaming requests also bound the stream start by ttfbMs.
+    private async runWithRetry(model: string, options: any, stream: boolean): Promise<any | typeof TIMED_OUT> {
+        for (let attempt = 1; ; attempt++) {
+            try {
+                const call = this.env.AI.run(model, options, { returnRawResponse: true })
+                if (!stream) return await call
+                return await raceTimeout(call, this.ttfbMs, (late) => {
+                    const body = late instanceof Response ? late.body : late
+                    if (body instanceof ReadableStream) body.cancel().catch(() => {})
+                })
+            } catch (e) {
+                const message = e instanceof Error ? e.message : String(e)
+                if (attempt > this.retries || NON_RETRYABLE.test(message)) throw e
+                await new Promise((r) => setTimeout(r, 500 * attempt))
+            }
+        }
+    }
+
+    private async runAndRespond(
+        body: any,
+        model: string,
+        id: string,
+        options: any,
+        stream: boolean
+    ): Promise<Response> {
         let rawStream
         try {
-            rawStream = await this.env.AI.run(model, options, { returnRawResponse: true })
+            rawStream = await this.runWithRetry(model, options, stream)
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e)
             return this.error(502, 'api_error', `Workers AI call failed: ${message}`)
         }
+        if (rawStream === TIMED_OUT) return this.timeoutError(this.ttfbMs)
 
         // ponytail: input token estimate from chars/4 — Workers AI only reports prompt usage on some models
         const inputEstimate = countTokensForRequest(body).input_tokens
@@ -396,6 +482,7 @@ export class WorkersAIProvider {
         const flushed = hermes.flush()
         const visibleText = pushed.text + flushed.text
         const hermesCalls = [...pushed.calls, ...flushed.calls]
+        this.recordToolText(hermesCalls.length, visibleText)
 
         const content: any[] = []
         if (reasoning) content.push({ type: 'thinking', thinking: reasoning })
@@ -435,6 +522,11 @@ export class WorkersAIProvider {
         )
     }
 
+    private recordToolText(calls: number, emittedText: string): void {
+        this.stats.toolCallsFromText += calls
+        if (UNPARSED_TOOL_TEXT.test(emittedText)) this.stats.unparsedToolText = true
+    }
+
     private parseSsePayload(line: string): any | null {
         const trimmed = line.trim()
         if (!trimmed || !trimmed.startsWith('data:')) return null
@@ -456,6 +548,8 @@ export class WorkersAIProvider {
     ): Response {
         // Scans streamed visible text for tool calls emitted as Hermes-format text.
         const hermes = new HermesFilter(knownTools)
+        const recordToolText = this.recordToolText.bind(this)
+        let hermesCallCount = 0
 
         const state = {
             text: '',
@@ -627,7 +721,10 @@ export class WorkersAIProvider {
             if (token) {
                 const { text: visible, calls } = hermes.push(token)
                 if (visible) emitText(controller, visible)
-                if (calls.length > 0) emitHermesCalls(controller, calls)
+                if (calls.length > 0) {
+                    hermesCallCount += calls.length
+                    emitHermesCalls(controller, calls)
+                }
             }
             collectToolCalls(payload, state.toolCalls)
             const usage = extractUsage(payload)
@@ -674,7 +771,11 @@ export class WorkersAIProvider {
 
                 const { text, calls } = hermes.flush()
                 if (text) emitText(controller, text)
-                if (calls.length > 0) emitHermesCalls(controller, calls)
+                if (calls.length > 0) {
+                    hermesCallCount += calls.length
+                    emitHermesCalls(controller, calls)
+                }
+                recordToolText(hermesCallCount, state.text)
 
                 if (state.toolCalls.size > state.toolBlocksEmitted) {
                     emitToolCalls(controller)
