@@ -1,6 +1,7 @@
 import { generateRequestId } from './request-id'
 import { anthropicError, jsonResponse } from './errors'
 import { checkProxyAuth, extractProviderKey } from './auth'
+import { resolveProviderUrl } from './provider-url'
 import { ConfigError, loadConfig, ProxyConfig } from './config'
 import { Provider } from './provider'
 import * as models from './models'
@@ -108,14 +109,15 @@ async function handleRequest(request: Request, env: Env, requestId: string, conf
     if (request.method === 'POST' && externalMatch) {
         const limited = await enforceRateLimit(request, env, requestId)
         if (limited) return limited
-        return handleExternal(
-            request,
-            env,
-            decodeURIComponent(externalMatch[1]),
-            decodeURIComponent(externalMatch[2]),
-            requestId,
-            config
-        )
+        let type: string
+        let providerUrl: string
+        try {
+            type = decodeURIComponent(externalMatch[1])
+            providerUrl = decodeURIComponent(externalMatch[2])
+        } catch {
+            return anthropicError(400, 'invalid_request_error', 'invalid provider URL', requestId)
+        }
+        return handleExternal(request, type, providerUrl, requestId, config)
     }
 
     return anthropicError(404, 'not_found_error', 'Not found', requestId)
@@ -168,19 +170,8 @@ async function enforceRateLimit(request: Request, env: Env, requestId: string): 
     })
 }
 
-function providerHostAllowed(providerUrl: string, env: Env): boolean {
-    const raw = (env as { ALLOWED_HOSTS?: string }).ALLOWED_HOSTS
-    if (!raw) return true
-    const allowed = raw
-        .split(',')
-        .map((h) => h.trim().toLowerCase())
-        .filter(Boolean)
-    return allowed.includes(new URL(providerUrl).hostname.toLowerCase())
-}
-
 async function handleExternal(
     request: Request,
-    env: Env,
     type: string,
     providerUrl: string,
     requestId: string,
@@ -194,16 +185,19 @@ async function handleExternal(
         return anthropicError(404, 'not_found_error', `Provider type '${type}' not found`, requestId)
     }
 
+    const urlResult = resolveProviderUrl(providerUrl, config)
+    if (!urlResult.ok) {
+        const errorType = urlResult.status === 403 ? 'permission_error' : 'invalid_request_error'
+        return anthropicError(urlResult.status, errorType, urlResult.message, requestId)
+    }
+    const baseUrl = urlResult.baseUrl
+
     const keyResult = extractProviderKey(request.headers)
     if (!keyResult) {
         return anthropicError(401, 'authentication_error', 'missing provider api key', requestId)
     }
 
     const inboundRequest = new Request(request, { headers: keyResult.headers })
-    const baseUrl = normalizeProviderUrl(providerUrl)
-    if (!providerHostAllowed(baseUrl, env)) {
-        return anthropicError(403, 'permission_error', 'Provider host not allowed by ALLOWED_HOSTS', requestId)
-    }
     const provider = new ProviderCtor()
 
     if (provider.handle) {
@@ -246,14 +240,6 @@ async function fetchWithRetry(providerRequest: Request, retries = 2): Promise<Re
         lastResponse = response
     }
     return lastResponse as Response
-}
-
-function normalizeProviderUrl(raw: string): string {
-    let url = raw.replace(/^(https?):\/(?!\/)/, '$1://')
-    if (!/^(https?):\/\//i.test(url)) {
-        url = `https://${url}`
-    }
-    return url.replace(/\/$/, '')
 }
 
 function withRequestId(response: Response, requestId: string): Response {
