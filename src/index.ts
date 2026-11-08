@@ -5,6 +5,7 @@ import { readLimitedBody } from './body-limit'
 import { resolveProviderUrl } from './provider-url'
 import { ConfigError, loadConfig, ProxyConfig } from './config'
 import { Provider } from './provider'
+import { fetchUpstream, scrubUpstreamError, UpstreamTimeoutError } from './upstream'
 import * as models from './models'
 import * as tokens from './tokens'
 import { WorkersAIProvider } from './providers/workers-ai'
@@ -226,33 +227,27 @@ async function handleExternal(
         }
         throw error
     }
-    const providerResponse = await fetchWithRetry(providerRequest)
-    return provider.convertToClaudeResponse(providerResponse)
-}
-
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
-
-async function fetchWithRetry(providerRequest: Request, retries = 2): Promise<Response> {
-    let lastResponse: Response | null = null
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        if (lastResponse) {
-            const retryAfter = Number(lastResponse.headers.get('retry-after'))
-            const delay =
-                Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 5000) : 500 * attempt
-            await new Promise((resolve) => setTimeout(resolve, delay))
-        }
-        const response = await fetch(providerRequest.clone())
-        if (response.ok || !RETRYABLE_STATUS.has(response.status)) {
-            return response
-        }
-        try {
-            await response.body?.cancel()
-        } catch {
-            // ignore drain errors
-        }
-        lastResponse = response
+    let stream = false
+    try {
+        stream = JSON.parse(limitedBody.text)?.stream === true
+    } catch {
+        // the converter reports invalid JSON itself
     }
-    return lastResponse as Response
+    let providerResponse: Response
+    try {
+        providerResponse = await fetchUpstream(providerRequest, {
+            stream,
+            ttfbMs: config.upstreamTtfbMs,
+            totalMs: config.upstreamTotalMs
+        })
+    } catch (error) {
+        if (error instanceof UpstreamTimeoutError) {
+            return anthropicError(504, 'api_error', `upstream timed out after ${error.timeoutMs} ms`, requestId)
+        }
+        throw error
+    }
+    providerResponse = await scrubUpstreamError(providerResponse, [keyResult.apiKey])
+    return provider.convertToClaudeResponse(providerResponse)
 }
 
 function withRequestId(response: Response, requestId: string): Response {
