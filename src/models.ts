@@ -32,9 +32,11 @@ function commaSet(value?: string): Set<string> {
     )
 }
 
-function toModel(id: string, env: Env, maxInputTokens: number): ClaudeModelListing {
+function toModel(id: string, env: Env, maxInputTokens: number, backingModel?: string): ClaudeModelListing {
     const visionModels = commaSet((env as { VISION_MODELS?: string }).VISION_MODELS)
     const multiToolModels = commaSet((env as { MULTI_TOOL_MODELS?: string }).MULTI_TOOL_MODELS)
+
+    const has = (set: Set<string>) => set.has(id) || (backingModel !== undefined && set.has(backingModel))
 
     return {
         id,
@@ -45,8 +47,8 @@ function toModel(id: string, env: Env, maxInputTokens: number): ClaudeModelListi
         max_tokens: null,
         capabilities: {
             tools: { name: 'tool_use', supported: true },
-            vision: { name: 'vision', supported: visionModels.has(id) },
-            multi_tool_use: { name: 'multi_tool_use', supported: multiToolModels.has(id) }
+            vision: { name: 'vision', supported: has(visionModels) },
+            multi_tool_use: { name: 'multi_tool_use', supported: has(multiToolModels) }
         }
     }
 }
@@ -72,7 +74,7 @@ function listing(env: Env, cfg: ProxyConfig): ClaudeModelListing[] {
     const seen = new Set(workersAi.map((m) => m.id))
     const routed = cfg.routes
         .filter(({ pattern }) => !pattern.includes('*') && !seen.has(pattern))
-        .map(({ pattern, route }) => toModel(pattern, env, routeContext(route)))
+        .map(({ pattern, route }) => toModel(pattern, env, routeContext(route), route.model))
     return [...workersAi, ...routed]
 }
 
@@ -85,5 +87,5 @@ export function getModel(id: string, env: Env, cfg: ProxyConfig, requestId: stri
     if (found) return jsonResponse(found, 200, requestId)
     const entry = findRouteEntry(id, cfg.routes)
     if (!entry) return anthropicError(404, 'not_found_error', `Model '${id}' not found.`, requestId)
-    return jsonResponse(toModel(id, env, routeContext(entry.route)), 200, requestId)
+    return jsonResponse(toModel(id, env, routeContext(entry.route), entry.route.model), 200, requestId)
 }

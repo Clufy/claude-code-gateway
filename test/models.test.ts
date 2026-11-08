@@ -27,10 +27,43 @@ describe('models', () => {
 
     it('lists a route id that is also a Workers AI id once', async () => {
         const env = makeEnv({
-            MODEL_ROUTES: JSON.stringify({ '@cf/zai-org/glm-5.3': { provider: 'workers-ai', model: 'x' } })
+            MODEL_ROUTES: JSON.stringify({
+                '@cf/zai-org/glm-5.3': { provider: 'workers-ai', model: 'x', contextTokens: 777 }
+            })
         })
-        const ids = (await list(env)).map((m) => m.id)
-        expect(ids.filter((id) => id === '@cf/zai-org/glm-5.3')).toHaveLength(1)
+        const data = await list(env)
+        const matches = data.filter((m) => m.id === '@cf/zai-org/glm-5.3')
+        expect(matches).toHaveLength(1)
+        expect(matches[0].max_input_tokens).toBe(1048576)
+    })
+
+    it('lists routed ids after the Workers AI ids', async () => {
+        const ids = (await list()).map((m) => m.id)
+        expect(ids.indexOf('claude-sonnet-4-5')).toBeGreaterThan(ids.indexOf('@cf/deepseek-ai/deepseek-v4-pro-0813'))
+    })
+
+    it.each([
+        ['backing model', '@cf/zai-org/glm-5.3'],
+        ['alias id', 'claude-sonnet-4-5']
+    ])('capability flags for a routed id honour %s in VISION_MODELS and MULTI_TOOL_MODELS', async (_n, name) => {
+        const env = makeEnv({ MODEL_ROUTES, VISION_MODELS: name, MULTI_TOOL_MODELS: name })
+        const listed = (await list(env)).find((m) => m.id === 'claude-sonnet-4-5') as any
+        expect(listed.capabilities.vision.supported).toBe(true)
+        expect(listed.capabilities.multi_tool_use.supported).toBe(true)
+        const got = (await (await callWorker('/v1/models/claude-sonnet-4-5', auth, env)).json()) as any
+        expect(got.capabilities.vision.supported).toBe(true)
+        expect(got.capabilities.multi_tool_use.supported).toBe(true)
+    })
+
+    it('capability flags for a glob-matched id come from the backing model', async () => {
+        const env = makeEnv({
+            MODEL_ROUTES,
+            VISION_MODELS: '@cf/moonshotai/kimi-k2.6',
+            MULTI_TOOL_MODELS: '@cf/moonshotai/kimi-k2.6'
+        })
+        const got = (await (await callWorker('/v1/models/claude-opus-4', auth, env)).json()) as any
+        expect(got.capabilities.vision.supported).toBe(true)
+        expect(got.capabilities.multi_tool_use.supported).toBe(true)
     })
 
     it('GET /v1/models/{id} returns 200 for a listed route id', async () => {
