@@ -1,3 +1,5 @@
+import type { ProxyConfig } from './config'
+
 export async function verifyProxyKey(provided: string | null, expected: string | undefined): Promise<boolean> {
     if (!expected) {
         return true
@@ -11,6 +13,16 @@ export async function verifyProxyKey(provided: string | null, expected: string |
         crypto.subtle.digest('SHA-256', enc.encode(expected))
     ])
     return crypto.subtle.timingSafeEqual(ha, hb)
+}
+
+export async function checkProxyAuth(
+    provided: string | null,
+    cfg: ProxyConfig
+): Promise<'ok' | 'unauthorized' | 'not_configured'> {
+    if (cfg.proxyKey === null) {
+        return cfg.allowAnonymous ? 'ok' : 'not_configured'
+    }
+    return (await verifyProxyKey(provided, cfg.proxyKey)) ? 'ok' : 'unauthorized'
 }
 
 export function extractProviderKey(headers: Headers): { apiKey: string; headers: Headers } | null {

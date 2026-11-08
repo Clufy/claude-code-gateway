@@ -1,6 +1,6 @@
 import { generateRequestId } from './request-id'
 import { anthropicError, jsonResponse } from './errors'
-import { verifyProxyKey, extractProviderKey } from './auth'
+import { checkProxyAuth, extractProviderKey } from './auth'
 import { ConfigError, loadConfig, ProxyConfig } from './config'
 import { Provider } from './provider'
 import * as models from './models'
@@ -66,8 +66,7 @@ export default {
     }
 }
 
-// config is parsed now; later tasks consume it.
-async function handleRequest(request: Request, env: Env, requestId: string, _config: ProxyConfig): Promise<Response> {
+async function handleRequest(request: Request, env: Env, requestId: string, config: ProxyConfig): Promise<Response> {
     const url = new URL(request.url)
 
     if (request.method === 'GET' && url.pathname === '/') {
@@ -75,20 +74,20 @@ async function handleRequest(request: Request, env: Env, requestId: string, _con
     }
 
     if (request.method === 'GET' && url.pathname === '/v1/models') {
-        const auth = await requireProxyKey(request, env, requestId)
+        const auth = await requireProxyKey(request, config, requestId)
         if (auth) return auth
         return models.listModels(env)
     }
 
     const modelMatch = url.pathname.match(/^\/v1\/models\/(.+)$/)
     if (request.method === 'GET' && modelMatch) {
-        const auth = await requireProxyKey(request, env, requestId)
+        const auth = await requireProxyKey(request, config, requestId)
         if (auth) return auth
         return models.getModel(decodeURIComponent(modelMatch[1]), env, requestId)
     }
 
     if (request.method === 'POST' && url.pathname === '/v1/messages/count_tokens') {
-        const auth = await requireProxyKey(request, env, requestId)
+        const auth = await requireProxyKey(request, config, requestId)
         if (auth) return auth
         const body = await parseJsonBody(request, requestId)
         if (body instanceof Response) return body
@@ -98,7 +97,7 @@ async function handleRequest(request: Request, env: Env, requestId: string, _con
     if (request.method === 'POST' && url.pathname === '/v1/messages') {
         const [limited, auth] = await Promise.all([
             enforceRateLimit(request, env, requestId),
-            requireProxyKey(request, env, requestId)
+            requireProxyKey(request, config, requestId)
         ])
         if (limited) return limited
         if (auth) return auth
@@ -114,21 +113,31 @@ async function handleRequest(request: Request, env: Env, requestId: string, _con
             env,
             decodeURIComponent(externalMatch[1]),
             decodeURIComponent(externalMatch[2]),
-            requestId
+            requestId,
+            config
         )
     }
 
     return anthropicError(404, 'not_found_error', 'Not found', requestId)
 }
 
-async function requireProxyKey(request: Request, env: Env, requestId: string): Promise<Response | null> {
-    const proxyKey = (env as { PROXY_KEY?: string }).PROXY_KEY
-    if (!proxyKey) return null
-    const provided = request.headers.get('x-api-key')
-    if (!(await verifyProxyKey(provided, proxyKey))) {
-        return anthropicError(401, 'authentication_error', 'invalid x-api-key', requestId)
+async function requireProxyKey(
+    request: Request,
+    config: ProxyConfig,
+    requestId: string,
+    header = 'x-api-key'
+): Promise<Response | null> {
+    const result = await checkProxyAuth(request.headers.get(header), config)
+    if (result === 'ok') return null
+    if (result === 'not_configured') {
+        return anthropicError(
+            500,
+            'api_error',
+            'proxy not configured: set PROXY_KEY or ALLOW_ANONYMOUS=true',
+            requestId
+        )
     }
-    return null
+    return anthropicError(401, 'authentication_error', `invalid ${header}`, requestId)
 }
 
 // Malformed JSON is a 400, not a 500 — the body came from the client.
@@ -174,19 +183,15 @@ async function handleExternal(
     env: Env,
     type: string,
     providerUrl: string,
-    requestId: string
+    requestId: string,
+    config: ProxyConfig
 ): Promise<Response> {
+    const authError = await requireProxyKey(request, config, requestId, 'x-proxy-key')
+    if (authError) return authError
+
     const ProviderCtor = PROVIDERS[type]
     if (!ProviderCtor) {
         return anthropicError(404, 'not_found_error', `Provider type '${type}' not found`, requestId)
-    }
-
-    const proxyKey = (env as { PROXY_KEY?: string }).PROXY_KEY
-    if (proxyKey) {
-        const provided = request.headers.get('x-proxy-key')
-        if (!(await verifyProxyKey(provided, proxyKey))) {
-            return anthropicError(401, 'authentication_error', 'invalid x-proxy-key', requestId)
-        }
     }
 
     const keyResult = extractProviderKey(request.headers)
