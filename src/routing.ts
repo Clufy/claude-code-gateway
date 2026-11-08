@@ -26,28 +26,34 @@ export function resolveRoute(model: string, routes: RouteEntry[]): Route | null 
     return findRouteEntry(model, routes)?.route ?? null
 }
 
-function toTarget(model: string, route: Route | null, env: Record<string, unknown>): Target {
-    if (!route || route.provider === 'workers-ai') {
-        const m = route?.model ?? model
-        return { backend: 'workers-ai', model: m, label: `workers-ai:${m}` }
-    }
+interface Planned {
+    route: Route | null
+    backend: BackendType
+    model: string
+    label: string
+}
+
+function plan(model: string, route: Route | null): Planned {
+    const backend = route?.provider ?? 'workers-ai'
+    const m = route?.model ?? model
+    return { route, backend, model: m, label: `${backend}:${m}` }
+}
+
+function attachKey(p: Planned, env: Record<string, unknown>): Target {
+    const { route } = p
+    if (!route || route.provider === 'workers-ai') return { backend: 'workers-ai', model: p.model, label: p.label }
     const key = route.keySecret ? env[route.keySecret] : undefined
     if (typeof key !== 'string' || key === '') {
         throw new ConfigError(route.keySecret ?? 'MODEL_ROUTES', 'secret not set')
     }
-    return {
-        backend: route.provider,
-        model: route.model,
-        baseUrl: route.baseUrl,
-        apiKey: key,
-        label: `${route.provider}:${route.model}`
-    }
+    return { backend: p.backend, model: p.model, baseUrl: route.baseUrl, apiKey: key, label: p.label }
 }
 
 export function planTargets(requestedModel: string, cfg: ProxyConfig, env: Record<string, unknown>): Target[] {
     const primary = resolveRoute(requestedModel, cfg.routes)
-    const targets = [toTarget(requestedModel, primary, env)]
-    for (const name of primary?.fallback ?? []) targets.push(toTarget(name, resolveRoute(name, cfg.routes), env))
+    const planned = [plan(requestedModel, primary)]
+    for (const name of primary?.fallback ?? []) planned.push(plan(name, resolveRoute(name, cfg.routes)))
     const seen = new Set<string>()
-    return targets.filter((t) => !seen.has(t.label) && seen.add(t.label))
+    // Dedupe first, then attach keys: a dropped duplicate's secret is never required.
+    return planned.filter((p) => !seen.has(p.label) && seen.add(p.label)).map((p) => attachKey(p, env))
 }

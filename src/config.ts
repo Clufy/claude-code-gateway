@@ -144,6 +144,9 @@ function parseRoutes(raw: Raw, urlCfg: Pick<ProxyConfig, 'allowedHosts' | 'allow
             if (typeof r.keySecret !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(r.keySecret)) {
                 return bad(`route "${pattern}" keySecret must match /^[A-Z][A-Z0-9_]*$/`)
             }
+            if (r.keySecret === 'PROXY_KEY') {
+                return bad(`route "${pattern}" keySecret must not be PROXY_KEY`)
+            }
             route.keySecret = r.keySecret
         }
         if (r.fallback !== undefined) {

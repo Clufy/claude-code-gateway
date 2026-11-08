@@ -52,14 +52,86 @@ describe('routing', () => {
             expect.objectContaining({ variable: 'OPENAI_API_KEY' })
         )
     })
+    const ext = { provider: 'openai', baseUrl: 'https://api.openai.com', model: 'm', keySecret: 'K' }
     it.each([
         ['{"x":{"provider":"bogus","model":"m"}}'],
         ['{"x":{"provider":"openai","model":"m"}}'],
         ['{"x":{"provider":"workers-ai","model":"m","fallbak":[]}}'],
         ['{"x":{"provider":"openai","model":"m","baseUrl":"https://evil.com","keySecret":"K"}}'],
         ['[1]'],
-        ['not json']
+        ['not json'],
+        ['{"x":{"provider":"workers-ai","model":""}}'],
+        [JSON.stringify({ x: { ...ext, keySecret: 'lower' } })],
+        [JSON.stringify({ x: { ...ext, keySecret: 'PROXY_KEY' } })],
+        [JSON.stringify({ x: { ...ext, fallback: ['a', 'b', 'c', 'd'] } })],
+        [JSON.stringify({ x: { ...ext, fallback: ['a', 1] } })],
+        [JSON.stringify({ x: { ...ext, contextTokens: 0 } })],
+        [JSON.stringify({ x: { ...ext, contextTokens: 1.5 } })],
+        [JSON.stringify({ x: { ...ext, contextTokens: '5' } })],
+        ['{"x":"nope"}'],
+        [JSON.stringify({ x: { ...ext, baseUrl: 'http://api.openai.com' } })]
     ])('rejects MODEL_ROUTES %s', (v) =>
-        expect(() => loadConfig({ PROXY_KEY: 'k', MODEL_ROUTES: v })).toThrow(ConfigError)
+        expect(() => loadConfig({ PROXY_KEY: 'k', MODEL_ROUTES: v })).toThrowError(
+            expect.objectContaining({ name: 'ConfigError', variable: 'MODEL_ROUTES' })
+        )
     )
+    it('stores baseUrl normalized', () => {
+        const r = loadConfig({
+            PROXY_KEY: 'k',
+            MODEL_ROUTES: JSON.stringify({ x: { ...ext, baseUrl: 'https://API.OpenAI.com/v1/' } })
+        }).routes
+        expect(r[0].route.baseUrl).toBe('https://api.openai.com/v1')
+    })
+
+    describe('planTargets', () => {
+        const plan = (table: object, model: string, env: Record<string, unknown> = {}) =>
+            planTargets(
+                model,
+                {
+                    ...loadConfig({ PROXY_KEY: 'k' }),
+                    routes: loadConfig({ PROXY_KEY: 'k', MODEL_ROUTES: JSON.stringify(table) }).routes
+                },
+                env
+            )
+        it('dedupes by label', () => {
+            const t = plan(
+                {
+                    a: { provider: 'workers-ai', model: 'm', fallback: ['b'] },
+                    b: { provider: 'workers-ai', model: 'm' }
+                },
+                'a'
+            )
+            expect(t.map((x) => x.label)).toEqual(['workers-ai:m'])
+        })
+        it('unmatched model becomes workers-ai target', () =>
+            expect(plan({}, '@cf/x/y')).toEqual([
+                { backend: 'workers-ai', model: '@cf/x/y', label: 'workers-ai:@cf/x/y' }
+            ]))
+        it("ignores a fallback route's own fallbacks", () => {
+            const t = plan(
+                {
+                    a: { provider: 'workers-ai', model: 'm1', fallback: ['b'] },
+                    b: { provider: 'workers-ai', model: 'm2', fallback: ['c'] },
+                    c: { provider: 'workers-ai', model: 'm3' }
+                },
+                'a'
+            )
+            expect(t.map((x) => x.label)).toEqual(['workers-ai:m1', 'workers-ai:m2'])
+        })
+        it.each([[''], [{}], [undefined]])('bad secret %j throws ConfigError(K)', (v) =>
+            expect(() => plan({ a: ext }, 'a', { K: v })).toThrowError(expect.objectContaining({ variable: 'K' }))
+        )
+        it('requires no secret for a deduped duplicate', () => {
+            const t = plan(
+                {
+                    a: { ...ext, fallback: ['b'] },
+                    b: { ...ext, keySecret: 'OTHER' }
+                },
+                'a',
+                { K: 'sk' }
+            )
+            expect(t).toHaveLength(1)
+            expect(t[0].apiKey).toBe('sk')
+        })
+    })
 })
