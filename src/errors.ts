@@ -5,6 +5,7 @@ export type ClaudeErrorType =
     | 'not_found_error'
     | 'api_error'
     | 'rate_limit_error'
+    | 'request_too_large'
 
 export function jsonResponse(body: unknown, status: number, requestId?: string): Response {
     const headers = new Headers({ 'Content-Type': 'application/json' })

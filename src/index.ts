@@ -1,6 +1,7 @@
 import { generateRequestId } from './request-id'
 import { anthropicError, jsonResponse } from './errors'
 import { checkProxyAuth, extractProviderKey } from './auth'
+import { readLimitedBody } from './body-limit'
 import { resolveProviderUrl } from './provider-url'
 import { ConfigError, loadConfig, ProxyConfig } from './config'
 import { Provider } from './provider'
@@ -90,8 +91,14 @@ async function handleRequest(request: Request, env: Env, requestId: string, conf
     if (request.method === 'POST' && url.pathname === '/v1/messages/count_tokens') {
         const auth = await requireProxyKey(request, config, requestId)
         if (auth) return auth
-        const body = await parseJsonBody(request, requestId)
-        if (body instanceof Response) return body
+        const limitedBody = await readLimitedBody(request, config.maxBodyBytes)
+        if (!limitedBody.ok) return bodyTooLarge(config, requestId)
+        let body: any
+        try {
+            body = JSON.parse(limitedBody.text)
+        } catch {
+            return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
+        }
         return jsonResponse(tokens.countTokensForRequest(body), 200, requestId)
     }
 
@@ -102,7 +109,10 @@ async function handleRequest(request: Request, env: Env, requestId: string, conf
         ])
         if (limited) return limited
         if (auth) return auth
-        return new WorkersAIProvider(env).handle(request, requestId)
+        const limitedBody = await readLimitedBody(request, config.maxBodyBytes)
+        if (!limitedBody.ok) return bodyTooLarge(config, requestId)
+        const bounded = new Request(request.url, { method: 'POST', headers: request.headers, body: limitedBody.text })
+        return new WorkersAIProvider(env).handle(bounded, requestId)
     }
 
     const externalMatch = url.pathname.match(/^\/([^/]+)\/(.+)\/v1\/messages$/)
@@ -142,16 +152,13 @@ async function requireProxyKey(
     return anthropicError(401, 'authentication_error', `invalid ${header}`, requestId)
 }
 
-// Malformed JSON is a 400, not a 500 — the body came from the client.
-async function parseJsonBody(request: Request, requestId: string): Promise<any | Response> {
-    try {
-        return await request.json()
-    } catch (error) {
-        if (error instanceof SyntaxError) {
-            return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
-        }
-        throw error
-    }
+function bodyTooLarge(config: ProxyConfig, requestId: string): Response {
+    return anthropicError(
+        413,
+        'request_too_large',
+        `request body exceeds MAX_BODY_BYTES (${config.maxBodyBytes} bytes)`,
+        requestId
+    )
 }
 
 async function enforceRateLimit(request: Request, env: Env, requestId: string): Promise<Response | null> {
@@ -197,7 +204,13 @@ async function handleExternal(
         return anthropicError(401, 'authentication_error', 'missing provider api key', requestId)
     }
 
-    const inboundRequest = new Request(request, { headers: keyResult.headers })
+    const limitedBody = await readLimitedBody(request, config.maxBodyBytes)
+    if (!limitedBody.ok) return bodyTooLarge(config, requestId)
+    const inboundRequest = new Request(request.url, {
+        method: 'POST',
+        headers: keyResult.headers,
+        body: limitedBody.text
+    })
     const provider = new ProviderCtor()
 
     if (provider.handle) {
