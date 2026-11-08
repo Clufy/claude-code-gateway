@@ -173,11 +173,7 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
 
 /**
  * Byte offset just past the first complete SSE event (ending in a blank line), or -1.
- * Handles 
-, 
- and 
- line endings; a trailing 
- is held back until the next byte is known.
+ * Handles LF, CRLF and lone-CR line endings; a trailing CR is held back until the next byte is known.
  */
 function findBlockEnd(buf: Uint8Array): number {
     let lineStart = 0
