@@ -5,19 +5,15 @@
     "scripts": {
         "deploy": "wrangler types && prettier --write . && wrangler deploy",
         "dev": "wrangler types && prettier --write . && wrangler dev --port 8080",
-        "check": "wrangler types && tsc --noEmit && prettier --check .",
-        "check:hermes": "tsc src/hermes.ts --outDir .tmp-check --module es2022 --target es2022 --skipLibCheck && node scripts/hermes-check.mjs",
-        "check:blocks": "tsc src/types.ts src/tokens.ts --outDir .tmp-check --module es2022 --target es2022 --skipLibCheck && node scripts/blocks-check.mjs",
-        "check:reasoning": "tsc src/types.ts src/reasoning.ts --outDir .tmp-check --module es2022 --target es2022 --skipLibCheck && node scripts/reasoning-check.mjs",
-        "check:tool-choice": "tsc src/types.ts src/tool-choice.ts --outDir .tmp-check --module es2022 --target es2022 --skipLibCheck && node scripts/tool-choice-check.mjs",
-        "check:stream": "tsc src/providers/openai.ts src/providers/gemini.ts --outDir .tmp-check --module commonjs --target es2022 --skipLibCheck && node scripts/stream-check.mjs",
-        "check:nonstream": "tsc src/providers/workers-ai.ts --outDir .tmp-check --module commonjs --target es2022 --skipLibCheck && node scripts/nonstream-check.mjs",
-        "check:all": "npm run check:hermes && npm run check:blocks && npm run check:reasoning && npm run check:tool-choice && npm run check:stream && npm run check:nonstream"
+        "check": "wrangler types && tsc --noEmit && tsc -p test/tsconfig.json --noEmit && prettier --check .",
+        "test": "vitest run"
     },
     "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "^0.23.0",
         "@types/node": "^26.4.1",
         "prettier": "^3.6.2",
         "typescript": "^5.5.2",
+        "vitest": "^4.1.12",
         "wrangler": "^4.21.0"
     }
 }
