@@ -55,6 +55,24 @@ describe('upstream timeouts', () => {
         expect(res.status).toBe(504)
     })
 
+    it('streaming error body that stalls after headers -> 504', async () => {
+        fetchStub = stubFetch(
+            (req) =>
+                new Response(
+                    new ReadableStream({
+                        start(c) {
+                            req.signal.addEventListener('abort', () =>
+                                c.error(new DOMException('aborted', 'AbortError'))
+                            )
+                        }
+                    }),
+                    { status: 503 }
+                )
+        )
+        const res = await post(true, makeEnv({ UPSTREAM_TTFB_MS: '50' }))
+        expect(res.status).toBe(504)
+    }, 10000)
+
     it('streaming body may outlast ttfb', async () => {
         fetchStub = stubFetch(
             (req) =>
@@ -89,13 +107,17 @@ describe('upstream timeouts', () => {
 describe('upstream retries and scrubbing', () => {
     it('retries 503 then succeeds', async () => {
         let n = 0
-        fetchStub = stubFetch(() =>
-            ++n === 1
+        const bodies: string[] = []
+        fetchStub = stubFetch(async (req) => {
+            bodies.push(await req.text())
+            return ++n === 1
                 ? new Response('busy', { status: 503 })
                 : Response.json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] })
-        )
+        })
         const res = await post(false, makeEnv())
         expect(fetchStub.calls).toHaveLength(2)
+        expect(bodies[0]).not.toBe('')
+        expect(bodies[1]).toBe(bodies[0])
         expect(res.status).toBe(200)
     })
 
@@ -120,5 +142,22 @@ describe('upstream retries and scrubbing', () => {
         const text = await res.text()
         expect(text).toContain('Incorrect API key provided: [redacted]')
         expect(text).not.toContain('sk-provider-123')
+    })
+
+    it('scrubs a bare key when the client sent it with a Bearer prefix in x-api-key', async () => {
+        fetchStub = stubFetch(
+            () => new Response('{"error":{"message":"bad key sk-provider-123 rejected"}}', { status: 401 })
+        )
+        const res = await callWorker(
+            '/openai/api.openai.com/v1/messages',
+            {
+                method: 'POST',
+                headers: { 'x-proxy-key': 'test-key', 'x-api-key': 'Bearer sk-provider-123' },
+                body: JSON.stringify({ model: 'gpt', messages: [{ role: 'user', content: 'hi' }] })
+            },
+            makeEnv()
+        )
+        expect(res.status).toBe(401)
+        expect(await res.text()).not.toContain('sk-provider-123')
     })
 })

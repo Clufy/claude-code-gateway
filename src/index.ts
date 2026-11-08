@@ -180,6 +180,15 @@ async function handleExternal(
     const authError = await requireProxyKey(request, config, requestId, 'x-proxy-key')
     if (authError) return authError
 
+    let type: string
+    let providerUrl: string
+    try {
+        type = decodeURIComponent(rawType)
+        providerUrl = decodeURIComponent(rawProviderUrl)
+    } catch {
+        return anthropicError(400, 'invalid_request_error', 'invalid provider URL', requestId)
+    }
+
     const ProviderCtor = PROVIDERS[type]
     if (!ProviderCtor) {
         return anthropicError(404, 'not_found_error', `Provider type '${type}' not found`, requestId)
@@ -238,7 +247,9 @@ async function handleExternal(
         }
         throw error
     }
-    providerResponse = await scrubUpstreamError(providerResponse, [keyResult.apiKey])
+    providerResponse = await scrubUpstreamError(providerResponse, [
+        ...new Set([keyResult.apiKey, keyResult.apiKey.replace(/^Bearer\s+/i, '')].filter(Boolean))
+    ])
     return provider.convertToClaudeResponse(providerResponse)
 }
 

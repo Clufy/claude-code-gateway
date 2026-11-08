@@ -32,7 +32,7 @@ export async function fetchUpstream(
         let response: Response
         try {
             const raw = await fetch(new Request(request.clone(), { signal: controller.signal }))
-            if (opts.stream) {
+            if (opts.stream && raw.ok) {
                 clearTimeout(timer)
                 response = raw
             } else {
