@@ -1,4 +1,6 @@
+import type { ProxyConfig } from './config'
 import { anthropicError, jsonResponse } from './errors'
+import { findRouteEntry } from './routing'
 
 interface ClaudeModelListing {
     id: string
@@ -30,7 +32,7 @@ function commaSet(value?: string): Set<string> {
     )
 }
 
-function toModel(id: string, env: Env): ClaudeModelListing {
+function toModel(id: string, env: Env, maxInputTokens: number): ClaudeModelListing {
     const visionModels = commaSet((env as { VISION_MODELS?: string }).VISION_MODELS)
     const multiToolModels = commaSet((env as { MULTI_TOOL_MODELS?: string }).MULTI_TOOL_MODELS)
 
@@ -39,7 +41,7 @@ function toModel(id: string, env: Env): ClaudeModelListing {
         type: 'model',
         display_name: id,
         created_at: 0,
-        max_input_tokens: CONTEXT_TOKENS[id] ?? DEFAULT_CONTEXT_TOKENS,
+        max_input_tokens: maxInputTokens,
         max_tokens: null,
         capabilities: {
             tools: { name: 'tool_use', supported: true },
@@ -59,23 +61,29 @@ function configuredModelIds(env: Env): string[] {
     return ids.length > 0 ? ids : DEFAULT_MODELS
 }
 
-export function listModels(env: Env): Response {
-    const ids = configuredModelIds(env)
-    return jsonResponse(
-        {
-            data: ids.map((id) => toModel(id, env)),
-            has_more: false,
-            first_id: null,
-            last_id: null
-        },
-        200
-    )
+function routeContext(route: { model: string; contextTokens?: number }): number {
+    return route.contextTokens ?? CONTEXT_TOKENS[route.model] ?? DEFAULT_CONTEXT_TOKENS
 }
 
-export function getModel(id: string, env: Env, requestId: string): Response {
-    const ids = configuredModelIds(env)
-    if (!ids.includes(id)) {
-        return anthropicError(404, 'not_found_error', `Model '${id}' not found.`, requestId)
-    }
-    return jsonResponse({ ...toModel(id, env), type: 'model' }, 200, requestId)
+function listing(env: Env, cfg: ProxyConfig): ClaudeModelListing[] {
+    const workersAi = configuredModelIds(env).map((id) =>
+        toModel(id, env, CONTEXT_TOKENS[id] ?? DEFAULT_CONTEXT_TOKENS)
+    )
+    const seen = new Set(workersAi.map((m) => m.id))
+    const routed = cfg.routes
+        .filter(({ pattern }) => !pattern.includes('*') && !seen.has(pattern))
+        .map(({ pattern, route }) => toModel(pattern, env, routeContext(route)))
+    return [...workersAi, ...routed]
+}
+
+export function listModels(env: Env, cfg: ProxyConfig): Response {
+    return jsonResponse({ data: listing(env, cfg), has_more: false, first_id: null, last_id: null }, 200)
+}
+
+export function getModel(id: string, env: Env, cfg: ProxyConfig, requestId: string): Response {
+    const found = listing(env, cfg).find((m) => m.id === id)
+    if (found) return jsonResponse(found, 200, requestId)
+    const entry = findRouteEntry(id, cfg.routes)
+    if (!entry) return anthropicError(404, 'not_found_error', `Model '${id}' not found.`, requestId)
+    return jsonResponse(toModel(id, env, routeContext(entry.route)), 200, requestId)
 }

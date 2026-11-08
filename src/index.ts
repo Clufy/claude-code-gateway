@@ -83,14 +83,14 @@ async function handleRequest(
     if (request.method === 'GET' && url.pathname === '/v1/models') {
         const auth = await requireProxyKey(request, config, requestId)
         if (auth) return auth
-        return models.listModels(env)
+        return models.listModels(env, config)
     }
 
     const modelMatch = url.pathname.match(/^\/v1\/models\/(.+)$/)
     if (request.method === 'GET' && modelMatch) {
         const auth = await requireProxyKey(request, config, requestId)
         if (auth) return auth
-        return models.getModel(decodeURIComponent(modelMatch[1]), env, requestId)
+        return models.getModel(decodeURIComponent(modelMatch[1]), env, config, requestId)
     }
 
     if (request.method === 'POST' && url.pathname === '/v1/messages/count_tokens') {
