@@ -1,3 +1,4 @@
+import { upstreamHeaders } from '../upstream-headers'
 import * as types from '../types'
 import * as provider from '../provider'
 import * as utils from '../utils'
@@ -150,7 +151,7 @@ export class ChatCompletionsProvider implements provider.Provider {
         const openaiRequest = this.convertToOpenAIRequestBody(claudeRequest)
         const finalUrl = utils.buildUrl(baseUrl, 'chat/completions')
 
-        const headers = new Headers(request.headers)
+        const headers = upstreamHeaders(request.headers)
         headers.set('Authorization', apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`)
         headers.set('Content-Type', 'application/json')
 
@@ -468,7 +469,7 @@ export class ResponsesProvider implements provider.Provider {
         const openaiRequest = this.convertToResponsesRequestBody(claudeRequest)
         const finalUrl = utils.buildUrl(baseUrl, 'responses')
 
-        const headers = new Headers(request.headers)
+        const headers = upstreamHeaders(request.headers)
         headers.set('Authorization', apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`)
         headers.set('Content-Type', 'application/json')
 

@@ -1,3 +1,4 @@
+import { upstreamHeaders } from '../upstream-headers'
 import * as types from '../types'
 import * as provider from '../provider'
 import * as utils from '../utils'
@@ -16,7 +17,7 @@ export class impl implements provider.Provider {
         const endpoint = `models/${claudeRequest.model}:${claudeRequest.stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`
         const finalUrl = utils.buildUrl(baseUrl, endpoint)
 
-        const headers = new Headers(request.headers)
+        const headers = upstreamHeaders(request.headers)
         headers.set('x-goog-api-key', apiKey)
         headers.set('Content-Type', 'application/json')
 
