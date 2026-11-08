@@ -71,6 +71,7 @@ describe('collectResponse', () => {
     it('marks broken tool json', async () => {
         const c = await collectResponse(sseRes(toolStream(['{"file_path": "/a"'])), Date.now())
         expect(c.blocks[0].inputError).toBeTruthy()
+        expect(c.blocks[0].rawInput).toBe('{"file_path": "/a"')
         expect(isValidToolCall(c.blocks[0], tools)).toBe(false)
     })
 

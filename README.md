@@ -270,7 +270,7 @@ Flags: `--base` (default `ANTHROPIC_BASE_URL`), `--key` (default: the `x-api-key
 `ANTHROPIC_CUSTOM_HEADERS`, else `PROXY_KEY`), `--models` (required, comma-separated),
 `--runs` (default `3`), `--only <ids>`, `--skip-long`, `--fixture <path>` and `--out`
 (default `qualify-results`). Requests run sequentially. Results go to
-`<out>/<YYYY-MM-DD-HHmm>.json` (raw runs) and `.md` (summary, also printed); bad arguments
+`<out>/<YYYY-MM-DD-HHmmss>.json` (raw runs) and `.md` (summary, also printed); bad arguments
 exit with code `2`. The runs send `x-proxy-debug: 1`, so the report also shows
 tool calls recovered from text and fallback use.
 

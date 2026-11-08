@@ -228,9 +228,14 @@ describe('runQualification', () => {
 
     it('records a throwing check as a failed run', async () => {
         const fetchImpl = (async () => json('{}')) as unknown as typeof fetch
-        const spy = vi.spyOn(SCENARIOS[5], 'check').mockImplementation(() => {
-            throw new Error('kaboom')
-        })
+        const spy = vi
+            .spyOn(
+                SCENARIOS.find((s) => s.id === 'turn.stop')!,
+                'check'
+            )
+            .mockImplementation(() => {
+                throw new Error('kaboom')
+            })
         try {
             const runs: ScenarioRun[] = []
             await runQualification(
