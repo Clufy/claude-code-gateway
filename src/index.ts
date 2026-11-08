@@ -3,22 +3,12 @@ import { anthropicError, jsonResponse } from './errors'
 import { checkProxyAuth, extractProviderKey } from './auth'
 import { readLimitedBody } from './body-limit'
 import { resolveProviderUrl } from './provider-url'
-import { ConfigError, loadConfig, ProxyConfig } from './config'
-import { Provider } from './provider'
-import { fetchUpstream, scrubUpstreamError, UpstreamTimeoutError } from './upstream'
+import { BackendType, ConfigError, loadConfig, ProxyConfig } from './config'
+import { callTarget, dispatchWithFallback, PROVIDERS } from './dispatch'
+import { planTargets, Target } from './routing'
+import { newStats } from './stats'
 import * as models from './models'
 import * as tokens from './tokens'
-import { WorkersAIProvider } from './providers/workers-ai'
-import * as gemini from './providers/gemini'
-import * as openai from './providers/openai'
-
-type ProviderCtor = { new (): Provider }
-
-const PROVIDERS: Record<string, ProviderCtor> = {
-    gemini: gemini.impl,
-    openai: openai.ChatCompletionsProvider,
-    'openai-responses': openai.ResponsesProvider
-}
 
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
@@ -112,15 +102,32 @@ async function handleRequest(request: Request, env: Env, requestId: string, conf
         if (auth) return auth
         const limitedBody = await readLimitedBody(request, config.maxBodyBytes)
         if (!limitedBody.ok) return bodyTooLarge(config, requestId)
-        const bounded = new Request(request.url, { method: 'POST', headers: request.headers, body: limitedBody.text })
-        return new WorkersAIProvider(env).handle(bounded, requestId)
+        const body = parseBodyObject(limitedBody.text)
+        if (!body) return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
+        // A missing or non-string model is planned as-is so Workers AI keeps returning its 400.
+        const model = body.model
+        let targets: Target[]
+        try {
+            targets =
+                typeof model === 'string' && model !== ''
+                    ? planTargets(model, config, env as unknown as Record<string, unknown>)
+                    : [{ backend: 'workers-ai', model: model as string, label: 'workers-ai:invalid' }]
+        } catch (e) {
+            if (e instanceof ConfigError) {
+                console.error(e.message)
+                return anthropicError(500, 'api_error', `invalid config: ${e.variable}`, requestId)
+            }
+            throw e
+        }
+        const ctx = { env, cfg: config, requestId, inboundHeaders: request.headers, stats: newStats() }
+        return (await dispatchWithFallback(targets, body, ctx)).response
     }
 
     const externalMatch = url.pathname.match(/^\/([^/]+)\/(.+)\/v1\/messages$/)
     if (request.method === 'POST' && externalMatch) {
         const limited = await enforceRateLimit(request, env, requestId)
         if (limited) return limited
-        return handleExternal(request, externalMatch[1], externalMatch[2], requestId, config)
+        return handleExternal(request, env, externalMatch[1], externalMatch[2], requestId, config)
     }
 
     return anthropicError(404, 'not_found_error', 'Not found', requestId)
@@ -172,6 +179,7 @@ async function enforceRateLimit(request: Request, env: Env, requestId: string): 
 
 async function handleExternal(
     request: Request,
+    env: Env,
     rawType: string,
     rawProviderUrl: string,
     requestId: string,
@@ -208,45 +216,26 @@ async function handleExternal(
 
     const limitedBody = await readLimitedBody(request, config.maxBodyBytes)
     if (!limitedBody.ok) return bodyTooLarge(config, requestId)
-    const inboundRequest = new Request(request.url, {
-        method: 'POST',
-        headers: keyResult.headers,
-        body: limitedBody.text
-    })
-    const provider = new ProviderCtor()
+    const body = parseBodyObject(limitedBody.text)
+    if (!body) return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
+    const target: Target = {
+        backend: type as BackendType,
+        model: body.model as string,
+        baseUrl,
+        apiKey: keyResult.apiKey,
+        label: type
+    }
+    const ctx = { env, cfg: config, requestId, inboundHeaders: keyResult.headers, stats: newStats() }
+    return callTarget(target, body, ctx)
+}
 
-    if (provider.handle) {
-        return provider.handle(inboundRequest, baseUrl, keyResult.apiKey)
-    }
-
-    let providerRequest: Request
+function parseBodyObject(text: string): Record<string, unknown> | null {
     try {
-        providerRequest = await provider.convertToProviderRequest(inboundRequest, baseUrl, keyResult.apiKey)
-    } catch (error) {
-        if (error instanceof SyntaxError) {
-            return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
-        }
-        throw error
+        const parsed = JSON.parse(text)
+        return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : null
+    } catch {
+        return null
     }
-    const stream = Boolean(JSON.parse(limitedBody.text).stream)
-    let providerResponse: Response
-    try {
-        providerResponse = await fetchUpstream(providerRequest, {
-            stream,
-            ttfbMs: config.upstreamTtfbMs,
-            totalMs: config.upstreamTotalMs
-        })
-    } catch (error) {
-        if (error instanceof UpstreamTimeoutError) {
-            return anthropicError(504, 'api_error', error.message, requestId)
-        }
-        throw error
-    }
-    providerResponse = await scrubUpstreamError(providerResponse, [
-        keyResult.apiKey,
-        keyResult.apiKey.replace(/^Bearer\s+/i, '')
-    ])
-    return provider.convertToClaudeResponse(providerResponse)
 }
 
 function withRequestId(response: Response, requestId: string): Response {
