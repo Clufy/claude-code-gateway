@@ -1,7 +1,7 @@
 export const KEEPALIVE_GRACE_MS = 5000
 export const KEEPALIVE_INTERVAL_MS = 10000
 
-/** Timing used by the worker; tests shrink it instead of adding config. */
+/** Timing used by the worker. Only tests may write to it (to shrink the delays); production code must not. */
 export const keepaliveTiming = { graceMs: KEEPALIVE_GRACE_MS, intervalMs: KEEPALIVE_INTERVAL_MS }
 
 export interface KeepaliveOptions {
@@ -77,8 +77,8 @@ function commit(pending: Promise<Response>, opts: KeepaliveOptions): Response {
                 stop()
                 if (!cancelled) controller.close()
             }
-            const fail = (message: string) => {
-                send(sse('error', { type: 'error', error: { type: 'api_error', message } }))
+            const fail = (type: string, message: string) => {
+                send(sse('error', { type: 'error', error: { type, message } }))
                 finish()
             }
             const run = async () => {
@@ -87,7 +87,8 @@ function commit(pending: Promise<Response>, opts: KeepaliveOptions): Response {
                     response = await pending
                 } catch (error) {
                     stop()
-                    fail(error instanceof Error ? error.message : String(error))
+                    console.error(error)
+                    fail('api_error', error instanceof Error ? error.message : String(error))
                     return
                 }
                 stop()
@@ -98,18 +99,22 @@ function commit(pending: Promise<Response>, opts: KeepaliveOptions): Response {
                 const isSse =
                     response.ok && response.body && response.headers.get('content-type')?.includes('text/event-stream')
                 if (!isSse) {
-                    let message = `HTTP ${response.status}`
-                    try {
-                        message = (await response.json<any>())?.error?.message ?? message
-                    } catch {
-                        // keep the status fallback
+                    let message = response.ok ? 'backend returned a non-stream response' : `HTTP ${response.status}`
+                    let type = 'api_error'
+                    if (!response.ok) {
+                        try {
+                            const error = (await response.json<any>())?.error
+                            if (typeof error?.message === 'string') message = error.message
+                            if (typeof error?.type === 'string') type = error.type
+                        } catch {
+                            // keep the fallbacks
+                        }
                     }
-                    fail(message)
+                    fail(type, message)
                     return
                 }
                 reader = response.body!.getReader()
-                const decoder = new TextDecoder()
-                let buffer = ''
+                let buffer: Uint8Array = new Uint8Array(0)
                 let stripped = false
                 try {
                     for (;;) {
@@ -120,20 +125,23 @@ function commit(pending: Promise<Response>, opts: KeepaliveOptions): Response {
                             send(r.value)
                             continue
                         }
-                        buffer += decoder.decode(r.value, { stream: true }).replace(/\r\n/g, '\n')
-                        let at: number
-                        while (!stripped && (at = buffer.indexOf('\n\n')) !== -1) {
-                            const block = buffer.slice(0, at + 2)
-                            buffer = buffer.slice(at + 2)
-                            if (/^event:\s*message_start\s*$/m.test(block)) stripped = true
-                            else send(encoder.encode(block))
-                        }
-                        if (stripped && buffer) {
-                            send(encoder.encode(buffer))
-                            buffer = ''
+                        buffer = concat(buffer, r.value)
+                        for (;;) {
+                            const end = findBlockEnd(buffer)
+                            if (end === -1) break
+                            const block = buffer.subarray(0, end)
+                            const rest = buffer.subarray(end)
+                            if (/^event:\s*message_start\s*$/m.test(new TextDecoder().decode(block))) {
+                                stripped = true
+                                if (rest.length) send(rest)
+                                buffer = new Uint8Array(0)
+                                break
+                            }
+                            send(block)
+                            buffer = rest
                         }
                     }
-                    if (buffer) send(encoder.encode(buffer))
+                    if (buffer.length) send(buffer)
                     finish()
                 } catch (error) {
                     stop()
@@ -153,4 +161,37 @@ function commit(pending: Promise<Response>, opts: KeepaliveOptions): Response {
         status: 200,
         headers: { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache' }
     })
+}
+
+function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
+    if (a.length === 0) return b
+    const out = new Uint8Array(a.length + b.length)
+    out.set(a)
+    out.set(b, a.length)
+    return out
+}
+
+/**
+ * Byte offset just past the first complete SSE event (ending in a blank line), or -1.
+ * Handles 
+, 
+ and 
+ line endings; a trailing 
+ is held back until the next byte is known.
+ */
+function findBlockEnd(buf: Uint8Array): number {
+    let lineStart = 0
+    for (let i = 0; i < buf.length; i++) {
+        const c = buf[i]
+        if (c !== 0x0a && c !== 0x0d) continue
+        let eol = 1
+        if (c === 0x0d) {
+            if (i + 1 >= buf.length) return -1
+            if (buf[i + 1] === 0x0a) eol = 2
+        }
+        if (i === lineStart) return i + eol
+        i += eol - 1
+        lineStart = i + 1
+    }
+    return -1
 }

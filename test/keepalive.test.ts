@@ -46,7 +46,7 @@ describe('withKeepalive', () => {
 
     it('slow success streams pings then backend', async () => {
         const res = await withKeepalive(
-            delay(80).then(() => sseResponse()),
+            delay(120).then(() => sseResponse()),
             opts
         )
         expect(res.status).toBe(200)
@@ -64,7 +64,7 @@ describe('withKeepalive', () => {
     it('slow failure becomes sse error', async () => {
         const body = '{"type":"error","error":{"type":"api_error","message":"down"}}'
         const res = await withKeepalive(
-            delay(80).then(() => new Response(body, { status: 503 })),
+            delay(120).then(() => new Response(body, { status: 503 })),
             opts
         )
         const events = await readSse(res)
@@ -73,18 +73,51 @@ describe('withKeepalive', () => {
 
     it('slow rejection becomes sse error', async () => {
         const res = await withKeepalive(
-            delay(80).then(() => Promise.reject(new Error('kaput'))),
+            delay(120).then(() => Promise.reject(new Error('kaput'))),
             opts
         )
         const events = await readSse(res)
         expect(events[events.length - 1]).toMatchObject({ event: 'error', data: { error: { message: 'kaput' } } })
     })
 
+    it('slow failure keeps the backend error type; non-sse 200 gets a clear message', async () => {
+        const body = '{"type":"error","error":{"type":"overloaded_error","message":"busy"}}'
+        const res = await withKeepalive(
+            delay(120).then(() => new Response(body, { status: 529 })),
+            opts
+        )
+        const events = await readSse(res)
+        expect(events[events.length - 1].data.error).toEqual({ type: 'overloaded_error', message: 'busy' })
+        const res2 = await withKeepalive(
+            delay(120).then(() => new Response('{}', { status: 200 })),
+            opts
+        )
+        const events2 = await readSse(res2)
+        expect(events2[events2.length - 1].data.error.message).toBe('backend returned a non-stream response')
+    })
+
+    it('clears the interval when the client cancels before pending settles', async () => {
+        const clear = vi.spyOn(globalThis, 'clearInterval')
+        try {
+            const res = await withKeepalive(
+                delay(300).then(() => sseResponse()),
+                opts
+            )
+            const reader = res.body!.getReader()
+            await reader.read()
+            const before = clear.mock.calls.length
+            await reader.cancel()
+            expect(clear.mock.calls.length).toBeGreaterThan(before)
+        } finally {
+            clear.mockRestore()
+        }
+    })
+
     it('client cancel stops pings and cancels the backend body once pending resolves', async () => {
         const cancelled = vi.fn()
         const backend = new ReadableStream<Uint8Array>({ pull() {}, cancel: cancelled })
         const res = await withKeepalive(
-            delay(80).then(() => sseResponse(backend)),
+            delay(120).then(() => sseResponse(backend)),
             opts
         )
         const reader = res.body!.getReader()
@@ -108,10 +141,70 @@ describe('withKeepalive', () => {
             opts
         )
         const reader = res.body!.getReader()
-        await delay(100)
+        await delay(160)
         await reader.cancel()
         await vi.waitFor(() => expect(cancelled).toHaveBeenCalledTimes(1))
     })
+})
+
+describe('message_start stripping is byte exact', () => {
+    const MS = 'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_backend"}}\n\n'
+    async function run(chunks: (string | Uint8Array)[]): Promise<Uint8Array> {
+        const body = new ReadableStream<Uint8Array>({
+            start(c) {
+                for (const chunk of chunks) c.enqueue(typeof chunk === 'string' ? enc.encode(chunk) : chunk)
+                c.close()
+            }
+        })
+        const res = await withKeepalive(
+            delay(120).then(() => sseResponse(body)),
+            opts
+        )
+        return new Uint8Array(await res.arrayBuffer())
+    }
+    const endsWith = (out: Uint8Array, tail: Uint8Array) =>
+        out.length >= tail.length && out.slice(out.length - tail.length).every((b, i) => b === tail[i])
+    const has = (out: Uint8Array, text: string) => new TextDecoder().decode(out).includes(text)
+
+    it('message_start split mid-line across chunks', async () => {
+        const tail = 'event: content_block_start\ndata: {"i":1}\n\n'
+        const out = await run(['event: mess', 'age_start\ndata: {"id":"msg_backend"}\n\n' + tail])
+        expect(endsWith(out, enc.encode(tail))).toBe(true)
+        expect(has(out, 'msg_backend')).toBe(false)
+    })
+
+    it('CRLF blank line split as \\r | \\n', async () => {
+        const tail = 'event: content_block_start\r\ndata: {"i":1}\r\n\r\n'
+        const out = await run(['event: message_start\r\ndata: {"id":"msg_backend"}\r\n\r', '\n', tail])
+        expect(endsWith(out, enc.encode(tail))).toBe(true)
+        expect(has(out, 'msg_backend')).toBe(false)
+    })
+
+    it('forwards a leading ping before message_start', async () => {
+        const ping = 'event: ping\ndata: {"type":"ping"}\n\n'
+        const tail = 'event: content_block_start\ndata: {"i":1}\n\n'
+        const out = await run([ping + MS + tail])
+        expect(endsWith(out, enc.encode(ping + tail))).toBe(true)
+        expect(has(out, 'msg_backend')).toBe(false)
+    })
+
+    it('message_start and the next event in the same chunk', async () => {
+        const tail = 'event: content_block_delta\ndata: {"t":"x"}\n\nevent: message_stop\ndata: {}\n\n'
+        const out = await run([MS + tail])
+        expect(endsWith(out, enc.encode(tail))).toBe(true)
+        expect(has(out, 'msg_backend')).toBe(false)
+    })
+
+    for (const ch of ['你', '\u{1F600}']) {
+        it(`multibyte ${ch} split across chunks is preserved`, async () => {
+            const tail = enc.encode(`event: content_block_delta\ndata: {"t":"${ch}${ch}"}\n\n`)
+            const split = tail.indexOf(enc.encode(ch)[0]) + 1 // mid-character
+            const first = new Uint8Array([...enc.encode(MS), ...tail.slice(0, split)])
+            const out = await run([first, tail.slice(split)])
+            expect(endsWith(out, tail)).toBe(true)
+            expect(has(out, 'msg_backend')).toBe(false)
+        })
+    }
 })
 
 describe('worker keepalive log', () => {
@@ -157,7 +250,7 @@ describe('worker keepalive log', () => {
 
     it('committed success logs one line with real status and keepalive', async () => {
         const ai = fakeAI(async () => {
-            await delay(80)
+            await delay(120)
             return new Response(
                 new ReadableStream({
                     start(c) {
@@ -188,7 +281,7 @@ describe('worker keepalive log', () => {
             }
         })
         stub = stubFetch(async () => {
-            await delay(80)
+            await delay(120)
             return new Response('{"error":{"message":"bad request"}}', {
                 status: 400,
                 headers: { 'content-type': 'application/json' }
@@ -201,6 +294,59 @@ describe('worker keepalive log', () => {
         expect(lines()).toHaveLength(1)
         expect(lines()[0]).toMatchObject({ status: 400, keepalive: true })
         expect(lines()[0].backend).toContain('openai')
+    })
+
+    it('committed rejection logs one 500 line with the first target and no ttfb', async () => {
+        const routes = JSON.stringify({
+            'claude-*': {
+                provider: 'openai',
+                baseUrl: 'https://api.openai.com',
+                model: 'gpt-5.1',
+                keySecret: 'OPENAI_API_KEY'
+            }
+        })
+        stub = stubFetch(async () => {
+            await delay(120)
+            throw new TypeError('network down')
+        })
+        const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+        try {
+            const res = await post(makeEnv({ MODEL_ROUTES: routes, OPENAI_API_KEY: 'sk-x' }), 'claude-opus-4-1')
+            expect(res.status).toBe(200)
+            const events = await readSse(res)
+            expect(events[events.length - 1]).toMatchObject({
+                event: 'error',
+                data: { error: { message: 'network down' } }
+            })
+            expect(errSpy).toHaveBeenCalled()
+        } finally {
+            errSpy.mockRestore()
+        }
+        expect(lines()).toHaveLength(1)
+        expect(lines()[0]).toMatchObject({ status: 500, keepalive: true })
+        expect(lines()[0].backend).toContain('openai')
+        expect(lines()[0].ttfbMs).toBeUndefined()
+    })
+
+    it('slow non-stream request gets no keepalive', async () => {
+        const ai = fakeAI(async () => {
+            await delay(120)
+            return Response.json({ response: 'hi' })
+        })
+        const res = await callWorker(
+            '/v1/messages',
+            {
+                method: 'POST',
+                headers: { 'x-api-key': 'test-key', 'content-type': 'application/json' },
+                body: JSON.stringify({ model: 'x-model', max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] })
+            },
+            makeEnv({ AI: ai })
+        )
+        expect(res.headers.get('content-type')).toContain('application/json')
+        const json: any = await res.json()
+        expect(json.type).toBe('message')
+        expect(lines()).toHaveLength(1)
+        expect(lines()[0].keepalive).toBeUndefined()
     })
 
     it('fast failure does not set keepalive', async () => {

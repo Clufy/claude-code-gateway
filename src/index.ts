@@ -142,9 +142,9 @@ async function handleRequest(
             route: typeof model === 'string' ? findRouteEntry(model, config.routes)?.pattern : undefined,
             backend: targets[0].label,
             fallbackUsed: false,
-            ttfbMs: 0,
             stats: ctx.stats
         }
+        const inputTokens = body.stream ? tokens.countTokensForRequest(body).input_tokens : 0
         const dispatched = dispatchWithFallback(targets, body, ctx)
         // Lazy log metadata: filled from the dispatch outcome, read when the line is written.
         let settled: Response | undefined
@@ -167,7 +167,7 @@ async function handleRequest(
             dispatched.then((r) => r.response),
             {
                 requestedModel: typeof model === 'string' ? model : '',
-                inputTokens: tokens.countTokensForRequest(body).input_tokens,
+                inputTokens,
                 ...keepaliveTiming
             }
         )

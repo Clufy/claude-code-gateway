@@ -44,7 +44,7 @@ export interface FinalizeInput {
     route?: string
     backend: string
     fallbackUsed: boolean
-    ttfbMs: number
+    ttfbMs?: number
     stats: BackendStats
     /** Real backend status when it differs from the response (committed keepalive). Read at log time. */
     status?: number
@@ -75,7 +75,7 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
         backend: input.backend,
         model: input.model ?? '',
         fallbackUsed: input.fallbackUsed,
-        ttfbMs: input.ttfbMs,
+        ttfbMs: input.ttfbMs ?? 0,
         toolCallsFromText: stats.toolCallsFromText,
         unparsedToolText: stats.unparsedToolText
     })
