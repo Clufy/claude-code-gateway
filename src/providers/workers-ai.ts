@@ -262,10 +262,30 @@ export interface WorkersAIOptions {
     stats?: BackendStats
 }
 
-const NON_RETRYABLE = /\b(400|401|403|404|413|422)\b|invalid|not found/i
+const NON_RETRYABLE = /\b(400|401|403|404|413|422)\b|invalid|not found|No such model|5007/i
 const UNPARSED_TOOL_TEXT = /<tool_call|<function|"name"\s*:\s*"[^"]+"\s*,\s*"(arguments|parameters)"\s*:/
 
 const TIMED_OUT = Symbol('timed out')
+
+/** AI.run resolved with a non-ok Response (after any retries). */
+class WorkersAIHttpError extends Error {
+    readonly status: number
+    constructor(status: number, message: string) {
+        super(message)
+        this.status = status
+    }
+}
+
+function httpErrorMessage(text: string, status: number): string {
+    try {
+        const body = JSON.parse(text)
+        const message = body?.errors?.[0]?.message ?? body?.error?.message
+        if (typeof message === 'string' && message) return message
+    } catch {
+        // not JSON
+    }
+    return `HTTP ${status}`
+}
 
 // Resolves with the promise's value, or TIMED_OUT. The timer is always cleared and the
 // promise always has handlers attached, so a late rejection can't go unhandled.
@@ -352,21 +372,35 @@ export class WorkersAIProvider {
         return this.error(504, 'api_error', `upstream timed out after ${ms} ms`)
     }
 
-    // Calls AI.run, retrying thrown errors; streaming requests also bound the stream start by ttfbMs.
+    // Calls AI.run, retrying thrown errors and 429/5xx Responses; streaming requests also bound
+    // the stream start by ttfbMs. A non-ok Response that is not retried throws WorkersAIHttpError.
     private async runWithRetry(model: string, options: any, stream: boolean): Promise<any | typeof TIMED_OUT> {
         for (let attempt = 1; ; attempt++) {
+            let result: any
             try {
                 const call = this.env.AI.run(model, options, { returnRawResponse: true })
-                if (!stream) return await call
-                return await raceTimeout(call, this.ttfbMs, (late) => {
-                    const body = late instanceof Response ? late.body : late
-                    if (body instanceof ReadableStream) body.cancel().catch(() => {})
-                })
+                result = !stream
+                    ? await call
+                    : await raceTimeout(call, this.ttfbMs, (late) => {
+                          const body = late instanceof Response ? late.body : late
+                          if (body instanceof ReadableStream) body.cancel().catch(() => {})
+                      })
             } catch (e) {
                 const message = e instanceof Error ? e.message : String(e)
                 if (attempt > this.retries || NON_RETRYABLE.test(message)) throw e
                 await new Promise((r) => setTimeout(r, 500 * attempt))
+                continue
             }
+            if (result instanceof Response && !result.ok) {
+                const text = await result.text().catch(() => '')
+                const retryable = result.status === 429 || result.status >= 500
+                if (!retryable || attempt > this.retries) {
+                    throw new WorkersAIHttpError(result.status, httpErrorMessage(text, result.status))
+                }
+                await new Promise((r) => setTimeout(r, 500 * attempt))
+                continue
+            }
+            return result
         }
     }
 
@@ -381,6 +415,11 @@ export class WorkersAIProvider {
         try {
             rawStream = await this.runWithRetry(model, options, stream)
         } catch (e) {
+            if (e instanceof WorkersAIHttpError) {
+                if (e.status === 429) return this.error(429, 'rate_limit_error', e.message)
+                if (e.status >= 400 && e.status < 500) return this.error(e.status, 'invalid_request_error', e.message)
+                return this.error(502, 'api_error', e.message)
+            }
             const message = e instanceof Error ? e.message : String(e)
             return this.error(502, 'api_error', `Workers AI call failed: ${message}`)
         }

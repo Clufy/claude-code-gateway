@@ -113,6 +113,29 @@ describe('dispatch', () => {
         expect(models).toHaveLength(0)
     })
 
+    it('workers ai 429 after retries falls back to the next route target', async () => {
+        const models: string[] = []
+        const ai = fakeAI((model) => {
+            models.push(model)
+            if (model === '@cf/busy') return Response.json({ errors: [{ message: 'Capacity' }] }, { status: 429 })
+            return new Response(
+                `data: ${JSON.stringify({ response: 'hi' })}
+
+`,
+                {
+                    headers: { 'content-type': 'text/event-stream' }
+                }
+            )
+        })
+        const routes = JSON.stringify({
+            'claude-a': { provider: 'workers-ai', model: '@cf/busy', fallback: ['@cf/ok'] }
+        })
+        const res = await post(makeEnv({ MODEL_ROUTES: routes, AI: ai }), 'claude-a')
+        expect(res.status).toBe(200)
+        expect(((await res.json()) as any).content[0].text).toBe('hi')
+        expect(models).toEqual(['@cf/busy', '@cf/busy', '@cf/busy', '@cf/ok'])
+    })
+
     it('unrouted model passes through to workers ai', async () => {
         stub = stubFetch(() => new Response('no', { status: 500 }))
         const { ai, models } = aiSpy()

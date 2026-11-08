@@ -58,6 +58,54 @@ describe('Workers AI policy', () => {
         expect(run).toHaveBeenCalledTimes(1)
     })
 
+    it('retries a 503 Response then streams the 200', async () => {
+        const run = vi
+            .fn()
+            .mockResolvedValueOnce(new Response('{"errors":[{"message":"busy"}]}', { status: 503 }))
+            .mockImplementation(async () => sseResponse([{ response: 'ok' }]))
+        const res = await send(run, {}, { stream: true })
+        expect(res.status).toBe(200)
+        expect(await res.text()).toContain('"text":"ok"')
+        expect(run).toHaveBeenCalledTimes(2)
+    })
+
+    it('returns 429 with the message when every attempt is a 429 Response', async () => {
+        const run = vi.fn(
+            async () =>
+                new Response(JSON.stringify({ errors: [{ message: 'Capacity temporarily exceeded' }] }), {
+                    status: 429
+                })
+        )
+        const res = await send(run, { retries: 1 }, { stream: true })
+        expect(res.status).toBe(429)
+        const body: any = await res.json()
+        expect(body.error).toEqual({ type: 'rate_limit_error', message: 'Capacity temporarily exceeded' })
+        expect(run).toHaveBeenCalledTimes(2)
+    })
+
+    it('maps a 5xx Response to 502 after retries, message from error.message', async () => {
+        const run = vi.fn(async () => Response.json({ error: { message: 'model crashed' } }, { status: 500 }))
+        const res = await send(run, { retries: 1 })
+        expect(res.status).toBe(502)
+        expect(((await res.json()) as any).error).toEqual({ type: 'api_error', message: 'model crashed' })
+        expect(run).toHaveBeenCalledTimes(2)
+    })
+
+    it('returns a 400 Response as 400 without retrying', async () => {
+        const run = vi.fn(async () => new Response('not json', { status: 400 }))
+        const res = await send(run, {})
+        expect(res.status).toBe(400)
+        expect(((await res.json()) as any).error).toEqual({ type: 'invalid_request_error', message: 'HTTP 400' })
+        expect(run).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not retry an unknown model', async () => {
+        const run = vi.fn().mockRejectedValue(new Error('5007: No such model @cf/nope'))
+        const res = await send(run, {})
+        expect(res.status).toBe(502)
+        expect(run).toHaveBeenCalledTimes(1)
+    })
+
     it('counts hermes calls', async () => {
         const stats = newStats()
         const ai = fakeAI([

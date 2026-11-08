@@ -351,6 +351,7 @@ describe('worker keepalive log', () => {
 
     it('fast failure does not set keepalive', async () => {
         const res = await post(makeEnv({ AI: fakeAI(() => new Response('{}', { status: 400 })) }), 'x-model')
+        expect(res.status).toBe(400)
         await res.text()
         expect(lines()).toHaveLength(1)
         expect(lines()[0].keepalive).toBeUndefined()
