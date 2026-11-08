@@ -99,7 +99,7 @@ deleted on deploy; secrets (`PROXY_KEY`) are not. Edit the `vars` block, then de
 | `ALLOW_ANONYMOUS`   | `false`                   | Run without `PROXY_KEY`                          |
 | `MAX_BODY_BYTES`    | `33554432` (32 MiB)       | Max POST body size                               |
 | `UPSTREAM_TTFB_MS`  | `120000`                  | Time to first upstream byte                      |
-| `UPSTREAM_TOTAL_MS` | `600000`                  | Total upstream time                              |
+| `UPSTREAM_TOTAL_MS` | `600000`                  | Per-attempt limit, non-streaming requests        |
 | `MODELS`            | built-in Workers AI list  | Models returned by `GET /v1/models`              |
 | `VISION_MODELS`     | none                      | Models flagged as vision-capable                 |
 | `MULTI_TOOL_MODELS` | none                      | Models flagged as supporting multiple tool calls |
@@ -112,7 +112,7 @@ Default `ALLOWED_HOSTS`: `api.openai.com`, `generativelanguage.googleapis.com`,
 
 | Default           | Behavior and opt-out                                                                                                                                                    | Error text                                                                                                                    |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Auth required     | With no `PROXY_KEY`, requests fail with `500`. Opt out with `ALLOW_ANONYMOUS=true`. A wrong or missing key gets `401`.                                                  | `proxy not configured: set PROXY_KEY or ALLOW_ANONYMOUS=true`; `invalid x-api-key` / `invalid x-proxy-key`                    |
+| Auth required     | With no `PROXY_KEY`, API requests fail with `500`. Opt out with `ALLOW_ANONYMOUS=true`. A wrong or missing key gets `401`.                                              | `proxy not configured: set PROXY_KEY or ALLOW_ANONYMOUS=true`; `invalid x-api-key` / `invalid x-proxy-key`                    |
 | Host allowlist    | External routes only reach hosts in `ALLOWED_HOSTS` (`403`). IP literals and custom ports are also rejected. Opt out with `ALLOWED_HOSTS=*`.                            | `Provider host not allowed by ALLOWED_HOSTS`; `IP-literal provider hosts are not allowed`; `custom ports are not allowed`     |
 | HTTPS only        | `http://` provider URLs get `403`. Opt out with `ALLOW_HTTP=true`. Credentials in the URL and unparseable URLs (`400`) are always rejected.                             | `http provider URLs are disabled; set ALLOW_HTTP=true`; `credentials in provider URL are not allowed`; `invalid provider URL` |
 | Body limit        | POST bodies over the limit get `413`. Tune with `MAX_BODY_BYTES`.                                                                                                       | `request body exceeds MAX_BODY_BYTES (<n> bytes)`                                                                             |

@@ -15,7 +15,7 @@
     //   ALLOW_ANONYMOUS   false  (without PROXY_KEY the proxy refuses requests)
     //   MAX_BODY_BYTES    33554432  (32 MiB)
     //   UPSTREAM_TTFB_MS  120000  (time to first byte)
-    //   UPSTREAM_TOTAL_MS 600000  (whole upstream request)
+    //   UPSTREAM_TOTAL_MS 600000  (per-attempt limit, non-streaming; retries can exceed it)
     //   MODELS            built-in Workers AI list (comma-separated model ids)
     //   VISION_MODELS     none (comma-separated model ids)
     //   MULTI_TOOL_MODELS none (comma-separated model ids)
