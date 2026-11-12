@@ -35,7 +35,7 @@ const passes: Record<string, (text: string) => unknown> = {
 
 function best(fn: () => unknown): number {
     let min = Infinity
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 7; i++) {
         const t0 = performance.now()
         fn()
         min = Math.min(min, performance.now() - t0)

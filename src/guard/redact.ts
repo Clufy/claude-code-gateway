@@ -76,6 +76,7 @@ function looksLikeProse(value: string): boolean {
 }
 
 function realSecretValue(value: string, quoted: boolean): boolean {
+    if (value.length < 12) return false // 3.5 bits per char needs at least 12 chars (2^3.5 > 11)
     if (quoted && looksLikeProse(value)) return false
     if (entropyOf(value, 0, value.length) < MIN_ENTROPY) return false
     const lower = value.toLowerCase()
@@ -213,7 +214,12 @@ function redactMapped(text: string, mask: boolean): { out: string; reps: Replace
     }
     const found = matchSpans(text, false, true)
     const all = mask ? [...found, ...runSpans(text), ...pemTails(text)] : found
-    const spans = all.sort((a, b) => a.start - b.start || Number(a.bare ?? false) - Number(b.bare ?? false))
+    // Matches of one pattern arrive in order, so a single-pattern input needs no sort.
+    let sorted = true
+    for (let i = 1; i < all.length && sorted; i++) sorted = all[i - 1].start < all[i].start
+    const spans = sorted
+        ? all
+        : all.sort((a, b) => a.start - b.start || Number(a.bare ?? false) - Number(b.bare ?? false))
     const intervals: SecretSpan[] = []
     for (const span of spans) {
         const last = intervals[intervals.length - 1]
