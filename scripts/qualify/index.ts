@@ -50,6 +50,9 @@ const models = csv(values.models ?? '')
 if (models.length === 0) usageError('--models is required (comma-separated)')
 if (!/^[1-9][0-9]*$/.test(values.runs)) usageError(`--runs must be a positive integer, got "${values.runs}"`)
 const runs = Number(values.runs)
+if (values.engagement !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(values.engagement)) {
+    usageError(`--engagement must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}, got "${values.engagement}"`)
+}
 const only = values.only === undefined ? undefined : csv(values.only)
 if (only) {
     const known = SCENARIOS.map((s) => s.id)

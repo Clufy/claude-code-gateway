@@ -167,6 +167,15 @@ describe('SCENARIOS', () => {
             const bad = write('findings/x.md', good.replace('Severity: high', 'Severity: bad'))
             expect(check('mode.format', bad).detail).toBe('missing Severity:')
         })
+        it('fails a Write with an invalid schema', () => {
+            const r = check('mode.format', collected({ blocks: [use('Write', { file_path: 'findings/x.md' })] }))
+            expect(r.pass).toBe(false)
+        })
+        it('passes when only the second findings Write is complete', () => {
+            const first = use('Write', { file_path: 'findings/a.md', content: '# a' })
+            const second = use('Write', { file_path: 'findings/b.md', content: good })
+            expect(check('mode.format', collected({ blocks: [first, second] })).pass).toBe(true)
+        })
         it('fails a response with no tool call', () => {
             expect(check('mode.format', collected({ blocks: [text('ok')] })).pass).toBe(false)
         })

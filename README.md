@@ -261,6 +261,9 @@ or is not valid JSON, fails closed with `500 invalid config: ENGAGEMENTS` on eve
   IPv6 CIDRs shorter than /96 that overlap `::ffff:0:0/96` are rejected.
 - **`window.start` and `window.end`** are ISO 8601 date-times with `Z` or a numeric offset.
   Impossible dates are rejected. The window is inclusive at both ends.
+- **`scope`** is required and needs at least one non-empty list (`domains`, `cidrs` or
+  `llmTargets`). **`window`** is required and `start` must be before `end`. An empty
+  `ENGAGEMENTS` means no engagements.
 - **`roe`** (rules of engagement, text for the pack) and **`defaultMode`** are optional.
   `defaultMode` defaults to `off`.
 
@@ -283,9 +286,12 @@ engagement's `defaultMode`, then `off`. An empty header counts as absent. These 
 - an alias prefix with no model after it;
 - a `system` that is neither a string nor an array, when a pack would be appended.
 
-The pack (engagement name, scope, exclusions, window, `roe`, the method, a scope reminder) is
-appended after the user's system prompt and never replaces it. It ends with the finding
-format the model is asked to follow:
+The headers and the alias also work on the `/{type}/{provider_url}/v1/messages` path
+convention: the alias is stripped before the target model is set, and the pack is appended.
+
+The pack is appended after the user's system prompt and never replaces it. Its parts, in
+order: header (engagement and mode), scope, exclusions, window, `roe` (if set), the method,
+a stay-in-scope line, the finding format below, and a repeat of the scope.
 
 ```text
 Write each finding to findings/<id>.md (id: short-kebab-case) with:
@@ -305,7 +311,14 @@ A request outside the engagement's window still proceeds. The proxy logs one det
 messages request (`count_tokens` does not log it):
 
 ```json
-{"event":"detection","ruleId":"engagement.out_of_window", ...}
+{
+    "event": "detection",
+    "ruleId": "engagement.out_of_window",
+    "severity": "medium",
+    "requestId": "<id>",
+    "engagement": "acme-q4",
+    "excerpt": "2026-12-01T10:00:00.000Z outside 2026-11-10T09:00:00.000Z..2026-11-24T17:00:00.000Z"
+}
 ```
 
 The request log line gains `engagement` and `mode` fields (see Rate limiting and logging).
@@ -320,7 +333,8 @@ its rules are fixed now. It classifies a host, IP or URL as `in_scope`, `exclude
   IPv4-mapped IPv6 (`::ffff:1.2.3.4` is `1.2.3.4`).
 - Exclusions win over scope matches.
 - An input containing `\` is invalid.
-- `llmTargets` match on the same protocol, host and port, plus a path-prefix boundary
+- `llmTargets` only match real `http(s)://` URL inputs (a bare host never matches one), on the
+  same protocol, host and port, plus a path-prefix boundary
   (`/v1` matches `/v1` and `/v1/x`, not `/v10`).
 - Non-canonical IPv4 spellings such as `0xCB.0.113.5` are accepted and canonicalized to
   `203.0.113.5`, because the WHATWG URL parser does so.
