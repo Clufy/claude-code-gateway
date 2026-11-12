@@ -1,6 +1,9 @@
+/** How the tapped stream ended: source finished, source errored, or the client cancelled. */
+export type SseEnd = 'done' | 'error' | 'cancel'
+
 export interface SseHooks {
     onEvent(event: string, data: any): void
-    onEnd(): string | void
+    onEnd(reason: SseEnd): string | void
 }
 
 const encoder = new TextEncoder()
@@ -33,12 +36,12 @@ export function tapSse(response: Response, hooks: SseHooks): Response {
         buffer = final ? '' : (blocks.pop() ?? '')
         for (const block of blocks) if (block) parseBlock(block)
     }
-    const finish = (): string | void => {
+    const finish = (reason: SseEnd): string | void => {
         if (ended) return
         ended = true
         drain(true)
         try {
-            return hooks.onEnd()
+            return hooks.onEnd(reason)
         } catch {
             return
         }
@@ -49,7 +52,7 @@ export function tapSse(response: Response, hooks: SseHooks): Response {
             try {
                 const r = await reader.read()
                 if (r.done) {
-                    const tail = finish()
+                    const tail = finish('done')
                     if (typeof tail === 'string') controller.enqueue(encoder.encode(tail))
                     controller.close()
                     return
@@ -58,12 +61,12 @@ export function tapSse(response: Response, hooks: SseHooks): Response {
                 drain(false)
                 controller.enqueue(r.value)
             } catch (error) {
-                finish()
+                finish('error')
                 controller.error(error)
             }
         },
         cancel(reason) {
-            finish()
+            finish('cancel')
             return reader.cancel(reason)
         }
     })

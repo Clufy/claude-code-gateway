@@ -71,6 +71,8 @@ describe('request log', () => {
         expect(typeof lines[0].ttfbMs).toBe('number')
         expect(lines[0].route).toBeUndefined()
         expect(lines[0].fallbackUsed).toBe(false)
+        expect(lines[0].streamError).toBeUndefined()
+        expect(lines[0].cancelled).toBeUndefined()
     })
 
     it('non-streaming success logs exactly one line with usage', async () => {
@@ -196,7 +198,33 @@ describe('request log', () => {
         expect(requestLines()).toHaveLength(0)
         await reader.cancel()
         expect(requestLines()).toHaveLength(1)
-        expect(requestLines()[0]).toMatchObject({ streamed: true, status: 200 })
+        expect(requestLines()[0]).toMatchObject({ streamed: true, status: 200, cancelled: true })
+        expect(requestLines()[0].streamError).toBeUndefined()
+    })
+
+    it('idle-timeout error event is recorded as streamError', async () => {
+        const enc = new TextEncoder()
+        const ai = fakeAI(
+            () =>
+                new Response(
+                    new ReadableStream({
+                        start(c) {
+                            c.enqueue(
+                                enc.encode(`data: ${JSON.stringify({ response: 'hi' })}
+
+`)
+                            )
+                        }
+                    }),
+                    { status: 200, headers: { 'content-type': 'text/event-stream' } }
+                )
+        )
+        const res = await post(makeEnv({ AI: ai, UPSTREAM_TTFB_MS: '50' }), { stream: true })
+        const events = await readSse(res)
+        expect(events[events.length - 1].event).toBe('error')
+        expect(requestLines()).toHaveLength(1)
+        expect(requestLines()[0]).toMatchObject({ streamed: true, status: 200, streamError: 'api_error' })
+        expect(requestLines()[0].cancelled).toBeUndefined()
     })
 
     it('upstream source error mid-stream logs one line', async () => {
@@ -221,7 +249,7 @@ describe('request log', () => {
         const res = await post(makeEnv({ AI: ai }), { stream: true })
         await res.text().catch(() => {})
         expect(requestLines()).toHaveLength(1)
-        expect(requestLines()[0]).toMatchObject({ streamed: true, status: 200 })
+        expect(requestLines()[0]).toMatchObject({ streamed: true, status: 200, streamError: 'error' })
     })
 
     it('SSE 200 with a null body still logs one line', async () => {

@@ -18,6 +18,8 @@ export interface RequestLog {
     toolCallsFromText?: number
     unparsedToolText?: boolean
     keepalive?: boolean // keepalive committed: client saw 200 before the backend answered
+    streamError?: string // streamed response carried an error event (its error.type) or the stream broke ('error')
+    cancelled?: boolean // the client cancelled the stream before it ended
 }
 
 export interface ProxyStats {
@@ -85,16 +87,27 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
     if (isStream) {
         let inputTokens: number | undefined
         let outputTokens: number | undefined
+        let streamError: string | undefined
         out = tapSse(response, {
             onEvent(event, data) {
-                if (event === 'message_start') inputTokens = data?.message?.usage?.input_tokens ?? inputTokens
+                if (event === 'error') streamError ??= data?.error?.type ?? 'error'
+                else if (event === 'message_start') inputTokens = data?.message?.usage?.input_tokens ?? inputTokens
                 else if (event === 'message_delta') {
                     inputTokens = data?.usage?.input_tokens ?? inputTokens
                     outputTokens = data?.usage?.output_tokens ?? outputTokens
                 }
             },
-            onEnd() {
-                logRequest(record({ streamed: true, inputTokens, outputTokens }))
+            onEnd(reason) {
+                if (reason === 'error') streamError ??= 'error'
+                logRequest(
+                    record({
+                        streamed: true,
+                        inputTokens,
+                        outputTokens,
+                        ...(streamError ? { streamError } : {}),
+                        ...(reason === 'cancel' ? { cancelled: true } : {})
+                    })
+                )
                 if (debug) return `: proxy-stats ${JSON.stringify(proxyStats())}\n\n`
             }
         })
