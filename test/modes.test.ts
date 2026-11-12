@@ -251,6 +251,28 @@ describe('modes on /v1/messages', () => {
         expect(lines('request')[0]).toMatchObject({ mode: 'purple', model: '@cf/zai-org/glm-5.3' })
     })
 
+    it('appends the pack once when dispatch falls back to the next target', async () => {
+        const seen: { model: string; system: string }[] = []
+        const env = makeEnv({
+            ENGAGEMENTS,
+            MODEL_ROUTES: JSON.stringify({
+                'claude-a': { provider: 'workers-ai', model: '@cf/busy', fallback: ['@cf/ok'] }
+            }),
+            AI: fakeAI((model, options: any) => {
+                seen.push({ model, system: options.messages.find((m: any) => m.role === 'system')?.content })
+                if (model === '@cf/busy') return Response.json({ errors: [{ message: 'down' }] }, { status: 503 })
+                return fakeAI([{ response: 'ok' }]).run(model, options)
+            })
+        })
+        const res = await post(env, { 'x-engagement': 'acme-2026q4' }, { model: 'claude-a' })
+        expect(res.status).toBe(200)
+        expect(seen[0].model).toBe('@cf/busy')
+        const second = seen.filter((s) => s.model === '@cf/ok')
+        expect(second).toHaveLength(1)
+        expect(second[0].system.split(PACK).length - 1).toBe(1)
+        expect(lines('request')[0]).toMatchObject({ fallbackUsed: true })
+    })
+
     describe('committed keepalive', () => {
         const saved = { ...keepaliveTiming }
         beforeEach(() => {
