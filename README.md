@@ -216,8 +216,10 @@ responses carry an `x-proxy-stats` header. The stats hold `backend`, `model`,
 
 `GET /v1/models` lists the `MODELS` (or built-in Workers AI) names plus every `MODEL_ROUTES`
 key that has no `*`. A name matched only by a glob route is not listed, but
-`GET /v1/models/{id}` resolves it. The vision and multi-tool flags are `true` if either the
-backing model or the routed name is in `VISION_MODELS` or `MULTI_TOOL_MODELS`.
+`GET /v1/models/{id}` resolves it. A `redteam/` or `purple/` prefix on `{id}` is stripped
+first, so `GET /v1/models/redteam/claude-x` describes `claude-x`. The vision and multi-tool
+flags are `true` if either the backing model or the routed name is in `VISION_MODELS` or
+`MULTI_TOOL_MODELS`.
 
 ## Engagements and modes
 
@@ -251,14 +253,18 @@ npx wrangler secret put ENGAGEMENTS
 
 For local dev, put `ENGAGEMENTS=<json on one line>` in `.dev.vars`. A value that is not a string,
 or is not valid JSON, fails closed with `500 invalid config: ENGAGEMENTS` on every request.
+The error names the engagement, field and index (`engagement "acme-q4" scope.domains[2]: invalid
+domain`), never the offending value.
 
 - **Names** match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`. Unknown keys are rejected everywhere.
-- **Domains** are an exact hostname or `*.` plus a hostname. The wildcard covers subdomains at
-  any depth but not the apex. Bare `*` and `*.<tld>` are rejected, as is any domain containing
-  `\`, `%`, whitespace or the IDNA deviation characters ß, ẞ, ς, ZWNJ or ZWJ. An exact
-  exclusion does not cover subdomains; add `*.x` to exclude those too.
-- **CIDRs** are IPv4 or IPv6; a bare IP means /32 or /128. Write IPv4-mapped ranges as IPv4:
-  IPv6 CIDRs shorter than /96 that overlap `::ffff:0:0/96` are rejected.
+- **Domains** are an exact hostname or `*.` plus a hostname. After IDNA, every label must match
+  `^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?$` (so `_dmarc.acme.example` works). The wildcard covers
+  subdomains at any depth but not the apex. Bare `*` and `*.<tld>` are rejected, as is any
+  domain containing `\`, `%`, whitespace or the IDNA deviation characters ß, ẞ, ς, ZWNJ or
+  ZWJ. An exact exclusion does not cover subdomains; add `*.x` to exclude those too.
+- **CIDRs** are IPv4 or IPv6; a bare IP means /32 or /128. Scope CIDRs shorter than /8 (IPv4)
+  or /16 (IPv6) are rejected as too broad; exclusions accept any prefix. Write IPv4-mapped
+  ranges as IPv4: IPv6 CIDRs shorter than /96 that overlap `::ffff:0:0/96` are rejected.
 - **`window.start` and `window.end`** are ISO 8601 date-times with `Z` or a numeric offset.
   Impossible dates are rejected. The window is inclusive at both ends.
 - **`scope`** is required and needs at least one non-empty list (`domains`, `cidrs` or
@@ -291,7 +297,8 @@ convention: the alias is stripped before the target model is set, and the pack i
 
 The pack is appended after the user's system prompt and never replaces it. Its parts, in
 order: header (engagement and mode), scope, exclusions, window, `roe` (if set), the method,
-a stay-in-scope line, the finding format below, and a repeat of the scope.
+a stay-in-scope line, the finding format below, and a last line that repeats the scope and
+the exclusions (`Scope (repeat): …; excluded: …`).
 
 ```text
 Write each finding to findings/<id>.md (id: short-kebab-case) with:
@@ -332,10 +339,15 @@ its rules are fixed now. It classifies a host, IP or URL as `in_scope`, `exclude
 - Hosts are normalized first: lowercase, trailing dot removed, IDNA (punycode), IPv4 forms and
   IPv4-mapped IPv6 (`::ffff:1.2.3.4` is `1.2.3.4`).
 - Exclusions win over scope matches.
-- An input containing `\` is invalid.
+- Matching is lexical: there are no DNS lookups, so a hostname that resolves into an excluded
+  CIDR is still `in_scope`. Exclude the hostname too.
+- An input is `invalid_target` if it contains `\`, an IDNA deviation character (ß, ẞ, ς,
+  ZWNJ, ZWJ; same rule as config domains), or a host label outside the config label rule above,
+  such as `$(id).acme.example`, `a;b.acme.example` or `*.acme.example`. `_` is allowed.
 - `llmTargets` only match real `http(s)://` URL inputs (a bare host never matches one), on the
   same protocol, host and port, plus a path-prefix boundary
-  (`/v1` matches `/v1` and `/v1/x`, not `/v10`).
+  (`/v1` matches `/v1` and `/v1/x`, not `/v10`). A path containing an encoded slash or
+  backslash (`%2f`, `%5c`) never matches a target that has a path.
 - Non-canonical IPv4 spellings such as `0xCB.0.113.5` are accepted and canonicalized to
   `203.0.113.5`, because the WHATWG URL parser does so.
 
