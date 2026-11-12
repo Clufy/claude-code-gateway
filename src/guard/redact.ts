@@ -178,7 +178,8 @@ const MARGIN = 500
 const MAX_EXCERPT = 200
 
 /** Redacts a window around [start, end) first, then cuts ±80 chars of context to ≤200 chars, newlines as spaces. */
-export function excerptAt(text: string, start: number, end: number): string {
+export function excerptAt(text: string, start: number, endRaw: number): string {
+    const end = Math.min(endRaw, start + MAX_EXCERPT) // only ~200 chars survive the cut, so never window a huge span
     const sliceStart = Math.max(0, start - CONTEXT - MARGIN)
     const sliceEnd = Math.min(text.length, end + CONTEXT + MARGIN)
     const { out, reps } = redactMapped(text.slice(sliceStart, sliceEnd), true)
