@@ -1,5 +1,6 @@
 import { resolveProviderUrl } from './provider-url'
 import { parseEngagements, type Engagement } from './engagement'
+import { parseGuardRules, type GuardConfig } from './guard/config'
 
 export type BackendType = 'workers-ai' | 'openai' | 'openai-responses' | 'gemini'
 export interface Route {
@@ -25,6 +26,7 @@ export interface ProxyConfig {
     upstreamTotalMs: number
     routes: RouteEntry[]
     engagements: ReadonlyMap<string, Engagement>
+    guard: GuardConfig
 }
 
 export class ConfigError extends Error {
@@ -185,6 +187,7 @@ export function loadConfig(env: unknown): ProxyConfig {
         upstreamTtfbMs: parseInt10(raw, 'UPSTREAM_TTFB_MS', DEFAULT_UPSTREAM_TTFB_MS),
         upstreamTotalMs: parseInt10(raw, 'UPSTREAM_TOTAL_MS', DEFAULT_UPSTREAM_TOTAL_MS),
         routes: parseRoutes(raw, { allowedHosts, allowHttp }),
-        engagements: parseEngagements(raw.ENGAGEMENTS)
+        engagements: parseEngagements(raw.ENGAGEMENTS),
+        guard: parseGuardRules(raw.GUARD_RULES)
     }
 }

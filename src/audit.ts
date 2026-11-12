@@ -1,6 +1,8 @@
+export type Severity = 'low' | 'medium' | 'high'
+
 export interface Detection {
     ruleId: string
-    severity: 'low' | 'medium' | 'high'
+    severity: Severity
     requestId: string
     engagement?: string
     excerpt: string
