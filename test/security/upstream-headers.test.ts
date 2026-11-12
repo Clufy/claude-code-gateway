@@ -37,8 +37,17 @@ describe('external requests', () => {
         'cf-connecting-ip': '9.9.9.9',
         cookie: 'a=b',
         'x-engagement': 'acme',
+        'x-proxy-mode': 'off',
         'content-type': 'application/json'
     }
+    const NOT_FORWARDED = [
+        'x-forwarded-for',
+        'x-proxy-key',
+        'cf-connecting-ip',
+        'cookie',
+        'x-engagement',
+        'x-proxy-mode'
+    ]
     // x-engagement must name a configured engagement (unknown names fail closed with 400).
     const env = () =>
         makeEnv({
@@ -63,8 +72,7 @@ describe('external requests', () => {
         )
         const sent = fetchStub.calls[0].headers
         expect(sent.get('authorization')).toBe('Bearer sk-provider')
-        for (const h of ['x-forwarded-for', 'x-proxy-key', 'cf-connecting-ip', 'cookie', 'x-engagement'])
-            expect(sent.get(h)).toBeNull()
+        for (const h of NOT_FORWARDED) expect(sent.get(h)).toBeNull()
     })
 
     it('gemini carries only allowlisted headers plus x-goog-api-key', async () => {
@@ -85,8 +93,7 @@ describe('external requests', () => {
         const sent = fetchStub.calls[0].headers
         expect(sent.get('x-goog-api-key')).toBe('gk')
         expect(sent.get('authorization')).toBeNull()
-        for (const h of ['x-forwarded-for', 'x-proxy-key', 'x-api-key', 'cf-connecting-ip', 'cookie', 'x-engagement'])
-            expect(sent.get(h)).toBeNull()
+        for (const h of [...NOT_FORWARDED, 'x-api-key']) expect(sent.get(h)).toBeNull()
     })
 
     it('openai-responses carries only allowlisted headers plus provider auth', async () => {
@@ -107,8 +114,7 @@ describe('external requests', () => {
         )
         const sent = fetchStub.calls[0].headers
         expect(sent.get('authorization')).toBe('Bearer sk-provider')
-        for (const h of ['x-forwarded-for', 'x-proxy-key', 'cf-connecting-ip', 'cookie', 'x-engagement'])
-            expect(sent.get(h)).toBeNull()
+        for (const h of NOT_FORWARDED) expect(sent.get(h)).toBeNull()
     })
 })
 

@@ -10,13 +10,17 @@ export type ModeErr = { ok: false; response: Response }
 const ALIAS = /^(redteam|purple)\//i
 const MODES: readonly string[] = ['redteam', 'purple', 'off']
 
-/** Resolves engagement + mode, strips a mode alias from body.model, appends the pack, logs out-of-window. Mutates body. */
+/**
+ * Resolves engagement + mode, strips a mode alias from body.model, appends the pack, logs out-of-window
+ * (unless detect is false). Mutates body.
+ */
 export function applyMode(
     headers: Headers,
     body: any,
     cfg: ProxyConfig,
     requestId: string,
-    now: number = Date.now()
+    now: number = Date.now(),
+    { detect = true }: { detect?: boolean } = {}
 ): ModeOk | ModeErr {
     const fail = (message: string): ModeErr => ({
         ok: false,
@@ -32,15 +36,15 @@ export function applyMode(
     if (match) {
         alias = match[1].toLowerCase() as ProxyMode
         body.model = body.model.slice(match[0].length)
+        if (body.model === '') return fail("missing or invalid 'model'")
     }
 
-    const rawHeader = headers.get('x-proxy-mode')
-    let headerMode: ProxyMode | undefined
-    if (rawHeader !== null) {
-        const v = rawHeader.trim().toLowerCase()
-        if (!MODES.includes(v)) return fail(`invalid x-proxy-mode '${v}' (use redteam, purple or off)`)
-        headerMode = v as ProxyMode
+    // Empty counts as absent, like x-engagement.
+    const v = headers.get('x-proxy-mode')?.trim().toLowerCase() || undefined
+    if (v !== undefined && !MODES.includes(v)) {
+        return fail(`invalid x-proxy-mode '${v.slice(0, 64)}' (use redteam, purple or off)`)
     }
+    const headerMode = v as ProxyMode | undefined
 
     // The alias wins: a subagent can change only its model.
     const mode = alias ?? headerMode ?? e?.defaultMode ?? 'off'
@@ -53,7 +57,7 @@ export function applyMode(
         }
         appendSystem(body, buildModeBlock(mode, e))
     }
-    if (!inWindow(e, now)) {
+    if (detect && !inWindow(e, now)) {
         const iso = (t: number) => new Date(t).toISOString()
         logDetection({
             ruleId: 'engagement.out_of_window',

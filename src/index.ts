@@ -87,8 +87,9 @@ async function handleRequest(
             return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
         }
         // Only an object body can carry a pack; any other JSON is counted as today.
+        // No out-of-window detection here: the messages request that follows logs it.
         if (isPlainObject(body)) {
-            const mode = applyMode(request.headers, body, config, requestId)
+            const mode = applyMode(request.headers, body, config, requestId, Date.now(), { detect: false })
             if (!mode.ok) return mode.response
         }
         return jsonResponse(tokens.countTokensForRequest(body), 200, requestId)

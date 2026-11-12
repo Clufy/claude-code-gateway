@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { callWorker, fakeAI, makeEnv, stubFetch } from './helpers'
+import { callWorker, fakeAI, makeEnv, readSse, stubFetch } from './helpers'
 import { loadConfig } from '../src/config'
+import { keepaliveTiming } from '../src/keepalive'
 import { appendSystem, applyMode } from '../src/modes'
 
 const ACME = {
@@ -116,6 +117,43 @@ describe('modes on /v1/messages', () => {
         expect(lines('request')[0]).toMatchObject({ engagement: 'acme-2026q4', mode: 'redteam' })
     })
 
+    it.each(['', '   '])('an empty x-proxy-mode (%j) counts as absent: defaultMode applies', async (v) => {
+        const { env, systemSent } = capture()
+        const res = await post(env, { 'x-engagement': 'acme-2026q4', 'x-proxy-mode': v })
+        expect(res.status).toBe(200)
+        expect(systemSent()).toContain(PACK + ': redteam mode')
+        expect(lines('request')[0]).toMatchObject({ engagement: 'acme-2026q4', mode: 'redteam' })
+    })
+
+    it('an empty x-proxy-mode without an engagement is mode off', async () => {
+        const { env, systemSent } = capture()
+        const res = await post(env, { 'x-proxy-mode': '' })
+        expect(res.status).toBe(200)
+        expect(systemSent()).toBe(USER_SYSTEM)
+        expect(lines('request')[0]).not.toHaveProperty('mode')
+    })
+
+    it('truncates a long invalid x-proxy-mode to 64 chars in the error', async () => {
+        const { env } = capture()
+        const res = await post(env, { 'x-engagement': 'acme-2026q4', 'x-proxy-mode': 'z'.repeat(200) })
+        expect(res.status).toBe(400)
+        const json: any = await res.json()
+        expect(json.error.message).toBe(`invalid x-proxy-mode '${'z'.repeat(64)}' (use redteam, purple or off)`)
+    })
+
+    it('an array system with cache_control reaches the AI as the original text then the pack', async () => {
+        const { env, systemSent } = capture()
+        const system = [
+            { type: 'text', text: 'first block', cache_control: { type: 'ephemeral' } },
+            { type: 'text', text: 'second block', cache_control: { type: 'ephemeral' } }
+        ]
+        const res = await post(env, { 'x-engagement': 'acme-2026q4', 'x-proxy-mode': 'redteam' }, { system })
+        expect(res.status).toBe(200)
+        const sent: string = systemSent()
+        expect(sent.startsWith('first block\nsecond block\n')).toBe(true)
+        expect(sent.indexOf(PACK)).toBeGreaterThan(sent.indexOf('second block'))
+    })
+
     it('purple header mode appends the purple pack', async () => {
         const { env, systemSent } = capture()
         await post(env, { 'x-engagement': 'acme-2026q4', 'x-proxy-mode': 'purple' })
@@ -149,6 +187,12 @@ describe('modes on /v1/messages', () => {
             {},
             { model: 'redteam/@cf/zai-org/glm-5.3' },
             'x-proxy-mode redteam needs an x-engagement header'
+        ],
+        [
+            'empty model after the alias',
+            { 'x-engagement': 'acme-2026q4' },
+            { model: 'redteam/' },
+            "missing or invalid 'model'"
         ]
     ])('400: %s', (_name, headers, body, message) => {
         it('returns the error shape and logs exactly one line without calling the AI', async () => {
@@ -207,17 +251,42 @@ describe('modes on /v1/messages', () => {
         expect(lines('request')[0]).toMatchObject({ mode: 'purple', model: '@cf/zai-org/glm-5.3' })
     })
 
-    it('streaming keepalive and log use the stripped model', async () => {
-        const { env, seen } = capture()
-        const res = await post(
-            env,
-            { 'x-engagement': 'acme-2026q4' },
-            { model: 'redteam/@cf/zai-org/glm-5.3', stream: true }
-        )
-        const text = await res.text()
-        expect(seen.map((s) => s.model)).toEqual(['@cf/zai-org/glm-5.3'])
-        expect(text).not.toContain('redteam/')
-        expect(lines('request')[0]).toMatchObject({ model: '@cf/zai-org/glm-5.3', mode: 'redteam', streamed: true })
+    describe('committed keepalive', () => {
+        const saved = { ...keepaliveTiming }
+        beforeEach(() => {
+            keepaliveTiming.graceMs = 20
+            keepaliveTiming.intervalMs = 30
+        })
+        afterEach(() => {
+            Object.assign(keepaliveTiming, saved)
+        })
+
+        it('message_start and the log carry the stripped model', async () => {
+            const seen: string[] = []
+            const env = makeEnv({
+                ENGAGEMENTS,
+                AI: fakeAI(async (model, options) => {
+                    seen.push(model)
+                    await new Promise((r) => setTimeout(r, 80)) // past graceMs: keepalive commits first
+                    return fakeAI([{ response: 'ok' }]).run(model, options)
+                })
+            })
+            const res = await post(
+                env,
+                { 'x-engagement': 'acme-2026q4' },
+                { model: 'redteam/@cf/zai-org/glm-5.3', stream: true }
+            )
+            const events = await readSse(res)
+            expect(seen).toEqual(['@cf/zai-org/glm-5.3'])
+            expect(events[0].event).toBe('message_start')
+            expect(events[0].data.message.model).toBe('@cf/zai-org/glm-5.3')
+            expect(lines('request')[0]).toMatchObject({
+                model: '@cf/zai-org/glm-5.3',
+                mode: 'redteam',
+                streamed: true,
+                keepalive: true
+            })
+        })
     })
 
     it('inside the window logs no detection', async () => {
@@ -268,19 +337,34 @@ describe('modes on count_tokens', () => {
         const plain: any = await (await count(env, {}, BODY)).json()
         const withPack: any = await (await count(env, { 'x-engagement': 'acme-2026q4' }, BODY)).json()
         expect(withPack.input_tokens).toBeGreaterThan(plain.input_tokens)
+        expect(lines('request')).toHaveLength(0)
+    })
+
+    it('outside the window still counts the pack but logs no detection', async () => {
+        vi.setSystemTime(END + 1)
+        const env = makeEnv({ ENGAGEMENTS })
+        const plain: any = await (await count(env, {}, BODY)).json()
+        const res = await count(env, { 'x-engagement': 'acme-2026q4' }, BODY)
+        expect(res.status).toBe(200)
+        expect(((await res.json()) as any).input_tokens).toBeGreaterThan(plain.input_tokens)
+        expect(lines('detection')).toHaveLength(0)
     })
 
     it('rejects an unknown engagement', async () => {
         const res = await count(makeEnv({ ENGAGEMENTS }), { 'x-engagement': 'nope' }, BODY)
         expect(res.status).toBe(400)
         expect(((await res.json()) as any).error.message).toBe("unknown engagement 'nope'")
+        expect(lines('request')).toHaveLength(0)
     })
 
-    it('a non-object JSON body keeps counting without a pack', async () => {
+    it('a non-object JSON body is counted the same with or without an engagement', async () => {
         const env = makeEnv({ ENGAGEMENTS })
-        const res = await count(env, { 'x-engagement': 'acme-2026q4' }, [1, 2])
-        expect(res.status).toBe(200)
-        expect(await res.json()).toEqual({ input_tokens: expect.any(Number) })
+        const plain = await count(env, {}, [1, 2])
+        const engaged = await count(env, { 'x-engagement': 'acme-2026q4' }, [1, 2])
+        expect(engaged.status).toBe(200)
+        const a: any = await plain.json()
+        const b: any = await engaged.json()
+        expect(b.input_tokens).toBe(a.input_tokens)
     })
 })
 
@@ -339,6 +423,31 @@ describe('modes on the path convention', () => {
         expect(stub.calls).toHaveLength(0)
         expect(lines('request')).toHaveLength(1)
     })
+
+    it('rejects an empty model after the alias without an upstream call', async () => {
+        stub = stubFetch(() => new Response('unreachable', { status: 500 }))
+        const res = await callWorker(
+            '/openai/api.openai.com/v1/v1/messages',
+            {
+                method: 'POST',
+                headers: {
+                    'x-proxy-key': 'test-key',
+                    'x-api-key': 'sk-provider',
+                    'content-type': 'application/json',
+                    'x-engagement': 'acme-2026q4'
+                },
+                body: JSON.stringify({ model: 'purple/', max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] })
+            },
+            makeEnv({ ENGAGEMENTS })
+        )
+        expect(res.status).toBe(400)
+        expect(((await res.json()) as any).error).toEqual({
+            type: 'invalid_request_error',
+            message: "missing or invalid 'model'"
+        })
+        expect(stub.calls).toHaveLength(0)
+        expect(lines('request')).toHaveLength(1)
+    })
 })
 
 describe('applyMode', () => {
@@ -361,6 +470,24 @@ describe('applyMode', () => {
         })
         expect(body.model).toBe('claude-x')
         expect(body.system).toContain(PACK + ': redteam mode')
+    })
+
+    it.each(['openai/gpt-4o', '@cf/zai-org/glm-5.3', 'redteamx/foo', 'purple', 'x/redteam/y'])(
+        'leaves a non-alias model %s unchanged',
+        (model) => {
+            const body: any = { model, messages: [] }
+            const r = applyMode(h({ 'x-engagement': 'acme-2026q4', 'x-proxy-mode': 'off' }), body, cfg, 'req_1', INSIDE)
+            expect(r).toEqual({ ok: true, engagement: 'acme-2026q4', mode: 'off' })
+            expect(body.model).toBe(model)
+        }
+    )
+
+    it('detect: false appends the pack but logs no out_of_window detection', () => {
+        const body: any = { model: 'm', messages: [] }
+        const r = applyMode(h({ 'x-engagement': 'acme-2026q4' }), body, cfg, 'req_1', END + 1, { detect: false })
+        expect(r.ok).toBe(true)
+        expect(body.system).toContain(PACK)
+        expect(lines('detection')).toHaveLength(0)
     })
 
     it('rejects a non-text system when a pack must be appended', () => {
