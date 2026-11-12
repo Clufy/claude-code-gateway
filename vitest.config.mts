@@ -16,7 +16,7 @@ export default defineConfig({
                 test: {
                     name: 'workers',
                     include: ['test/**/*.test.ts'],
-                    exclude: ['test/**/*.node.test.ts']
+                    exclude: ['test/**/*.node.test.ts', 'test/**/*.bench.test.ts']
                 }
             },
             {
@@ -25,6 +25,10 @@ export default defineConfig({
                     environment: 'node',
                     include: ['scripts/**/*.test.ts', 'test/**/*.node.test.ts']
                 }
+            },
+            {
+                // CPU-budget benchmarks: wall-clock asserts, run on demand with `npm run bench`.
+                test: { name: 'bench', environment: 'node', include: ['test/**/*.bench.test.ts'] }
             }
         ]
     }

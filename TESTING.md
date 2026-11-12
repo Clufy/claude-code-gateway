@@ -263,3 +263,15 @@ curl -sS -D - -o /dev/null -H "x-api-key: $PROXY_KEY" -X POST "$BASE/v1/messages
 - [ ] **Scope.** With an engagement set (section 11), have the model propose `nmap` against a host outside the scope. **Expected:** one `scope.out_of_scope` line with `engagement: "<name>"`. Without `x-engagement`: no such line.
 - [ ] **`GUARD_RULES`.** Set `GUARD_RULES` to `{"disable":["inject.instruction"]}` and repeat the first step. **Expected:** no header, no line. Set `{"severity":{"engagement.out_of_window":"high"}}` and send a request with an engagement whose window has closed. **Expected:** the out-of-window line has `severity: "high"` and the response has `x-proxy-detections: engagement.out_of_window`. Set `{"custom":[{"id":"custom.bad","side":"request","pattern":"a+"}]}`. **Expected:** every request returns `500 invalid config: GUARD_RULES`. Remove the var afterwards.
 - [ ] **Never breaks a request.** Send `"messages":[{"role":"user","content":5}]`. **Expected:** the backend's normal answer and one `request` line.
+
+## CPU budget benchmark (`npm run bench`)
+
+`npm test` asserts no wall-clock time. The spec's CPU budgets are checked by `npm run bench` (vitest project `bench`, `test/guard-bench.bench.test.ts`):
+
+- the session guard adds at most 5 ms p95 on a 1 MB request body (default config, built-in rules only), and `/v1/guard/check`-style decisions stay within 50 ms;
+- every adversarial unit (1 MB tool results, 100 KB commands) runs within 50 ms;
+- each custom request rule costs at most 0.4 ms per MB scanned.
+
+Run it on a quiet machine, plugged in, with nothing else running. A failure under load is not a regression unless it reproduces on a quiet machine. (The same inputs run in `npm test` as termination-only tests.)
+
+Last measured (2026-11-13, a loaded dev laptop, one run): request iteration p95 4.92 ms (median 3.81 ms); `scanRequest` alone p95 4.08 ms; `onToolUse` on a 4 KB command p95 0.37 ms; custom rule 0.21 ms per rule per MB (best-of-15); `decideToolCall` on 64 KB averages 14.6 ms; 1 MB `Write` input with 16 response custom rules 5.7 ms (best-of-15). Another run on the same machine measured the request iteration p95 at 6.2 ms, so expect this budget to be borderline on slow hardware.

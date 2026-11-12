@@ -3,9 +3,8 @@ import { excerptAt, redact, SECRET_PATTERNS } from '../src/guard/redact'
 import { cmdRisky, scopeOutOfScope } from '../src/guard/response-rules'
 import { exfilMarkup, injectInstruction, secretEgress } from '../src/guard/request-rules'
 
-// Runs in the node project: the workers runtime freezes its clock, so timing is meaningless there.
+// Adversarial inputs must terminate without throwing. Time budgets live in test/guard-bench.bench.test.ts.
 const MB = 1024 * 1024
-const MAX_MS = 50
 
 const units: Record<string, string> = {
     pem: '-----BEGIN ',
@@ -34,29 +33,19 @@ const passes: Record<string, (text: string) => unknown> = {
     excerpt: (t) => excerptAt(t, t.length >> 1, (t.length >> 1) + 50)
 }
 
-function best(fn: () => unknown): number {
-    let min = Infinity
-    for (let i = 0; i < 7; i++) {
-        const t0 = performance.now()
-        fn()
-        min = Math.min(min, performance.now() - t0)
-    }
-    return min
-}
-
-describe('adversarial 1 MB input stays fast', () => {
+describe('adversarial 1 MB input terminates', () => {
     for (const [uname, unit] of Object.entries(units)) {
         const text = unit.repeat(Math.ceil(MB / unit.length))
         for (const [pname, pass] of Object.entries(passes)) {
             it(`${pname} on ${uname}`, () => {
                 pass(text) // warm-up
-                expect(best(() => pass(text))).toBeLessThanOrEqual(MAX_MS)
+                expect(() => pass(text)).not.toThrow()
             })
         }
     }
 })
 
-describe('fix round 2 units stay fast', () => {
+describe('fix round 2 units terminate', () => {
     const rep = (unit: string) => unit.repeat(Math.ceil(MB / unit.length))
     let x = 1
     const body = Array.from({ length: MB }, () => {
@@ -83,11 +72,11 @@ describe('fix round 2 units stay fast', () => {
     ]
     it.each(cases)('%s', (_name, text, pass) => {
         pass(text)
-        expect(best(() => pass(text))).toBeLessThanOrEqual(MAX_MS)
+        expect(() => pass(text)).not.toThrow()
     })
 })
 
-describe('fix round 3 quoted-value units stay fast', () => {
+describe('fix round 3 quoted-value units terminate', () => {
     const rep = (unit: string) => unit.repeat(Math.ceil(MB / unit.length))
     it.each([
         ['runner word', rep('pwd="hunter Xk9#qLz2" ')],
@@ -100,23 +89,23 @@ describe('fix round 3 quoted-value units stay fast', () => {
             (t: string) => excerptAt(t, t.length >> 1, (t.length >> 1) + 50)
         ]) {
             pass(text)
-            expect(best(() => pass(text))).toBeLessThanOrEqual(MAX_MS)
+            expect(() => pass(text)).not.toThrow()
         }
     })
 })
 
-describe('cmdRisky stays fast on 100 KB commands', () => {
+describe('cmdRisky terminates on 100 KB commands', () => {
     const KB100 = 100 * 1024
     for (const unit of ['curl ', 'rm -rf ', 'iex ', 'procdump ', 'Set-MpPreference -Disable', 'a.']) {
         it(`unit ${JSON.stringify(unit)}`, () => {
             const command = unit.repeat(Math.ceil(KB100 / unit.length))
             cmdRisky('Bash', { command }) // warm-up
-            expect(best(() => cmdRisky('Bash', { command }))).toBeLessThanOrEqual(MAX_MS)
+            expect(() => cmdRisky('Bash', { command })).not.toThrow()
         })
     }
 })
 
-describe('scopeOutOfScope stays fast on 100 KB commands', () => {
+describe('scopeOutOfScope terminates on 100 KB commands', () => {
     const eng = {
         name: 'acme',
         scope: { domains: ['*.acme-test.com'], cidrs: ['10.10.0.0/16'], llmTargets: [] },
@@ -130,7 +119,7 @@ describe('scopeOutOfScope stays fast on 100 KB commands', () => {
             const command = unit.repeat(Math.ceil((100 * 1024) / unit.length))
             const run = () => scopeOutOfScope('Bash', { command }, eng, 1)
             run()
-            expect(best(run)).toBeLessThanOrEqual(MAX_MS)
+            expect(() => run()).not.toThrow()
         })
     }
 })
