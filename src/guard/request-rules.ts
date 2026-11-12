@@ -44,14 +44,15 @@ export function newestTurn(messages: unknown): Segment[] {
     return out
 }
 
+// P4-R23: fake tags keep system/tool_result/function_*; user/assistant/human and "admin"/"in" are too common.
 const INJECT_PATTERNS: readonly RegExp[] = [
     /ignore (?:all |any )?(?:the )?(?:previous|prior|above|earlier) (?:instructions|prompts|messages|rules)/i,
     /disregard (?:all |the )?(?:previous|prior|above) /i,
-    /<\/?(?:system|assistant|user|human|tool_result|function_results)>/i,
+    /<\/?(?:system|tool_result|function_results|function_calls)>/i,
     /<\|im_(?:start|end)\|>/i,
-    /\byou are now (?:an?|the|in) (?:[\w-]+ ){0,3}(?:assistant|ai|model|agent|admin|developer mode|dan|jailbroken)\b/i,
+    /\byou are now (?:an?|the) (?:[\w-]+ ){0,3}(?:assistant|ai|model|agent|developer mode|dan|jailbroken)\b/i,
     /[\u{E0000}-\u{E007F}]/u,
-    /[​-‍⁠﻿]{3}/
+    /[\u200B-\u200D\u2060\uFEFF]{3}/
 ]
 
 /** Prompt-injection triggers inside a tool result. */
@@ -66,26 +67,50 @@ export function injectInstruction(seg: Segment): string | null {
 
 // The link text and URL exclude '[' and '(' so a run of repeated openers cannot make the scan quadratic.
 const MARKUP = /!?\[[^[\]\n]{0,200}\]\((https?:\/\/[^\s()]{1,2048})\)/g
-const MAX_LINKS = 200
 const ODD_VALUE = /[{}[\]<>$]/
 
-function suspiciousQuery(url: string): boolean {
-    let u: URL
+function entropy(s: string): number {
+    const counts = new Map<string, number>()
+    for (const ch of s) counts.set(ch, (counts.get(ch) ?? 0) + 1)
+    let h = 0
+    for (const n of counts.values()) h -= (n / s.length) * Math.log2(n / s.length)
+    return h
+}
+
+function decode(v: string): string {
+    const spaced = v.replace(/\+/g, ' ')
     try {
-        u = new URL(url)
+        return decodeURIComponent(spaced)
     } catch {
-        return false
+        return spaced
     }
-    for (const [, v] of u.searchParams) if (v.length >= 24 || ODD_VALUE.test(v)) return true
+}
+
+/** P4-R22: a value is suspicious if it holds {}[]<>$, or is a long, space-free, high-entropy blob. */
+function suspiciousValue(raw: string): boolean {
+    const v = decode(raw)
+    if (ODD_VALUE.test(v)) return true
+    return v.length >= 24 && !v.includes(' ') && !v.startsWith('data:') && !v.startsWith('http') && entropy(v) >= 4.2
+}
+
+/** Lexical query check: no URL parsing, and only URLs that contain '?'. */
+function suspiciousQuery(url: string): boolean {
+    const q = url.indexOf('?')
+    if (q === -1) return false
+    let query = url.slice(q + 1)
+    const hash = query.indexOf('#')
+    if (hash !== -1) query = query.slice(0, hash)
+    for (const pair of query.split('&')) {
+        const eq = pair.indexOf('=')
+        if (eq !== -1 && suspiciousValue(pair.slice(eq + 1))) return true
+    }
     return false
 }
 
 /** A markdown image or link in a tool result whose query looks like it carries data out. */
 export function exfilMarkup(seg: Segment, e?: Engagement): string | null {
     if (seg.kind !== 'tool_result') return null
-    let seen = 0
     for (const m of seg.text.matchAll(MARKUP)) {
-        if (++seen > MAX_LINKS) return null
         const url = m[1]
         if (!suspiciousQuery(url)) continue
         if (e && checkScope(e, url).verdict === 'in_scope') continue

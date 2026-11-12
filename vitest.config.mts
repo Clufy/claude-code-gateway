@@ -15,14 +15,15 @@ export default defineConfig({
                 ],
                 test: {
                     name: 'workers',
-                    include: ['test/**/*.test.ts']
+                    include: ['test/**/*.test.ts'],
+                    exclude: ['test/**/*.node.test.ts']
                 }
             },
             {
                 test: {
                     name: 'node',
                     environment: 'node',
-                    include: ['scripts/**/*.test.ts']
+                    include: ['scripts/**/*.test.ts', 'test/**/*.node.test.ts']
                 }
             }
         ]

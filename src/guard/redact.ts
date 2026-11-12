@@ -9,32 +9,43 @@ export const SECRET_PATTERNS: readonly { name: string; re: RegExp }[] = [
     { name: 'slack', re: /\bxox[baprs]-[A-Za-z0-9-]{10,200}/g },
     { name: 'stripe', re: /\b[sr]k_live_[A-Za-z0-9]{24,200}/g },
     { name: 'pem', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/g },
-    { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,300}\.eyJ[A-Za-z0-9_-]{10,40}/g },
+    { name: 'jwt', re: /(?<![\w-])eyJ[\w-]{10,300}\.eyJ[\w-]{10,40}/g },
     {
         name: 'generic',
-        re: /\b(?:password|passwd|pwd|secret|api[_-]?key|token)\s{0,3}[:=]\s{0,3}["']?([^\s"']{8,200})/gi
+        // Quoted values run to the closing quote; unquoted ones stop at whitespace, a quote, ) ] } , or ; (P4-R23).
+        re: /(?<![a-z0-9])(?:password|passwd|pwd|secret|api[_-]?key|token|access[_-]?key)[\w-]{0,30}["']?\s{0,3}[:=]\s{0,3}(?:"([^"\n]{8,200})|'([^'\n]{8,200})|([^\s"'()\]},;]{8,200}))/gi
     }
 ]
 
 const PLACEHOLDERS = ['${', '<', '{{', 'xxx', 'changeme', 'example', '****']
 const MARKER = '…[redacted]'
+const MIN_ENTROPY = 3.5
+const MIN_RUN = 32
 
-function entropy(s: string): number {
-    const counts = new Map<string, number>()
-    let total = 0
-    for (const ch of s) {
-        counts.set(ch, (counts.get(ch) ?? 0) + 1)
-        total++
-    }
+const counts = new Uint32Array(256)
+/** Shannon entropy (bits/char) of text[from, to). Chars are bucketed by their low byte; allocation-free. */
+function entropyOf(text: string, from: number, to: number): number {
+    for (let i = from; i < to; i++) counts[text.charCodeAt(i) & 255]++
+    const total = to - from
     let h = 0
-    for (const n of counts.values()) h -= (n / total) * Math.log2(n / total)
+    for (let i = from; i < to; i++) {
+        const k = text.charCodeAt(i) & 255
+        const n = counts[k]
+        if (n > 0) {
+            h -= (n / total) * Math.log2(n / total)
+            counts[k] = 0
+        }
+    }
     return h
 }
 
+const DOTTED_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/
+
 function realSecretValue(value: string): boolean {
+    if (entropyOf(value, 0, value.length) < MIN_ENTROPY) return false
     const lower = value.toLowerCase()
     if (PLACEHOLDERS.some((p) => lower.includes(p))) return false
-    return entropy(value) >= 3.5
+    return !DOTTED_CHAIN.test(value) && !value.includes('(')
 }
 
 export interface SecretSpan {
@@ -42,16 +53,48 @@ export interface SecretSpan {
     end: number
 }
 
+const isTokenChar = (c: number): boolean =>
+    (c >= 48 && c <= 57) || // 0-9
+    (c >= 65 && c <= 90) || // A-Z
+    (c >= 97 && c <= 122) || // a-z
+    c === 95 || // _
+    c === 45 || // -
+    c === 46 || // .
+    c === 43 || // +
+    c === 47 || // /
+    c === 61 // =
+
+const isSpace = (c: number): boolean => c === 32 || (c >= 9 && c <= 13)
+
+/** End of a PEM block that starts at `from` (just after the BEGIN line): base64, whitespace and header lines. */
+function pemEnd(text: string, from: number): number {
+    let i = from
+    while (i < text.length) {
+        if (text.startsWith('-----END ', i)) {
+            const close = text.indexOf('-----', i + 9)
+            return close === -1 ? text.length : close + 5
+        }
+        const c = text.charCodeAt(i)
+        if (!isTokenChar(c) && !isSpace(c) && c !== 58 && c !== 44) break // ':' and ',' occur in Proc-Type/DEK-Info
+        i++
+    }
+    return i
+}
+
 /** Spans of secret matches (for the generic pattern: the value only), unsorted and possibly overlapping. */
 function matchSpans(text: string, firstOnly: boolean): SecretSpan[] {
     const out: SecretSpan[] = []
     for (const { name, re } of SECRET_PATTERNS) {
+        let covered = 0 // a PEM scan never restarts inside text it already covered (keeps repeated headers linear)
         for (const m of text.matchAll(re)) {
-            const end = m.index + m[0].length
+            let end = m.index + m[0].length
             let start = m.index
             if (name === 'generic') {
-                if (!realSecretValue(m[1])) continue
-                start = end - m[1].length
+                const value = m[1] ?? m[2] ?? m[3]
+                if (!realSecretValue(value)) continue
+                start = end - value.length
+            } else if (name === 'pem' && end > covered) {
+                end = covered = pemEnd(text, end)
             }
             out.push({ start, end })
             if (firstOnly) break
@@ -67,16 +110,21 @@ export function findSecret(text: string): SecretSpan | null {
     return spans.reduce((a, b) => (b.start < a.start ? b : a))
 }
 
-const isTokenChar = (c: number): boolean =>
-    (c >= 48 && c <= 57) || // 0-9
-    (c >= 65 && c <= 90) || // A-Z
-    (c >= 97 && c <= 122) || // a-z
-    c === 95 || // _
-    c === 45 || // -
-    c === 46 || // .
-    c === 43 || // +
-    c === 47 || // /
-    c === 61 // =
+/** Runs of ≥32 token chars with entropy ≥3.5 (defense in depth for excerpts, P4-R21). */
+function runSpans(text: string): SecretSpan[] {
+    const out: SecretSpan[] = []
+    let i = 0
+    while (i < text.length) {
+        if (!isTokenChar(text.charCodeAt(i))) {
+            i++
+            continue
+        }
+        const start = i
+        while (i < text.length && isTokenChar(text.charCodeAt(i))) i++
+        if (i - start >= MIN_RUN && entropyOf(text, start, i) >= MIN_ENTROPY) out.push({ start, end: i })
+    }
+    return out
+}
 
 interface Replacement {
     start: number
@@ -86,13 +134,14 @@ interface Replacement {
 }
 
 /** Redacted text plus the replaced intervals, so excerptAt can map original offsets. */
-function redactMapped(text: string): { out: string; reps: Replacement[] } {
+function redactMapped(text: string, mask: boolean): { out: string; reps: Replacement[] } {
     // A plain character loop extends each match over the rest of its token; it only scans past what is covered.
     const extend = (end: number): number => {
         while (end < text.length && isTokenChar(text.charCodeAt(end))) end++
         return end
     }
-    const spans = matchSpans(text, false).sort((a, b) => a.start - b.start)
+    const all = mask ? [...matchSpans(text, false), ...runSpans(text)] : matchSpans(text, false)
+    const spans = all.sort((a, b) => a.start - b.start)
     const intervals: SecretSpan[] = []
     for (const span of spans) {
         const last = intervals[intervals.length - 1]
@@ -114,7 +163,7 @@ function redactMapped(text: string): { out: string; reps: Replacement[] } {
 
 /** Each secret match becomes its first 4 chars + '…[redacted]'; the rest of the token is dropped too. */
 export function redact(text: string): string {
-    return redactMapped(text).out
+    return redactMapped(text, false).out
 }
 
 const CONTEXT = 80
@@ -125,7 +174,7 @@ const MAX_EXCERPT = 200
 export function excerptAt(text: string, start: number, end: number): string {
     const sliceStart = Math.max(0, start - CONTEXT - MARGIN)
     const sliceEnd = Math.min(text.length, end + CONTEXT + MARGIN)
-    const { out, reps } = redactMapped(text.slice(sliceStart, sliceEnd))
+    const { out, reps } = redactMapped(text.slice(sliceStart, sliceEnd), true)
     // Original offset → redacted offset; an offset inside a replacement takes the whole marker.
     const map = (orig: number, isEnd: boolean): number => {
         let shift = 0
