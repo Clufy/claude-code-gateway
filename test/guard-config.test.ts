@@ -79,6 +79,9 @@ describe('GUARD_RULES', () => {
         ['(', 'unbalanced group'],
         ['a)', 'unbalanced group'],
         ['a.{0,100}.{0,100}b', 'too much backtracking slack'],
+        ['a{0000000000000000,100}b{0000000000000000,100}c', 'too much backtracking slack'],
+        ['a{0000000000000000,}', UNBOUNDED],
+        ['a{0000000000000000101}', 'repetition bound over 100'],
         ['a?'.repeat(40) + 'a{40}', 'too much backtracking slack'],
         ['x\\u{0,100}\\u{0,100}y', 'escape needs the u flag'],
         ['\\p{L}', 'escape needs the u flag'],
@@ -106,6 +109,7 @@ describe('GUARD_RULES', () => {
         ['procdump[^\\n]{0,80}lsass'],
         ['certutil\\s{1,10}-urlcache'],
         ['a.{0,100}b'],
+        ['a{0000000000000000,100}'],
         ['a[+*]x'],
         ['a?b{2,3}c']
     ])('accepts pattern %s', (pattern) => {

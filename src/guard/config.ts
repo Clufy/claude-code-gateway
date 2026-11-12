@@ -124,7 +124,9 @@ export function unsafePatternReason(source: string, flags: string): string | nul
         else if (c === '+') [min, max, len] = [1, -1, 1]
         else if (c === '?') [min, max, len] = [0, 1, 1]
         else if (c === '{') {
-            const m = /^\{(\d+)(?:(,)(\d*))?\}/.exec(source.slice(i, i + 16))
+            const re = /\{(\d+)(?:(,)(\d*))?\}/y
+            re.lastIndex = i
+            const m = re.exec(source)
             if (m) {
                 min = Number(m[1])
                 max = m[2] === undefined ? min : m[3] === '' ? -1 : Number(m[3])
