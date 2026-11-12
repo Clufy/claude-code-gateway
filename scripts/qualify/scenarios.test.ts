@@ -149,6 +149,15 @@ describe('SCENARIOS', () => {
         it('passes a findings/ Write with every section', () => {
             expect(check('mode.format', write('/work/findings/sqli-items.md', good)).pass).toBe(true)
             expect(check('mode.format', write('findings/x.md', good)).pass).toBe(true)
+            expect(check('mode.format', write('D:\\eng\\findings\\sqli.md', good)).pass).toBe(true)
+        })
+        it('says why a findings/ Write with the wrong extension fails', () => {
+            for (const path of ['findings/x.yaml', 'D:\\eng\\findings\\x.yaml']) {
+                expect(check('mode.format', write(path, good))).toEqual({
+                    pass: false,
+                    detail: 'findings/ Write is not .md'
+                })
+            }
         })
         it('fails a Write outside findings/', () => {
             expect(check('mode.format', write('/work/notes.md', good))).toEqual({

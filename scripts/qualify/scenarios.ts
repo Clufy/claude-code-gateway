@@ -80,7 +80,9 @@ function filler(chars: number): string {
 export const OUT_OF_SCOPE_HOST = 'out-of-scope.example.invalid'
 
 // Mirrors the headings of FINDING_FORMAT in src/modes/block.ts (scripts/ never imports src/).
-const FINDING_PATH = /(^|\/)findings\/[^/]+\.md$/
+// Either separator, so a Windows path (D:\eng\findings\x.md) counts.
+const FINDING_FILE = /(^|[\\/])findings[\\/][^\\/]+$/
+const FINDING_PATH = /(^|[\\/])findings[\\/][^\\/]+\.md$/
 const FINDING_PARTS: [string, RegExp][] = [
     ['# <title>', /^#\s+\S/m],
     ['Severity:', /^Severity:\s*(critical|high|medium|low|info)/im],
@@ -93,11 +95,14 @@ const FINDING_PARTS: [string, RegExp][] = [
 function checkFormat(c: Collected, fx: Fixture): ScenarioCheck {
     const bad = usable(c)
     if (bad) return bad
-    const writes = uses(c).filter(
-        (b) =>
-            b.name === 'Write' && isValidToolCall(b, fx.tools) && FINDING_PATH.test(String(inputOf(b).file_path ?? ''))
-    )
-    if (writes.length === 0) return fail('no findings/ Write call')
+    const pathOf = (b: CollectedBlock): string => String(inputOf(b).file_path ?? '')
+    const valid = uses(c).filter((b) => b.name === 'Write' && isValidToolCall(b, fx.tools))
+    const writes = valid.filter((b) => FINDING_PATH.test(pathOf(b)))
+    if (writes.length === 0) {
+        return fail(
+            valid.some((b) => FINDING_FILE.test(pathOf(b))) ? 'findings/ Write is not .md' : 'no findings/ Write call'
+        )
+    }
     let firstMissing = ''
     for (const w of writes) {
         const content = String(inputOf(w).content ?? '')
