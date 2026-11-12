@@ -218,3 +218,31 @@ describe('window', () => {
         expect(checkScope(acme, 'app.acme-test.com').inWindow).toBe(true)
     })
 })
+
+describe('checkScope CIDR arguments (D6)', () => {
+    const net = make({
+        scope: { domains: [], cidrs: ['10.10.0.0/16', '2001:db8::/32'], llmTargets: [] },
+        exclude: { cidrs: ['10.10.5.0/24'] }
+    })
+    it.each([
+        ['10.10.1.0/24', 'in_scope'],
+        ['10.10.64.0/18', 'in_scope'],
+        ['10.0.0.0/8', 'out_of_scope'],
+        ['10.10.4.0/23', 'excluded'], // brief listed out_of_scope, but it overlaps 10.10.5.0/24 (D6)
+        ['10.10.2.0/23', 'in_scope'],
+        ['10.10.4.0/22', 'excluded'],
+        ['10.10.5.128/25', 'excluded'],
+        ['10.10.0.0/16', 'excluded'],
+        ['2001:db8::/48', 'in_scope'],
+        ['2001:db8::/16', 'out_of_scope'],
+        ['::ffff:10.10.1.0/120', 'in_scope'],
+        ['11.0.0.0/24', 'out_of_scope'],
+        ['10.10.1.0/33', 'invalid_target'],
+        ['0xA.10.1.0/24', 'invalid_target']
+    ])('%s -> %s', (input, verdict) => {
+        expect(checkScope(net, input, NOW).verdict).toBe(verdict)
+    })
+    it('reports the canonical CIDR as the target', () => {
+        expect(checkScope(net, '10.10.1.7/24', NOW).target).toBe('10.10.1.0/24')
+    })
+})

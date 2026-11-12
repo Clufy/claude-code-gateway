@@ -370,7 +370,46 @@ function llmMatches(input: string, e: Engagement): boolean {
     return real !== null && llmTargetMatches(real, e.scope.llmTargets)
 }
 
+const BARE_CIDR_RE = /^[0-9a-fA-FxX:.]+\/[0-9]+$/
+
+/** Canonical CIDR text: dotted IPv4 or compressed IPv6, then /bits. */
+function cidrText(c: ParsedCidr): string {
+    if (c.family === 4) return `${dottedV4(c.base)}/${c.bits}`
+    const groups: string[] = []
+    for (let i = 7; i >= 0; i--) groups.push(((c.base >> BigInt(i * 16)) & 0xffffn).toString(16))
+    const v6 = URL.parse(`http://[${groups.join(':')}]`)?.hostname ?? `[${groups.join(':')}]`
+    return `${v6.slice(1, -1)}/${c.bits}`
+}
+
+function prefixOf(c: ParsedCidr, bits: number): bigint {
+    return c.base >> BigInt((c.family === 4 ? 32 : 128) - bits)
+}
+
+/** D6: in_scope only when one scope CIDR wholly contains the argument; excluded when it overlaps any exclude CIDR. */
+function cidrVerdict(arg: ParsedCidr, e: Engagement): ScopeVerdict {
+    const entries = (list: string[]): ParsedCidr[] =>
+        list.flatMap((s) => {
+            const p = parseCidr(s)
+            const c = p === null ? null : mappedToV4(p)
+            return c !== null && c.family === arg.family ? [c] : []
+        })
+    const overlaps = (c: ParsedCidr): boolean => {
+        const b = Math.min(c.bits, arg.bits)
+        return prefixOf(c, b) === prefixOf(arg, b)
+    }
+    const contains = (c: ParsedCidr): boolean => c.bits <= arg.bits && prefixOf(c, c.bits) === prefixOf(arg, c.bits)
+    if (!entries(e.scope.cidrs).some(contains)) return 'out_of_scope'
+    return entries(e.exclude.cidrs).some(overlaps) ? 'excluded' : 'in_scope'
+}
+
 export function checkScope(e: Engagement, input: string, now: number = Date.now()): ScopeResult {
+    if (BARE_CIDR_RE.test(input)) {
+        // looks like "<ip>/<bits>": a CIDR argument, or invalid (never read as a host with a path)
+        const parsed = parseCidr(input)
+        if (parsed === null) return { verdict: 'invalid_target', target: '', inWindow: inWindow(e, now) }
+        const arg = mappedToV4(parsed)
+        return { verdict: cidrVerdict(arg, e), target: cidrText(arg), inWindow: inWindow(e, now) }
+    }
     const target = normalizeTarget(input)
     if (target === null) return { verdict: 'invalid_target', target: '', inWindow: inWindow(e, now) }
     const ip = parseIp(target)

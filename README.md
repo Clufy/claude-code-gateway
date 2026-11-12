@@ -350,6 +350,43 @@ its rules are fixed now. It classifies a host, IP or URL as `in_scope`, `exclude
   backslash (`%2f`, `%5c`) never matches a target that has a path.
 - Non-canonical IPv4 spellings such as `0xCB.0.113.5` are accepted and canonicalized to
   `203.0.113.5`, because the WHATWG URL parser does so.
+- A CIDR argument (`10.10.1.0/24`, `2001:db8::/48`) is `in_scope` only when one scope CIDR
+  wholly contains it. A contained CIDR that overlaps an exclude CIDR is `excluded`; a CIDR not
+  wholly inside the scope is `out_of_scope`. A malformed one (`10.0.0.0/33`) is `invalid_target`.
+
+### Scope check endpoint
+
+`POST /v1/guard/check` decides whether one tool call may run during an engagement. The Claude
+Code `PreToolUse` hook calls it. Authenticate with `x-api-key` like `/v1/messages`.
+
+```json
+{ "engagement": "acme-q4", "tool": "Bash", "input": { "command": "nmap evil.example.org" } }
+```
+
+Response `200`:
+
+```json
+{
+    "decision": "deny",
+    "hosts": ["evil.example.org"],
+    "reasons": ["evil.example.org is out of scope for engagement acme-q4"]
+}
+```
+
+- A bad body, a missing or unknown `engagement`, a non-string `tool` or a non-object `input`
+  is `400`; a body over `MAX_BODY_BYTES` is `413`. A closed window is not an error: it is a
+  `deny` in the decision.
+- No hosts found: `allow`. Loopback hosts (`127.0.0.0/8`, `::1`, `localhost`, `*.localhost`)
+  are always allowed; private ranges must be in scope. Any other host that is out of scope,
+  excluded or not checkable denies, and so does a closed window when a non-loopback host is present.
+- Reasons, in order:
+    - `tool input too large to check (over 1 MB)`
+    - `too many targets to check (more than 64)`
+    - `<host> is out of scope for engagement <name>`
+    - `<host> is excluded from engagement <name>`
+    - `<raw> is not a checkable target; write the literal host`
+    - `engagement <name> window is closed`
+- Each call logs one `hook.decision` line (engagement, tool, decision, up to 20 hosts, reason count).
 
 ## Point Claude Code at the Worker
 

@@ -10,6 +10,7 @@ import { finalized, finalizeMessagesResponse, logRequest, type FinalizeInput } f
 import { keepaliveTiming, withKeepalive } from './keepalive'
 import { applyMode, type ModeOk } from './modes'
 import { isObj } from './engagement'
+import { handleGuardCheck } from './guard/check'
 import { newStats } from './stats'
 import * as models from './models'
 import * as tokens from './tokens'
@@ -158,6 +159,12 @@ async function handleRequest(
         )
         if (response !== settled) input.keepalive = true
         return finalizeMessagesResponse(response, input)
+    }
+
+    if (request.method === 'POST' && url.pathname === '/v1/guard/check') {
+        const auth = await requireProxyKey(request, config, requestId)
+        if (auth) return auth
+        return handleGuardCheck(request, config, requestId)
     }
 
     const externalMatch = url.pathname.match(/^\/([^/]+)\/(.+)\/v1\/messages$/)
