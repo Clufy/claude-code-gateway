@@ -68,9 +68,13 @@ function routeContext(route: { model: string; contextTokens?: number }): number 
 }
 
 function listing(env: Env, cfg: ProxyConfig): ClaudeModelListing[] {
-    const workersAi = configuredModelIds(env).map((id) =>
-        toModel(id, env, CONTEXT_TOKENS[id] ?? DEFAULT_CONTEXT_TOKENS)
-    )
+    // An id a route matches (exact or glob) is served by that route, so the route describes it (P2-R24).
+    const workersAi = configuredModelIds(env).map((id) => {
+        const entry = findRouteEntry(id, cfg.routes)
+        return entry
+            ? toModel(id, env, routeContext(entry.route), entry.route.model)
+            : toModel(id, env, CONTEXT_TOKENS[id] ?? DEFAULT_CONTEXT_TOKENS)
+    })
     const seen = new Set(workersAi.map((m) => m.id))
     const routed = cfg.routes
         .filter(({ pattern }) => !pattern.includes('*') && !seen.has(pattern))

@@ -25,7 +25,7 @@ describe('models', () => {
         expect(ids).toContain('@cf/moonshotai/kimi-k2.6')
     })
 
-    it('lists a route id that is also a Workers AI id once', async () => {
+    it('lists a route id that is also a Workers AI id once, described by the route', async () => {
         const env = makeEnv({
             MODEL_ROUTES: JSON.stringify({
                 '@cf/zai-org/glm-5.3': { provider: 'workers-ai', model: 'x', contextTokens: 777 }
@@ -34,7 +34,21 @@ describe('models', () => {
         const data = await list(env)
         const matches = data.filter((m) => m.id === '@cf/zai-org/glm-5.3')
         expect(matches).toHaveLength(1)
-        expect(matches[0].max_input_tokens).toBe(1048576)
+        expect(matches[0].max_input_tokens).toBe(777)
+        const got = (await (await callWorker('/v1/models/@cf/zai-org/glm-5.3', auth, env)).json()) as any
+        expect(got.max_input_tokens).toBe(777)
+    })
+
+    it('describes a Workers AI id matched by a glob route by that route', async () => {
+        const env = makeEnv({
+            MODEL_ROUTES: JSON.stringify({ '@cf/moonshotai/*': { provider: 'workers-ai', model: 'backing-x' } }),
+            VISION_MODELS: 'backing-x'
+        })
+        const kimi = (await list(env)).find((m) => m.id === '@cf/moonshotai/kimi-k2.6') as any
+        expect(kimi.max_input_tokens).toBe(24000)
+        expect(kimi.capabilities.vision.supported).toBe(true)
+        const glm = (await list(env)).find((m) => m.id === '@cf/zai-org/glm-5.3') as any
+        expect(glm.max_input_tokens).toBe(1048576)
     })
 
     it('lists routed ids after the Workers AI ids', async () => {
