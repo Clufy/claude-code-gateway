@@ -87,6 +87,8 @@ function realSecretValue(value: string, quoted: boolean): boolean {
 export interface SecretSpan {
     start: number
     end: number
+    /** Show no characters of the secret (P4-R26); otherwise the first 4 chars, a public type prefix, stay. */
+    bare?: boolean
 }
 
 const isTokenChar = (c: number): boolean =>
@@ -131,6 +133,9 @@ function matchSpans(text: string, firstOnly: boolean, permissive: boolean): Secr
                 const value = m[1] ?? m[2] ?? m[3]
                 if (!permissive && !realSecretValue(value, m[3] === undefined)) continue
                 start = end - value.length
+                out.push({ start, end, bare: true })
+                if (firstOnly) break
+                continue
             } else if (name === 'pem' && end > covered) {
                 end = covered = pemEnd(text, end)
             }
@@ -171,7 +176,7 @@ function pemTails(text: string): SecretSpan[] {
         const begin = text.lastIndexOf('-----BEGIN ', i)
         if (begin >= j) j = text.indexOf('-----', begin + 11) + 5 || j
         floor = i + m[0].length
-        if (j < i) out.push({ start: j, end: floor })
+        if (j < i) out.push({ start: j, end: floor, bare: true })
     }
     return out
 }
@@ -187,7 +192,7 @@ function runSpans(text: string): SecretSpan[] {
         }
         const start = i
         while (i < text.length && isTokenChar(text.charCodeAt(i))) i++
-        if (i - start >= MIN_RUN && entropyOf(text, start, i) >= MIN_ENTROPY) out.push({ start, end: i })
+        if (i - start >= MIN_RUN && entropyOf(text, start, i) >= MIN_ENTROPY) out.push({ start, end: i, bare: true })
     }
     return out
 }
@@ -208,12 +213,13 @@ function redactMapped(text: string, mask: boolean): { out: string; reps: Replace
     }
     const found = matchSpans(text, false, true)
     const all = mask ? [...found, ...runSpans(text), ...pemTails(text)] : found
-    const spans = all.sort((a, b) => a.start - b.start)
+    const spans = all.sort((a, b) => a.start - b.start || Number(a.bare ?? false) - Number(b.bare ?? false))
     const intervals: SecretSpan[] = []
     for (const span of spans) {
         const last = intervals[intervals.length - 1]
         if (last && span.start <= last.end) last.end = extend(Math.max(last.end, span.end))
-        else intervals.push({ start: span.start, end: extend(span.end) })
+        // The interval starts at its earliest span; a typed-prefix span at the same start wins (sorted first).
+        else intervals.push({ start: span.start, end: extend(span.end), bare: span.bare })
     }
     const reps: Replacement[] = []
     let out = ''
@@ -221,7 +227,7 @@ function redactMapped(text: string, mask: boolean): { out: string; reps: Replace
     for (const iv of intervals) {
         out += text.slice(pos, iv.start)
         const newStart = out.length
-        out += text.slice(iv.start, iv.start + 4) + MARKER
+        out += iv.bare ? '[redacted]' : text.slice(iv.start, iv.start + 4) + MARKER
         reps.push({ start: iv.start, end: iv.end, newStart, newEnd: out.length })
         pos = iv.end
     }
