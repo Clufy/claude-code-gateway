@@ -29,6 +29,9 @@ const BUDGET = 1_000_000
 const MAX_CANDIDATES = 65 // D8 denies more than 64, so collecting stops here (P4-R7)
 /** Appended by hostsInToolInput when the 1 MB budget ran out before every string was scanned (P4-R6). */
 export const INPUT_TOO_LARGE = '(tool input over 1 MB)'
+/** Appended when collection stopped at the candidate cap (P4-R11); the decision denies on it. */
+export const TOO_MANY_TARGETS = '(more than 64 targets)'
+const CODE_QUOTES = ['"', "'", '`'] // string delimiters inside inline code, JS template literals included (P4-R12)
 const FILE_EXTS = new Set('ai am cc gz in java md mk ml mov pl pm ps pub py rs sc sh so tf zip'.split(' '))
 const MESSAGE_FLAGS = ['-m', '-am', '--message', '--author', '--body', '--title'] // D4
 const MESSAGE_PROGRAMS = new Set(['git', 'gh', 'glab', 'hub']) // P4-R5: D4 applies only to these
@@ -183,8 +186,18 @@ function bareCandidates(token: string, isHost: ((p: string) => boolean) | null, 
         // UNC, also bash-escaped (4 backslashes); WebDAV `\\host@SSL@443\path` ends the host at the first `@`
         h = h.slice(lead)
         if (h.includes('@')) h = h.slice(0, h.indexOf('@'))
-    } else h = h.slice(h.lastIndexOf('@') + 1) // before the path cut, for `acme.local/admin@10.0.0.5`
-    h = cutPath(h)
+        hostCandidates(cutPath(h), isHost, out)
+        return
+    }
+    const cut = cutPath(h)
+    const at = h.lastIndexOf('@')
+    // an `@` past the path cut gives both: `acme.local/admin@10.0.0.5` and `evil.example.org/mod@latest`
+    hostCandidates(cut.slice(cut.lastIndexOf('@') + 1), isHost, out)
+    if (at >= cut.length) hostCandidates(cutPath(h.slice(at + 1)), isHost, out)
+}
+
+/** A host part with the path already cut: `[v6]`, IP, or `:`-separated IPs and hostnames. */
+function hostCandidates(h: string, isHost: ((p: string) => boolean) | null, out: Set<string>): void {
     if (h.includes('$')) return // D2: shell indirection (a `//h/C$` share name is already cut off)
     if (h.startsWith('[')) {
         const inner = h.slice(1, Math.max(h.indexOf(']'), 1))
@@ -200,6 +213,17 @@ function bareCandidates(token: string, isHost: ((p: string) => boolean) | null, 
         const p = trimDots(part)
         if (isIp(p) || (isHost !== null && isHost(p))) out.add(p)
     }
+}
+
+/**
+ * At most 65 candidates, then TOO_MANY_TARGETS when collection hit the cap (P4-R11): padding such as case or
+ * `:port` variants of one host collapses in checkScope and could otherwise hide the next host. An inner call's
+ * marker survives the union in hostsInToolInput.
+ */
+function capped(out: Set<string>): string[] {
+    const hosts = [...out].filter((h) => h !== TOO_MANY_TARGETS)
+    if (hosts.length < MAX_CANDIDATES && !out.has(TOO_MANY_TARGETS)) return hosts
+    return [...hosts.slice(0, MAX_CANDIDATES), TOO_MANY_TARGETS]
 }
 
 /** Raw candidates in first-seen order, deduped. Shell mode adds bare hosts and the D4 message-argument skip. */
@@ -229,14 +253,14 @@ export function extractHosts(text: string, opts: ExtractOptions): string[] {
         let start = 0
         let quote = ''
         for (let i = 0; i < s.length; i++) {
-            if (quote === '' ? s[i] !== "'" && s[i] !== '"' : s[i] !== quote) continue
+            if (quote === '' ? !CODE_QUOTES.includes(s[i]) : s[i] !== quote) continue
             scan(s.slice(start, i), quote !== '')
             quote = quote === '' ? s[i] : ''
             start = i + 1
         }
         scan(s.slice(start), quote !== '')
     }
-    const result = () => [...out].slice(0, MAX_CANDIDATES)
+    const result = () => capped(out)
     if (!opts.shell) {
         scan(text, false)
         return result()
@@ -311,10 +335,7 @@ export function hostsInToolInput(tool: string, input: unknown, knownDomains?: re
         for (const h of extractHosts(t, { shell, knownDomains })) out.add(h)
     }
     // fail closed: an unscanned remainder could hide a host
-    const result = () => {
-        const hosts = [...out].slice(0, MAX_CANDIDATES)
-        return truncated ? [...hosts, INPUT_TOO_LARGE] : hosts
-    }
+    const result = () => (truncated ? [...capped(out), INPUT_TOO_LARGE] : capped(out))
     if (SHELL_TOOLS.has(tool)) {
         if (typeof input.command === 'string') take(input.command, true)
         return result()

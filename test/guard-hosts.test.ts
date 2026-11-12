@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractHosts, hostsInToolInput, INPUT_TOO_LARGE } from '../src/guard/hosts'
+import { extractHosts, hostsInToolInput, INPUT_TOO_LARGE, TOO_MANY_TARGETS } from '../src/guard/hosts'
 import fixture from './fixtures/pentest-commands.json'
 
 interface Row {
@@ -77,12 +77,43 @@ describe('extractHosts (non-shell)', () => {
         expect(extractHosts('a.b:'.repeat(25_000), { shell: true })).toEqual([])
     })
 
-    it('stops after 65 unique candidates, so D8 still denies (P4-R7)', () => {
+    it('stops after 65 unique candidates and marks it (P4-R7, P4-R11)', () => {
         const many = Array.from({ length: 100 }, (_, i) => `h${i}.example.org`)
         const hosts = extractHosts(`nmap ${many.join(' ')}`, { shell: true })
-        expect(hosts).toEqual(many.slice(0, 65))
-        expect(hostsInToolInput('Bash', { command: `nmap ${many.join(' ')}` })).toHaveLength(65)
-        expect(hostsInToolInput('mcp__x__scan', { hosts: many })).toEqual(many.slice(0, 65))
+        expect(hosts).toEqual([...many.slice(0, 65), TOO_MANY_TARGETS])
+        expect(hostsInToolInput('Bash', { command: `nmap ${many.join(' ')}` })).toEqual([
+            ...many.slice(0, 65),
+            TOO_MANY_TARGETS
+        ])
+        expect(hostsInToolInput('mcp__x__scan', { hosts: many })).toEqual([...many.slice(0, 65), TOO_MANY_TARGETS])
+    })
+
+    it('marks padding that would hide a host behind the cap (P4-R11)', () => {
+        // 65 case variants of one in-scope host collapse to one target in checkScope, then the real target
+        const variants = Array.from({ length: 65 }, (_, i) =>
+            [...'acmetest'].map((c, j) => ((i >> j) & 1 ? c.toUpperCase() : c)).join('')
+        ).map((d) => `a.${d.slice(0, 4)}-${d.slice(4)}.com`)
+        expect(new Set(variants).size).toBe(65)
+        const cmd = `nmap ${variants.join(' ')} evil.example.org`
+        expect(extractHosts(cmd, { shell: true })).toContain(TOO_MANY_TARGETS)
+        expect(hostsInToolInput('Bash', { command: cmd })).toContain(TOO_MANY_TARGETS)
+        const ports = Array.from({ length: 65 }, (_, i) => `https://a.acme-test.com:${8000 + i}`).join(' ')
+        expect(hostsInToolInput('Bash', { command: `curl ${ports} https://evil.example.org` })).toContain(
+            TOO_MANY_TARGETS
+        )
+        // spread across fields: each field is under the cap, the union is not
+        const fields = Object.fromEntries(variants.map((v, i) => [`f${i}`, `https://${v}`]))
+        expect(hostsInToolInput('mcp__x__scan', { ...fields, z: 'https://evil.example.org' })).toContain(
+            TOO_MANY_TARGETS
+        )
+    })
+
+    it('never marks a command with 10 hosts (P4-R11)', () => {
+        const ten = Array.from({ length: 10 }, (_, i) => `h${i}.example.org`)
+        expect(extractHosts(`nmap ${ten.join(' ')}`, { shell: true })).toEqual(ten)
+        expect(hostsInToolInput('Bash', { command: `nmap ${ten.join(' ')}` })).toEqual(ten)
+        const exactly64 = Array.from({ length: 64 }, (_, i) => `h${i}.example.org`)
+        expect(hostsInToolInput('mcp__x__scan', { hosts: exactly64 })).toEqual(exactly64)
     })
 })
 
