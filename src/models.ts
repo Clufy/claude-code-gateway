@@ -1,5 +1,6 @@
 import type { ProxyConfig } from './config'
 import { anthropicError, jsonResponse } from './errors'
+import { MODE_ALIAS } from './modes'
 import { findRouteEntry } from './routing'
 
 interface ClaudeModelListing {
@@ -77,6 +78,7 @@ export function listModels(env: Env, cfg: ProxyConfig): Response {
 }
 
 export function getModel(id: string, env: Env, cfg: ProxyConfig, requestId: string): Response {
+    id = id.replace(MODE_ALIAS, '') // redteam/claude-x is served as claude-x
     if (!configuredModelIds(env).includes(id) && !findRouteEntry(id, cfg.routes)) {
         return anthropicError(404, 'not_found_error', `Model '${id}' not found.`, requestId)
     }

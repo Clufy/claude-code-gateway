@@ -91,6 +91,19 @@ describe('models', () => {
         expect(((await res.json()) as any).max_input_tokens).toBe(400000)
     })
 
+    it.each(['redteam%2Fclaude-sonnet-4-5', 'redteam/claude-sonnet-4-5', 'PURPLE/claude-sonnet-4-5'])(
+        'GET /v1/models/%s resolves the mode alias like the bare id',
+        async (path) => {
+            const env = makeEnv({ MODEL_ROUTES })
+            const bare = await (await callWorker('/v1/models/claude-sonnet-4-5', auth, env)).json()
+            const res = await callWorker(`/v1/models/${path}`, auth, env)
+            expect(res.status).toBe(200)
+            const got = (await res.json()) as any
+            expect(got).toEqual(bare)
+            expect(got.max_input_tokens).toBe(1048576)
+        }
+    )
+
     it('GET /v1/models/{id} returns 404 for an unrouted unknown id', async () => {
         const res = await callWorker('/v1/models/nope-1', auth, makeEnv({ MODEL_ROUTES }))
         expect(res.status).toBe(404)

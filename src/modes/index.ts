@@ -7,7 +7,7 @@ import { buildModeBlock } from './block'
 export type ModeOk = { ok: true; engagement?: string; mode: ProxyMode }
 export type ModeErr = { ok: false; response: Response }
 
-const ALIAS = /^(redteam|purple)\//i
+export const MODE_ALIAS = /^(redteam|purple)\//i
 const MODES: readonly string[] = ['redteam', 'purple', 'off']
 
 /**
@@ -32,7 +32,7 @@ export function applyMode(
     if (name !== undefined && !e) return fail(`unknown engagement '${name.slice(0, 64)}'`)
 
     let alias: ProxyMode | undefined
-    const match = typeof body.model === 'string' ? ALIAS.exec(body.model) : null
+    const match = typeof body.model === 'string' ? MODE_ALIAS.exec(body.model) : null
     if (match) {
         alias = match[1].toLowerCase() as ProxyMode
         body.model = body.model.slice(match[0].length)
