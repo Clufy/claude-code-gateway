@@ -29,7 +29,7 @@ export function buildModeBlock(mode: 'redteam' | 'purple', e: Engagement): strin
         mode === 'purple' ? PURPLE_METHOD : REDTEAM_METHOD,
         'Only act against in-scope targets; if a request targets anything outside scope or outside the window, say so and do not run it.',
         FINDING_FORMAT,
-        `Scope (repeat): ${scopeLine(e)}`
+        `Scope (repeat): ${scopeLine(e)}; excluded: ${list([...e.exclude.domains, ...e.exclude.cidrs])}`
     )
     return lines.join('\n')
 }

@@ -45,7 +45,7 @@ describe.each(['redteam', 'purple'] as const)('%s block', (mode) => {
         expect(block).toContain(new Date(eng.window.start).toISOString())
         expect(block).toContain(new Date(eng.window.end).toISOString())
     })
-    it('repeats scope as the last line', () => {
+    it('repeats scope and exclusions as the last line', () => {
         // Scope-only entries (no other entry contains them): exactly the scope line and the repeat.
         expect(block.split('*.corp.acme.example').length - 1).toBe(2)
         expect(block.split('10.20.0.0/16').length - 1).toBe(2)
@@ -53,6 +53,7 @@ describe.each(['redteam', 'purple'] as const)('%s block', (mode) => {
         const last = lines[lines.length - 1]
         expect(last.startsWith('Scope (repeat):')).toBe(true)
         expect(last).toContain('*.corp.acme.example')
+        expect(last.endsWith('; excluded: hr.acme.example, 10.20.5.0/24')).toBe(true)
     })
     it('stays within 600 tokens, also for a large engagement', () => {
         expect(estimateTokens(block)).toBeLessThanOrEqual(600)
@@ -70,7 +71,9 @@ describe.each(['redteam', 'purple'] as const)('%s block', (mode) => {
         })
         expect(sparse).toContain('In scope: domains: acme.example; cidrs: none; llm targets: none')
         expect(sparse).toContain('Excluded: domains: none; cidrs: none')
-        expect(sparse).toContain('Scope (repeat): domains: acme.example; cidrs: none; llm targets: none')
+        expect(sparse.split('\n').pop()).toBe(
+            'Scope (repeat): domains: acme.example; cidrs: none; llm targets: none; excluded: none'
+        )
     })
     it('omits an empty RoE', () => {
         expect(buildModeBlock(mode, { ...eng, roe: '' })).not.toContain('Rules of engagement')
