@@ -110,17 +110,17 @@ function parseIsoInstant(v: unknown): number {
     if (h > 23 || mi > 59 || sec > 59 || oh > 23 || om > 59) return NaN
     return Date.parse(v as string)
 }
-// IDNA deviation characters resolve differently across clients (ß, ς, ZWNJ, ZWJ), so they are refused
-const DEVIATION_RE = /[ßς‌‍]/
-/** Deviation check on decoded, NFKC-normalized, lowercased text, so U+1E9E and %C3%9F cannot slip past. */
-function hasDeviation(s: string): boolean {
-    let t = s
+// IDNA deviation characters resolve differently across clients (ß, ẞ, ς, ZWNJ, ZWJ), so they are refused
+const DEVIATION_RE = /[ßẞς‌‍]/
+/** Deviation check on the host only (text after the last @), percent-decoded and NFKC-normalized. */
+function hasDeviation(authority: string): boolean {
+    let host = authority.slice(authority.lastIndexOf('@') + 1)
     try {
-        t = decodeURIComponent(s)
+        host = decodeURIComponent(host)
     } catch {
-        // keep the raw text
+        // a malformed escape fails the URL parse anyway; check the raw text
     }
-    return DEVIATION_RE.test(t.normalize('NFKC').toLowerCase())
+    return DEVIATION_RE.test(host.normalize('NFKC'))
 }
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
