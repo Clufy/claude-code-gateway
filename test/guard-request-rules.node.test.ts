@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { excerptAt, redact, SECRET_PATTERNS } from '../src/guard/redact'
-import { cmdRisky } from '../src/guard/response-rules'
+import { cmdRisky, scopeOutOfScope } from '../src/guard/response-rules'
 import { exfilMarkup, injectInstruction, secretEgress } from '../src/guard/request-rules'
 
 // Runs in the node project: the workers runtime freezes its clock, so timing is meaningless there.
@@ -112,6 +112,25 @@ describe('cmdRisky stays fast on 100 KB commands', () => {
             const command = unit.repeat(Math.ceil(KB100 / unit.length))
             cmdRisky('Bash', { command }) // warm-up
             expect(best(() => cmdRisky('Bash', { command }))).toBeLessThanOrEqual(MAX_MS)
+        })
+    }
+})
+
+describe('scopeOutOfScope stays fast on 100 KB commands', () => {
+    const eng = {
+        name: 'acme',
+        scope: { domains: ['*.acme-test.com'], cidrs: ['10.10.0.0/16'], llmTargets: [] },
+        exclude: { domains: [], cidrs: [] },
+        window: { start: 0, end: 1e13 },
+        roe: '',
+        defaultMode: 'redteam' as const
+    }
+    for (const unit of ['http://', 'a@', 'a.b. ']) {
+        it(`unit ${JSON.stringify(unit)}`, () => {
+            const command = unit.repeat(Math.ceil((100 * 1024) / unit.length))
+            const run = () => scopeOutOfScope('Bash', { command }, eng, 1)
+            run()
+            expect(best(run)).toBeLessThanOrEqual(MAX_MS)
         })
     }
 })
