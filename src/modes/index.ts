@@ -55,11 +55,12 @@ export function applyMode(
         }
         appendSystem(body, buildModeBlock(mode, e))
     }
-    if (detect && !inWindow(e, now)) {
+    const OUT_OF_WINDOW = 'engagement.out_of_window'
+    if (detect && !cfg.guard.disabled.has(OUT_OF_WINDOW) && !inWindow(e, now)) {
         const iso = (t: number) => new Date(t).toISOString()
         logDetection({
-            ruleId: 'engagement.out_of_window',
-            severity: 'medium',
+            ruleId: OUT_OF_WINDOW,
+            severity: cfg.guard.severity.get(OUT_OF_WINDOW) ?? 'medium',
             requestId,
             engagement: name,
             excerpt: `${iso(now)} outside ${iso(e.window.start)}..${iso(e.window.end)}`

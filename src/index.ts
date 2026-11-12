@@ -11,6 +11,7 @@ import { keepaliveTiming, withKeepalive } from './keepalive'
 import { applyMode, type ModeOk } from './modes'
 import { isObj } from './engagement'
 import { handleGuardCheck } from './guard/check'
+import { createGuard } from './guard'
 import { newStats } from './stats'
 import * as models from './models'
 import * as tokens from './tokens'
@@ -128,7 +129,8 @@ async function handleRequest(
             backend: targets[0].label,
             fallbackUsed: false,
             stats: ctx.stats,
-            ...auditFields(mode)
+            ...auditFields(mode),
+            ...guardFields(body, config, requestId, mode)
         }
         const inputTokens = body.stream ? tokens.countTokensForRequest(body).input_tokens : 0
         const dispatched = dispatchWithFallback(targets, body, ctx)
@@ -265,6 +267,7 @@ async function handleExternal(
     if (!body) return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
     const mode = applyMode(request.headers, body, config, requestId)
     if (!mode.ok) return mode.response
+    const guard = guardFields(body, config, requestId, mode)
     const target: Target = {
         backend: type as BackendType,
         model: body.model as string,
@@ -284,13 +287,30 @@ async function handleExternal(
         fallbackUsed: false,
         ttfbMs: Date.now() - callStart,
         stats: ctx.stats,
-        ...auditFields(mode)
+        ...auditFields(mode),
+        ...guard
     })
 }
 
 /** Log fields: engagement and mode appear only when an engagement was named. */
 function auditFields(mode: ModeOk): Pick<FinalizeInput, 'engagement' | 'mode'> {
     return mode.engagement ? { engagement: mode.engagement, mode: mode.mode } : {}
+}
+
+/** Creates the session guard and scans the newest request turn before dispatch. Never throws. */
+function guardFields(
+    body: Record<string, unknown>,
+    config: ProxyConfig,
+    requestId: string,
+    mode: ModeOk
+): Pick<FinalizeInput, 'guard' | 'detections'> {
+    try {
+        const engagement = mode.engagement === undefined ? undefined : config.engagements.get(mode.engagement)
+        const guard = createGuard(config, requestId, engagement)
+        return { guard, detections: guard.scanRequest(body) }
+    } catch {
+        return {} // flag only: a guard failure never breaks the request
+    }
 }
 
 function parseBodyObject(text: string): Record<string, unknown> | null {

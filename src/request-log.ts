@@ -1,6 +1,7 @@
 import { tapSse } from './sse-tap'
 import type { BackendStats } from './stats'
 import type { ProxyMode } from './engagement'
+import type { Guard } from './guard'
 
 export interface RequestLog {
     requestId: string
@@ -47,6 +48,69 @@ export interface FinalizeInput {
     keepalive?: boolean
     engagement?: string
     mode?: ProxyMode
+    /** The session guard: fed each response tool_use block, then onEnd before the request line. */
+    guard?: Guard
+    /** Request-side rule ids from guard.scanRequest; set as x-proxy-detections when non-empty. */
+    detections?: string[]
+}
+
+const MAX_TOOL_JSON = 1024 * 1024 // per streamed tool_use block
+
+/** Feeds a finished tool_use input to the guard; a guard failure is lost silently. */
+function guardToolUse(guard: Guard | undefined, name: unknown, input: unknown): void {
+    if (!guard) return
+    try {
+        guard.onToolUse(typeof name === 'string' ? name : '', input)
+    } catch {
+        // flag only: never break the response
+    }
+}
+
+function guardEnd(guard: Guard | undefined, stats: BackendStats): void {
+    try {
+        guard?.onEnd(stats)
+    } catch {
+        // flag only: never break the response
+    }
+}
+
+/** Streamed tool_use blocks by index: name and the input JSON so far (≤1 MB). */
+function toolTracker(guard: Guard | undefined) {
+    const blocks = new Map<number, { name: unknown; json: string }>()
+    return (event: string, data: any): void => {
+        if (!guard) return
+        try {
+            if (event === 'content_block_start' && data?.content_block?.type === 'tool_use') {
+                blocks.set(data.index, { name: data.content_block.name, json: '' })
+            } else if (event === 'content_block_delta' && data?.delta?.type === 'input_json_delta') {
+                const b = blocks.get(data.index)
+                const part = data.delta.partial_json
+                if (b && typeof part === 'string' && b.json.length < MAX_TOOL_JSON) {
+                    b.json += part.slice(0, MAX_TOOL_JSON - b.json.length)
+                }
+            } else if (event === 'content_block_stop') {
+                const b = blocks.get(data?.index)
+                if (!b) return
+                blocks.delete(data.index)
+                let input: unknown = b.json
+                try {
+                    input = b.json === '' ? {} : JSON.parse(b.json)
+                } catch {
+                    // truncated or invalid JSON: the rules see the raw string
+                }
+                guardToolUse(guard, b.name, input)
+            }
+        } catch {
+            // flag only: never break the stream
+        }
+    }
+}
+
+function withDetections(response: Response, detections: string[] | undefined): Response {
+    if (!detections || detections.length === 0) return response
+    const headers = new Headers(response.headers)
+    headers.set('x-proxy-detections', detections.join(','))
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
 }
 
 /** Log (once) and optionally attach debug stats to a dispatched messages response. */
@@ -86,8 +150,10 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
         let inputTokens: number | undefined
         let outputTokens: number | undefined
         let streamError: string | undefined
+        const onGuardEvent = toolTracker(input.guard)
         out = tapSse(response, {
             onEvent(event, data) {
+                onGuardEvent(event, data)
                 if (event === 'error') streamError ??= data?.error?.type ?? 'error'
                 else if (event === 'message_start') inputTokens = data?.message?.usage?.input_tokens ?? inputTokens
                 else if (event === 'message_delta') {
@@ -97,6 +163,7 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
             },
             onEnd(reason) {
                 if (reason === 'error') streamError ??= 'error'
+                guardEnd(input.guard, stats)
                 logRequest(
                     record({
                         streamed: true,
@@ -115,10 +182,16 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
             try {
                 const json: any = await response.clone().json()
                 usage = { inputTokens: json?.usage?.input_tokens, outputTokens: json?.usage?.output_tokens }
+                if (input.guard && Array.isArray(json?.content)) {
+                    for (const b of json.content) {
+                        if (b?.type === 'tool_use') guardToolUse(input.guard, b.name, b.input)
+                    }
+                }
             } catch {
                 // not JSON: log without usage
             }
         }
+        guardEnd(input.guard, stats)
         logRequest(record(usage))
         if (debug) {
             const headers = new Headers(response.headers)
@@ -128,6 +201,7 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
             out = response
         }
     }
+    out = withDetections(out, input.detections)
     finalized.add(out)
     return out
 }
