@@ -39,14 +39,28 @@ describe('external requests', () => {
         'x-engagement': 'acme',
         'content-type': 'application/json'
     }
+    // x-engagement must name a configured engagement (unknown names fail closed with 400).
+    const env = () =>
+        makeEnv({
+            ENGAGEMENTS: JSON.stringify({
+                acme: {
+                    scope: { domains: ['acme.test'] },
+                    window: { start: '2000-01-01T00:00:00Z', end: '2100-01-01T00:00:00Z' }
+                }
+            })
+        })
 
     it('openai carries only allowlisted headers plus provider auth', async () => {
         fetchStub = stubFetch(() => Response.json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }))
-        await callWorker('/openai/api.openai.com/v1/messages', {
-            method: 'POST',
-            headers: { ...noisy, authorization: 'Bearer sk-provider' },
-            body: JSON.stringify({ model: 'gpt', messages: [{ role: 'user', content: 'hi' }] })
-        })
+        await callWorker(
+            '/openai/api.openai.com/v1/messages',
+            {
+                method: 'POST',
+                headers: { ...noisy, authorization: 'Bearer sk-provider' },
+                body: JSON.stringify({ model: 'gpt', messages: [{ role: 'user', content: 'hi' }] })
+            },
+            env()
+        )
         const sent = fetchStub.calls[0].headers
         expect(sent.get('authorization')).toBe('Bearer sk-provider')
         for (const h of ['x-forwarded-for', 'x-proxy-key', 'cf-connecting-ip', 'cookie', 'x-engagement'])
@@ -59,11 +73,15 @@ describe('external requests', () => {
                 candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }]
             })
         )
-        await callWorker('/gemini/generativelanguage.googleapis.com/v1beta/v1/messages', {
-            method: 'POST',
-            headers: { ...noisy, 'x-api-key': 'gk' },
-            body: claudeBody
-        })
+        await callWorker(
+            '/gemini/generativelanguage.googleapis.com/v1beta/v1/messages',
+            {
+                method: 'POST',
+                headers: { ...noisy, 'x-api-key': 'gk' },
+                body: claudeBody
+            },
+            env()
+        )
         const sent = fetchStub.calls[0].headers
         expect(sent.get('x-goog-api-key')).toBe('gk')
         expect(sent.get('authorization')).toBeNull()
@@ -78,11 +96,15 @@ describe('external requests', () => {
                 output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }]
             })
         )
-        await callWorker('/openai-responses/api.openai.com/v1/messages', {
-            method: 'POST',
-            headers: { ...noisy, authorization: 'Bearer sk-provider' },
-            body: claudeBody
-        })
+        await callWorker(
+            '/openai-responses/api.openai.com/v1/messages',
+            {
+                method: 'POST',
+                headers: { ...noisy, authorization: 'Bearer sk-provider' },
+                body: claudeBody
+            },
+            env()
+        )
         const sent = fetchStub.calls[0].headers
         expect(sent.get('authorization')).toBe('Bearer sk-provider')
         for (const h of ['x-forwarded-for', 'x-proxy-key', 'cf-connecting-ip', 'cookie', 'x-engagement'])

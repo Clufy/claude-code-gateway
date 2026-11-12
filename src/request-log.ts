@@ -1,5 +1,6 @@
 import { tapSse } from './sse-tap'
 import type { BackendStats } from './stats'
+import type { ProxyMode } from './engagement'
 
 export interface RequestLog {
     requestId: string
@@ -20,6 +21,8 @@ export interface RequestLog {
     keepalive?: boolean // keepalive committed: client saw 200 before the backend answered
     streamError?: string // streamed response carried an error event (its error.type) or the stream broke ('error')
     cancelled?: boolean // the client cancelled the stream before it ended
+    engagement?: string // x-engagement, when one was named
+    mode?: ProxyMode // resolved mode, logged with the engagement
 }
 
 export function logRequest(record: RequestLog): void {
@@ -42,6 +45,8 @@ export interface FinalizeInput {
     /** Real backend status when it differs from the response (committed keepalive). Read at log time. */
     status?: number
     keepalive?: boolean
+    engagement?: string
+    mode?: ProxyMode
 }
 
 /** Log (once) and optionally attach debug stats to a dispatched messages response. */
@@ -61,6 +66,8 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
         ttfbMs: input.ttfbMs,
         toolCallsFromText: stats.toolCallsFromText,
         unparsedToolText: stats.unparsedToolText,
+        engagement: input.engagement,
+        mode: input.mode,
         ...(input.keepalive ? { keepalive: true } : {}),
         ...extra
     })

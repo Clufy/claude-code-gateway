@@ -8,6 +8,7 @@ import { callTarget, dispatchWithFallback, PROVIDERS } from './dispatch'
 import { findRouteEntry, planTargets, Target } from './routing'
 import { finalized, finalizeMessagesResponse, logRequest, type FinalizeInput } from './request-log'
 import { keepaliveTiming, withKeepalive } from './keepalive'
+import { applyMode, type ModeOk } from './modes'
 import { newStats } from './stats'
 import * as models from './models'
 import * as tokens from './tokens'
@@ -85,6 +86,11 @@ async function handleRequest(
         } catch {
             return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
         }
+        // Only an object body can carry a pack; any other JSON is counted as today.
+        if (isPlainObject(body)) {
+            const mode = applyMode(request.headers, body, config, requestId)
+            if (!mode.ok) return mode.response
+        }
         return jsonResponse(tokens.countTokensForRequest(body), 200, requestId)
     }
 
@@ -99,6 +105,9 @@ async function handleRequest(
         if (!limitedBody.ok) return bodyTooLarge(config, requestId)
         const body = parseBodyObject(limitedBody.text)
         if (!body) return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
+        const mode = applyMode(request.headers, body, config, requestId)
+        if (!mode.ok) return mode.response
+        // Read after applyMode: routing, keepalive and the log all see the alias-stripped model.
         // A missing or non-string model is planned as-is so Workers AI keeps returning its 400.
         const model = body.model
         // A ConfigError (route secret not set) propagates to fetch's 500.
@@ -115,7 +124,8 @@ async function handleRequest(
             route: typeof model === 'string' ? findRouteEntry(model, config.routes)?.pattern : undefined,
             backend: targets[0].label,
             fallbackUsed: false,
-            stats: ctx.stats
+            stats: ctx.stats,
+            ...auditFields(mode)
         }
         const inputTokens = body.stream ? tokens.countTokensForRequest(body).input_tokens : 0
         const dispatched = dispatchWithFallback(targets, body, ctx)
@@ -244,6 +254,8 @@ async function handleExternal(
     if (!limitedBody.ok) return bodyTooLarge(config, requestId)
     const body = parseBodyObject(limitedBody.text)
     if (!body) return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
+    const mode = applyMode(request.headers, body, config, requestId)
+    if (!mode.ok) return mode.response
     const target: Target = {
         backend: type as BackendType,
         model: body.model as string,
@@ -262,14 +274,24 @@ async function handleExternal(
         backend: target.label,
         fallbackUsed: false,
         ttfbMs: Date.now() - callStart,
-        stats: ctx.stats
+        stats: ctx.stats,
+        ...auditFields(mode)
     })
+}
+
+/** Log fields: engagement and mode appear only when an engagement was named. */
+function auditFields(mode: ModeOk): Pick<FinalizeInput, 'engagement' | 'mode'> {
+    return mode.engagement ? { engagement: mode.engagement, mode: mode.mode } : {}
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+    return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 function parseBodyObject(text: string): Record<string, unknown> | null {
     try {
         const parsed = JSON.parse(text)
-        return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : null
+        return isPlainObject(parsed) ? parsed : null
     } catch {
         return null
     }
