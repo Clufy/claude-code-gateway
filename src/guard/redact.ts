@@ -17,6 +17,30 @@ export const SECRET_PATTERNS: readonly { name: string; re: RegExp }[] = [
     }
 ]
 
+/**
+ * Permissive keyword pattern for REDACTION only (P4-R25): no lookbehind (camelCase keys), any suffix, always redacts
+ * the value. Detection keeps the strict generic pattern above.
+ */
+const REDACT_KEYWORD =
+    /(?:password|passwd|pwd|secret|api[_-]?key|token|access[_-]?key)[\w-]{0,30}["']?\s{0,3}[:=]\s{0,3}(?:"([^"\n]{1,200})|'([^'\n]{1,200})|([^\s"'()\]},;]{1,200}))/gi
+
+const RUNNERS = [
+    'node',
+    'npm',
+    'npx',
+    'yarn',
+    'pnpm',
+    'python',
+    'python3',
+    'bash',
+    'sh',
+    'ruby',
+    'go',
+    'java',
+    'deno',
+    'bun'
+]
+
 const PLACEHOLDERS = ['${', '<', '{{', 'xxx', 'changeme', 'example', '****']
 const MARKER = '…[redacted]'
 const MIN_ENTROPY = 3.5
@@ -41,17 +65,22 @@ export function entropyOf(text: string, from: number, to: number): number {
 
 const DOTTED_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/
 
+/** Quoted prose, commands and URLs are not secrets. Cheap, allocation-free checks (P4-R24/R25). */
+function looksLikeProse(value: string): boolean {
+    if (value.startsWith('http://') || value.startsWith('https://')) return true
+    const sp = value.indexOf(' ')
+    if (sp === -1) return false
+    if (value.indexOf(' ', sp + 1) !== -1) return true // 2+ spaces
+    if (value.indexOf('/', sp) !== -1 || value.indexOf('.', sp) !== -1) return true // "node scripts/token.js"
+    return RUNNERS.some((r) => r.length === sp && value.startsWith(r))
+}
+
 function realSecretValue(value: string, quoted: boolean): boolean {
+    if (quoted && looksLikeProse(value)) return false
     if (entropyOf(value, 0, value.length) < MIN_ENTROPY) return false
     const lower = value.toLowerCase()
     // 'example' marks a placeholder only in short values: doc sample secrets are 40 chars (P4-R24 needs them to flag).
     if (PLACEHOLDERS.some((p) => lower.includes(p) && (p !== 'example' || value.length < 30))) return false
-    if (quoted) {
-        // Prose, commands and URLs are not secrets: 2+ spaces, an http(s) URL, or a plain lowercase first word.
-        const words = value.split(' ')
-        if (/^https?:\/\//.test(lower) || words.length > 2 || (words.length === 2 && /^[a-z]+$/.test(words[0])))
-            return false
-    }
     return !DOTTED_CHAIN.test(value) && !value.includes('(')
 }
 
@@ -89,16 +118,18 @@ function pemEnd(text: string, from: number): number {
 }
 
 /** Spans of secret matches (for the generic pattern: the value only), unsorted and possibly overlapping. */
-function matchSpans(text: string, firstOnly: boolean): SecretSpan[] {
+function matchSpans(text: string, firstOnly: boolean, permissive: boolean): SecretSpan[] {
     const out: SecretSpan[] = []
-    for (const { name, re } of SECRET_PATTERNS) {
+    for (const pattern of SECRET_PATTERNS) {
+        const name = pattern.name
+        const re = name === 'generic' && permissive ? REDACT_KEYWORD : pattern.re
         let covered = 0 // a PEM scan never restarts inside text it already covered (keeps repeated headers linear)
         for (const m of text.matchAll(re)) {
             let end = m.index + m[0].length
             let start = m.index
             if (name === 'generic') {
                 const value = m[1] ?? m[2] ?? m[3]
-                if (!realSecretValue(value, m[3] === undefined)) continue
+                if (!permissive && !realSecretValue(value, m[3] === undefined)) continue
                 start = end - value.length
             } else if (name === 'pem' && end > covered) {
                 end = covered = pemEnd(text, end)
@@ -112,9 +143,37 @@ function matchSpans(text: string, firstOnly: boolean): SecretSpan[] {
 
 /** The earliest secret in the text, or null. */
 export function findSecret(text: string): SecretSpan | null {
-    const spans = matchSpans(text, true)
+    const spans = matchSpans(text, true, false)
     if (spans.length === 0) return null
     return spans.reduce((a, b) => (b.start < a.start ? b : a))
+}
+
+/**
+ * Key bodies whose BEGIN line lies outside the slice: from every END line scan backward over base64, whitespace,
+ * backslashes and header chars (stopping at a BEGIN line or the previous END line) and mask the whole stretch.
+ */
+function pemTails(text: string): SecretSpan[] {
+    const out: SecretSpan[] = []
+    const endRe = /-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/y
+    let floor = 0
+    for (let i = text.indexOf('-----END '); i !== -1; i = text.indexOf('-----END ', i + 1)) {
+        if (i < floor) continue
+        endRe.lastIndex = i
+        const m = endRe.exec(text)
+        if (!m) continue
+        let j = i
+        while (j > floor) {
+            const c = text.charCodeAt(j - 1)
+            if (!isTokenChar(c) && !isSpace(c) && c !== 58 && c !== 44 && c !== 92) break
+            j--
+        }
+        // Stay clear of a BEGIN line: the forward PEM scan already covers it.
+        const begin = text.lastIndexOf('-----BEGIN ', i)
+        if (begin >= j) j = text.indexOf('-----', begin + 11) + 5 || j
+        floor = i + m[0].length
+        if (j < i) out.push({ start: j, end: floor })
+    }
+    return out
 }
 
 /** Runs of ≥32 token chars with entropy ≥3.5 (defense in depth for excerpts, P4-R21). */
@@ -147,7 +206,8 @@ function redactMapped(text: string, mask: boolean): { out: string; reps: Replace
         while (end < text.length && isTokenChar(text.charCodeAt(end))) end++
         return end
     }
-    const all = mask ? [...matchSpans(text, false), ...runSpans(text)] : matchSpans(text, false)
+    const found = matchSpans(text, false, true)
+    const all = mask ? [...found, ...runSpans(text), ...pemTails(text)] : found
     const spans = all.sort((a, b) => a.start - b.start)
     const intervals: SecretSpan[] = []
     for (const span of spans) {

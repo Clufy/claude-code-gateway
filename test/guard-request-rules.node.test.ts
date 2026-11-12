@@ -85,3 +85,21 @@ describe('fix round 2 units stay fast', () => {
         expect(best(() => pass(text))).toBeLessThanOrEqual(MAX_MS)
     })
 })
+
+describe('fix round 3 quoted-value units stay fast', () => {
+    const rep = (unit: string) => unit.repeat(Math.ceil(MB / unit.length))
+    it.each([
+        ['runner word', rep('pwd="hunter Xk9#qLz2" ')],
+        ['url value', rep('pwd="https://ab.cd/Xk9#qLz2" ')],
+        ['prose value', rep('password="the quick brown fox jumps over" ')]
+    ])('secretEgress, redact and excerpt on %s', (_name, text) => {
+        for (const pass of [
+            (t: string) => secretEgress({ kind: 'tool_result', text: t }),
+            (t: string) => redact(t),
+            (t: string) => excerptAt(t, t.length >> 1, (t.length >> 1) + 50)
+        ]) {
+            pass(text)
+            expect(best(() => pass(text))).toBeLessThanOrEqual(MAX_MS)
+        }
+    })
+})
