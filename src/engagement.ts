@@ -104,7 +104,7 @@ const ISO_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})
 function parseIsoInstant(v: unknown): number {
     const m = typeof v === 'string' ? ISO_RE.exec(v) : null
     if (m === null) return NaN
-    const [y, mo, d, h, mi, sec = 0, oh = 0, om = 0] = m.slice(1).map((x) => (x === undefined ? 0 : Number(x)))
+    const [y, mo, d, h, mi, sec, oh, om] = m.slice(1).map((x) => (x === undefined ? 0 : Number(x)))
     const probe = new Date(Date.UTC(y, mo - 1, d))
     if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d) return NaN
     if (h > 23 || mi > 59 || sec > 59 || oh > 23 || om > 59) return NaN
@@ -125,7 +125,7 @@ function hasDeviation(authority: string): boolean {
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 // One label rule for config domains and scope-check inputs, applied after IDNA (P3-R11)
 const LABEL_RE = /^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?$/
-const MODES: readonly string[] = ['redteam', 'purple', 'off']
+export const MODES: readonly string[] = ['redteam', 'purple', 'off']
 const TOP_KEYS = new Set(['scope', 'exclude', 'window', 'roe', 'defaultMode'])
 const SCOPE_KEYS = new Set(['domains', 'cidrs', 'llmTargets'])
 const EXCLUDE_KEYS = new Set(['domains', 'cidrs'])
@@ -133,20 +133,15 @@ const WINDOW_KEYS = new Set(['start', 'end'])
 
 type Obj = Record<string, unknown>
 
-function isObj(v: unknown): v is Obj {
+export function isObj(v: unknown): v is Obj {
     return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 /** Lowercase, drop a trailing dot, punycode via the URL parser. Null when not a plain hostname. */
 function normalizeHostname(h: string): string | null {
     if (!/^[A-Za-z0-9._\u0080-￿-]+$/.test(h) || /\s/.test(h) || hasDeviation(h)) return null
-    let host: string
-    try {
-        host = new URL(`http://${h}`).hostname
-    } catch {
-        return null
-    }
-    host = host.replace(/\.$/, '')
+    const host = URL.parse(`http://${h}`)?.hostname.replace(/\.$/, '')
+    if (host === undefined) return null
     const labels = host.split('.')
     if (!labels.every((l) => LABEL_RE.test(l))) return null
     if (/^[0-9]+$/.test(labels[labels.length - 1])) return null // IP-looking, not a domain
@@ -224,12 +219,8 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
             domains: domains(value.scope.domains, `${at} scope.domains`),
             cidrs: cidrs(value.scope.cidrs, `${at} scope.cidrs`, true),
             llmTargets: list(value.scope.llmTargets, `${at} scope.llmTargets`).map((u, i) => {
-                let proto: string
-                try {
-                    proto = new URL(u).protocol
-                } catch {
-                    return bad(`${at} scope.llmTargets[${i}]: not a URL`)
-                }
+                const proto = URL.parse(u)?.protocol
+                if (proto === undefined) return bad(`${at} scope.llmTargets[${i}]: not a URL`)
                 if (proto !== 'http:' && proto !== 'https:') {
                     return bad(`${at} scope.llmTargets[${i}]: must be http(s)`)
                 }
@@ -253,9 +244,7 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
         if (!isObj(value.window)) return bad(`${at} requires a window object`)
         noUnknown(value.window, WINDOW_KEYS, `${at} window`)
         const time = (k: 'start' | 'end'): number => {
-            const t = value.window as Obj
-            const v = t[k]
-            const n = parseIsoInstant(v)
+            const n = parseIsoInstant((value.window as Obj)[k])
             return Number.isNaN(n) ? bad(`${at} window.${k} must be an ISO 8601 date-time with Z or an offset`) : n
         }
         const start = time('start')
@@ -263,13 +252,9 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
         if (start >= end) return bad(`${at} window.start must be before window.end`)
 
         if (value.roe !== undefined && typeof value.roe !== 'string') return bad(`${at} roe must be a string`)
-        let defaultMode: ProxyMode = 'off'
-        if (value.defaultMode !== undefined) {
-            if (typeof value.defaultMode !== 'string' || !MODES.includes(value.defaultMode)) {
-                return bad(`${at} defaultMode must be one of ${MODES.join(', ')}`)
-            }
-            defaultMode = value.defaultMode as ProxyMode
-        }
+        // includes() is false for a non-string, so null or 5 is refused like an unknown mode
+        const defaultMode = (value.defaultMode === undefined ? 'off' : value.defaultMode) as ProxyMode
+        if (!MODES.includes(defaultMode)) return bad(`${at} defaultMode must be one of ${MODES.join(', ')}`)
 
         out.set(name, { name, scope, exclude, window: { start, end }, roe: value.roe ?? '', defaultMode })
     }
@@ -303,11 +288,7 @@ function parseTargetUrl(input: string): URL | null {
     if (hasDeviation(rest.split(/[/?#]/)[0])) return null
     // a bare IPv6 address has no brackets, and http://2001:db8::1 does not parse
     const bareV6 = rest.split(':').length > 2 && BARE_V6_RE.test(rest)
-    try {
-        return new URL(`http://${bareV6 ? `[${rest}]` : rest}`)
-    } catch {
-        return null
-    }
+    return URL.parse(`http://${bareV6 ? `[${rest}]` : rest}`)
 }
 
 function hostOf(url: URL): string | null {
@@ -337,39 +318,22 @@ export function inWindow(e: Engagement, now: number): boolean {
     return e.window.start <= now && now <= e.window.end
 }
 
-interface ParsedLists {
-    scope: ParsedCidr[]
-    exclude: ParsedCidr[]
-}
-const cidrCache = new WeakMap<Engagement, ParsedLists>()
-
 /** A ::ffff:a.b.c.d/n CIDR (n >= 96) is the IPv4 CIDR /(n-96), matching how mapped inputs are collapsed. */
 function mappedToV4(c: ParsedCidr): ParsedCidr {
     if (c.family !== 6 || c.bits < 96 || c.base >> 32n !== 0xffffn) return c
     return { family: 4, base: c.base & 0xffffffffn, bits: c.bits - 96 }
 }
 
-function cidrsOf(e: Engagement): ParsedLists {
-    let c = cidrCache.get(e)
-    if (c === undefined) {
-        const parse = (l: string[]) =>
-            l
-                .map(parseCidr)
-                .filter((x): x is ParsedCidr => x !== null)
-                .map(mappedToV4)
-        c = { scope: parse(e.scope.cidrs), exclude: parse(e.exclude.cidrs) }
-        cidrCache.set(e, c)
-    }
-    return c
-}
-
 function domainMatches(host: string, entries: string[]): boolean {
     return entries.some((d) => (d.startsWith('*.') ? host.endsWith(d.slice(1)) : host === d))
 }
 
-function cidrMatches(ip: ParsedIp | null, list: ParsedCidr[]): boolean {
+function cidrMatches(ip: ParsedIp | null, cidrs: string[]): boolean {
     if (ip === null) return false
-    return list.some((c) => {
+    return cidrs.some((s) => {
+        const p = parseCidr(s)
+        if (p === null) return false
+        const c = mappedToV4(p)
         if (c.family !== ip.family) return false
         const hostBits = BigInt((c.family === 4 ? 32 : 128) - c.bits)
         return ip.value >> hostBits === c.base >> hostBits
@@ -399,29 +363,18 @@ function llmTargetMatches(url: URL, targets: string[]): boolean {
     })
 }
 
-function realHttpUrl(input: string): URL | null {
-    if (!/^https?:\/\//i.test(input)) return null
-    try {
-        return new URL(input)
-    } catch {
-        return null
-    }
-}
-
 function llmMatches(input: string, e: Engagement): boolean {
-    const real = realHttpUrl(input)
+    const real = /^https?:\/\//i.test(input) ? URL.parse(input) : null
     return real !== null && llmTargetMatches(real, e.scope.llmTargets)
 }
 
 export function checkScope(e: Engagement, input: string, now: number = Date.now()): ScopeResult {
-    const url = parseTargetUrl(input)
-    const target = url === null ? null : hostOf(url)
-    if (url === null || target === null) return { verdict: 'invalid_target', target: '', inWindow: inWindow(e, now) }
+    const target = normalizeTarget(input)
+    if (target === null) return { verdict: 'invalid_target', target: '', inWindow: inWindow(e, now) }
     const ip = parseIp(target)
-    const c = cidrsOf(e)
     let verdict: ScopeVerdict = 'out_of_scope'
-    if (domainMatches(target, e.exclude.domains) || cidrMatches(ip, c.exclude)) verdict = 'excluded'
-    else if (domainMatches(target, e.scope.domains) || cidrMatches(ip, c.scope) || llmMatches(input, e)) {
+    if (domainMatches(target, e.exclude.domains) || cidrMatches(ip, e.exclude.cidrs)) verdict = 'excluded'
+    else if (domainMatches(target, e.scope.domains) || cidrMatches(ip, e.scope.cidrs) || llmMatches(input, e)) {
         verdict = 'in_scope'
     }
     return { verdict, target, inWindow: inWindow(e, now) }

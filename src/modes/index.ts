@@ -1,6 +1,6 @@
 import { logDetection } from '../audit'
 import type { ProxyConfig } from '../config'
-import { inWindow, type ProxyMode } from '../engagement'
+import { inWindow, MODES, type ProxyMode } from '../engagement'
 import { anthropicError } from '../errors'
 import { buildModeBlock } from './block'
 
@@ -8,7 +8,6 @@ export type ModeOk = { ok: true; engagement?: string; mode: ProxyMode }
 export type ModeErr = { ok: false; response: Response }
 
 export const MODE_ALIAS = /^(redteam|purple)\//i
-const MODES: readonly string[] = ['redteam', 'purple', 'off']
 
 /**
  * Resolves engagement + mode, strips a mode alias from body.model, appends the pack, logs out-of-window
@@ -40,14 +39,13 @@ export function applyMode(
     }
 
     // Empty counts as absent, like x-engagement.
-    const v = headers.get('x-proxy-mode')?.trim().toLowerCase() || undefined
-    if (v !== undefined && !MODES.includes(v)) {
-        return fail(`invalid x-proxy-mode '${v.slice(0, 64)}' (use redteam, purple or off)`)
+    const headerMode = headers.get('x-proxy-mode')?.trim().toLowerCase() || undefined
+    if (headerMode !== undefined && !MODES.includes(headerMode)) {
+        return fail(`invalid x-proxy-mode '${headerMode.slice(0, 64)}' (use redteam, purple or off)`)
     }
-    const headerMode = v as ProxyMode | undefined
 
     // The alias wins: a subagent can change only its model.
-    const mode = alias ?? headerMode ?? e?.defaultMode ?? 'off'
+    const mode = alias ?? (headerMode as ProxyMode | undefined) ?? e?.defaultMode ?? 'off'
     if (!e) return mode === 'off' ? { ok: true, mode } : fail(`x-proxy-mode ${mode} needs an x-engagement header`)
 
     if (mode !== 'off') {

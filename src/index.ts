@@ -9,6 +9,7 @@ import { findRouteEntry, planTargets, Target } from './routing'
 import { finalized, finalizeMessagesResponse, logRequest, type FinalizeInput } from './request-log'
 import { keepaliveTiming, withKeepalive } from './keepalive'
 import { applyMode, type ModeOk } from './modes'
+import { isObj } from './engagement'
 import { newStats } from './stats'
 import * as models from './models'
 import * as tokens from './tokens'
@@ -88,7 +89,7 @@ async function handleRequest(
         }
         // Only an object body can carry a pack; any other JSON is counted as today.
         // No out-of-window detection here: the messages request that follows logs it.
-        if (isPlainObject(body)) {
+        if (isObj(body)) {
             const mode = applyMode(request.headers, body, config, requestId, Date.now(), { detect: false })
             if (!mode.ok) return mode.response
         }
@@ -285,14 +286,10 @@ function auditFields(mode: ModeOk): Pick<FinalizeInput, 'engagement' | 'mode'> {
     return mode.engagement ? { engagement: mode.engagement, mode: mode.mode } : {}
 }
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-    return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
-
 function parseBodyObject(text: string): Record<string, unknown> | null {
     try {
         const parsed = JSON.parse(text)
-        return isPlainObject(parsed) ? parsed : null
+        return isObj(parsed) ? parsed : null
     } catch {
         return null
     }
