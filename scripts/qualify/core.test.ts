@@ -63,6 +63,41 @@ describe('collectResponse', () => {
         expect(c.error).toBeNull()
     })
 
+    it('stamps ttfbMs at the first content event, not at message_start', async () => {
+        const enc = new TextEncoder()
+        const full = toolStream(['{}'])
+        const split = full.indexOf('event: content_block_start')
+        const body = new ReadableStream<Uint8Array>({
+            async start(c) {
+                c.enqueue(enc.encode(full.slice(0, split))) // message_start + ping at once
+                await new Promise((r) => setTimeout(r, 50))
+                c.enqueue(enc.encode(full.slice(split)))
+                c.close()
+            }
+        })
+        const res = new Response(body, { headers: { 'content-type': 'text/event-stream' } })
+        const c = await collectResponse(res, Date.now())
+        expect(c.ttfbMs).not.toBeNull()
+        expect(c.ttfbMs!).toBeGreaterThanOrEqual(40)
+        expect(c.blocks).toHaveLength(1)
+    })
+
+    it('ttfbMs is null for a stream with no content event', async () => {
+        const c = await collectResponse(
+            sseRes(sse([['error', { type: 'error', error: { type: 'api_error', message: 'x' } }]])),
+            Date.now()
+        )
+        expect(c.ttfbMs).toBeNull()
+    })
+
+    it('ttfbMs is null for a non-stream response', async () => {
+        const res = new Response(JSON.stringify({ content: [{ type: 'text', text: 'hi' }], stop_reason: 'end_turn' }), {
+            headers: { 'content-type': 'application/json' }
+        })
+        const c = await collectResponse(res, Date.now())
+        expect(c.ttfbMs).toBeNull()
+    })
+
     it('handles CRLF line endings', async () => {
         const c = await collectResponse(sseRes(toolStream(['{"file_pa', 'th":"/a"}'], '', '\r\n')), Date.now())
         expect(c.blocks[0]).toEqual({ type: 'tool_use', name: 'Read', input: { file_path: '/a' } })

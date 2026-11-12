@@ -138,6 +138,20 @@ describe('buildModelReport', () => {
         expect([r.ttfbP50, r.ttfbP95, r.totalP50, r.totalP95]).toEqual([10, 19, 100, 190])
     })
 
+    it('TTFB percentiles ignore null (non-stream) values', () => {
+        const runs = make(10)
+        runs.forEach((r) => {
+            r.collected = []
+        })
+        runs[0].collected = [
+            { ...collected(), ttfbMs: null },
+            { ...collected(), ttfbMs: null },
+            { ...collected(), ttfbMs: 30 }
+        ]
+        const r = buildModelReport('m', runs, fx.tools)
+        expect([r.ttfbP50, r.ttfbP95]).toEqual([30, 30])
+    })
+
     it('counts errors, unparsed text and percentiles', () => {
         const runs = make(10)
         runs[0].collected = [{ ...collected(), error: 'boom', ttfbMs: 1000, totalMs: 2000 }]

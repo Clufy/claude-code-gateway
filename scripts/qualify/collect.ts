@@ -19,7 +19,8 @@ export interface ProxyStats {
 
 export interface Collected {
     status: number
-    ttfbMs: number
+    /** Time to the first content_block_start/delta event; null for non-stream responses or no content. */
+    ttfbMs: number | null
     totalMs: number
     blocks: CollectedBlock[]
     stopReason: string | null
@@ -29,6 +30,8 @@ export interface Collected {
 }
 
 const STATS_PREFIX = ': proxy-stats '
+// The model's first token, not the proxy's own message_start or keepalive pings.
+const FIRST_CONTENT = /(^|\n)event:\s*content_block_(start|delta)\b|"type"\s*:\s*"content_block_(start|delta)"/
 
 function parseStats(raw: string | null | undefined): ProxyStats | null {
     if (!raw) return null
@@ -48,7 +51,7 @@ function describeError(body: unknown, fallback: string): string {
 export async function collectResponse(res: Response, startedAt: number): Promise<Collected> {
     const out: Collected = {
         status: res.status,
-        ttfbMs: 0,
+        ttfbMs: null,
         totalMs: 0,
         blocks: [],
         stopReason: null,
@@ -56,31 +59,29 @@ export async function collectResponse(res: Response, startedAt: number): Promise
         proxyStats: parseStats(res.headers.get('x-proxy-stats')),
         error: null
     }
+    const isSse = (res.headers.get('content-type') ?? '').includes('text/event-stream')
     let raw = ''
     try {
-        let first = true
         const decoder = new TextDecoder()
         if (res.body) {
             const reader = res.body.getReader()
             for (;;) {
                 const { done, value } = await reader.read()
-                if (first) {
-                    out.ttfbMs = Date.now() - startedAt
-                    first = false
-                }
                 if (done) break
+                // Rescan a small overlap so a marker split across chunks is still found.
+                const scanFrom = Math.max(0, raw.length - 64)
                 raw += decoder.decode(value, { stream: true })
+                if (isSse && out.ttfbMs === null && FIRST_CONTENT.test(raw.slice(scanFrom))) {
+                    out.ttfbMs = Date.now() - startedAt
+                }
             }
             raw += decoder.decode()
-        } else {
-            out.ttfbMs = Date.now() - startedAt
         }
     } catch (e) {
         out.error = `body read failed: ${e instanceof Error ? e.message : String(e)}`
     }
     out.totalMs = Date.now() - startedAt
 
-    const isSse = (res.headers.get('content-type') ?? '').includes('text/event-stream')
     try {
         if (isSse) parseSse(raw, out)
         else parseJson(raw, out)

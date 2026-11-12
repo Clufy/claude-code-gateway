@@ -18,7 +18,7 @@ export interface QualifyOptions {
 function failed(error: string): Collected {
     return {
         status: 0,
-        ttfbMs: 0,
+        ttfbMs: null,
         totalMs: 0,
         blocks: [],
         stopReason: null,
