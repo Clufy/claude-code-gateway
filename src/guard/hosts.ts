@@ -9,8 +9,12 @@
  * - A script written to disk and then run is not seen: file-content fields are never scanned (D1).
  * - Single-label hosts (`dc01`) and names outside the PSL ICANN section are found only under an engagement
  *   domain (`knownDomains`). Two-label names ending in a common file extension (`evil.py`) are skipped (D2).
- * - Inline interpreter code (`node -e`, `python -c`, …) is scanned for URLs and IPs only, since `obj.name` there
- *   is code. Heredoc bodies are scanned as shell text.
+ * - Inline interpreter code (`node -e`, `python -c`, …) gets full extraction only inside its quoted strings;
+ *   elsewhere URLs and IPs only, since `obj.name` there is code. Heredoc bodies are scanned as shell text.
+ * - Targets read from files are not seen (`nmap -iL`, `wget -i`, `nuclei -l`, `curl -K`).
+ * - Obfuscation hides a host: PowerShell backticks or cmd `^` inside a name, an interior backslash, short or
+ *   decimal IPv4 (`10.1`, `167772161`) and brace expansion (`{a,b}.evil.com`).
+ * - At most 65 unique candidates are returned: D8 denies more than 64 anyway.
  */
 import { isObj, parseCidr, parseIp } from '../engagement'
 import { isRegistrable } from './psl'
@@ -22,12 +26,14 @@ export interface ExtractOptions {
 
 const MAX_HOST = 253
 const BUDGET = 1_000_000
+const MAX_CANDIDATES = 65 // D8 denies more than 64, so collecting stops here (P4-R7)
 /** Appended by hostsInToolInput when the 1 MB budget ran out before every string was scanned (P4-R6). */
 export const INPUT_TOO_LARGE = '(tool input over 1 MB)'
-const FILE_EXTS = new Set('ai am cc gz in java md mk ml mov pl pm ps py rs sc sh so tf zip'.split(' '))
+const FILE_EXTS = new Set('ai am cc gz in java md mk ml mov pl pm ps pub py rs sc sh so tf zip'.split(' '))
 const MESSAGE_FLAGS = ['-m', '-am', '--message', '--author', '--body', '--title'] // D4
 const MESSAGE_PROGRAMS = new Set(['git', 'gh', 'glab', 'hub']) // P4-R5: D4 applies only to these
-const PROGRAM_PREFIX = new Set(['sudo', 'env', 'command'])
+// skipped when finding a segment's program (P4-R5, P4-R9), along with their dash flags and `timeout`'s duration
+const PROGRAM_PREFIX = new Set(['sudo', 'env', 'command', 'time', 'nohup', 'xargs', 'timeout'])
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 const INTERPRETER = /^(node|nodejs|bun|deno|python[0-9.]*|py|pypy[0-9.]*|ruby|perl|php[0-9.]*|lua[0-9.]*|rscript)$/
 const CODE_FLAG = /^(-[A-Za-z]*[ceE]|-[pr]|--eval|--print)$/
@@ -69,6 +75,8 @@ function shellWords(text: string): Word[] {
     }
     for (let i = 0; i < text.length; i++) {
         const c = text[i]
+        // `$'…'` and `$"…"` are quoting, not indirection (P4-R7)
+        if (c === '$' && (text[i + 1] === "'" || text[i + 1] === '"')) continue
         if (c === "'" || c === '"') {
             let j = i + 1
             while (j < text.length && text[j] !== c) j += c === '"' && text[j] === '\\' ? 2 : 1
@@ -89,6 +97,7 @@ function shellWords(text: string): Word[] {
 }
 
 function isIp(s: string): boolean {
+    if (s.length > 45) return false // the longest IP literal (IPv6 with an IPv4 tail) is 45 chars
     const ip = parseIp(s)
     // a bare IPv6 needs a digit, so `face::` or `a::b` in code is not an address
     return ip !== null && (ip.family === 4 || DIGIT.test(s))
@@ -153,18 +162,29 @@ function urlCandidate(t: string, sep: number, shell: boolean): string | null {
     return `${scheme}://${auth}`
 }
 
-/** Bare token: CIDR, `user@host`, scp `host:path`, UNC `\\host\share`, `host:port`, `[v6]`, IP or hostname. */
-function bareCandidates(token: string, hosts: boolean, known: readonly string[], out: Set<string>): void {
+/**
+ * Bare token: CIDR, `user@host`, Impacket `domain/user@host`, scp `host:path`, UNC `\\host\share` or `//host/share`,
+ * `/dev/tcp/host/port`, `host:port`, `[v6]`, IP or hostname. `isHost` is null when only IPs are wanted.
+ */
+function bareCandidates(token: string, isHost: ((p: string) => boolean) | null, out: Set<string>): void {
     const t = trimDots(token)
-    // an IP, CIDR or hostname has a dot or a colon; `$` is shell indirection (D2)
-    if ((!t.includes('.') && !t.includes(':')) || t.includes('$')) return
+    if (!t.includes('.') && !t.includes(':')) return // an IP, CIDR or hostname has a dot or a colon
     const slash = t.indexOf('/')
     if (slash > 0 && parseCidr(t) !== null && isIp(t.slice(0, slash))) {
         out.add(t)
         return
     }
-    let h = cutPath(t.startsWith('\\\\') ? t.slice(2) : t)
-    h = h.slice(h.lastIndexOf('@') + 1)
+    const dev = Math.max(t.indexOf('/dev/tcp/'), t.indexOf('/dev/udp/'))
+    let h = dev === -1 ? t : t.slice(dev + 9)
+    let lead = 0
+    while (lead < h.length && (h[lead] === '\\' || h[lead] === '/')) lead++
+    if (lead >= 2) {
+        // UNC, also bash-escaped (4 backslashes); WebDAV `\\host@SSL@443\path` ends the host at the first `@`
+        h = h.slice(lead)
+        if (h.includes('@')) h = h.slice(0, h.indexOf('@'))
+    } else h = h.slice(h.lastIndexOf('@') + 1) // before the path cut, for `acme.local/admin@10.0.0.5`
+    h = cutPath(h)
+    if (h.includes('$')) return // D2: shell indirection (a `//h/C$` share name is already cut off)
     if (h.startsWith('[')) {
         const inner = h.slice(1, Math.max(h.indexOf(']'), 1))
         if (isIp(inner)) out.add(inner)
@@ -177,7 +197,7 @@ function bareCandidates(token: string, hosts: boolean, known: readonly string[],
     // every `:` part, not only the first: `TCP:host:443`, `--resolve host:443:ip`, `-L 8080:ip:80`
     for (const part of h.split(':')) {
         const p = trimDots(part)
-        if (isIp(p) || (hosts && isHost(p, known))) out.add(p)
+        if (isIp(p) || (isHost !== null && isHost(p))) out.add(p)
     }
 }
 
@@ -185,54 +205,89 @@ function bareCandidates(token: string, hosts: boolean, known: readonly string[],
 export function extractHosts(text: string, opts: ExtractOptions): string[] {
     const known = (opts.knownDomains ?? []).map((d) => d.toLowerCase().replace(/^\*\./, '')).filter((d) => d !== '')
     const out = new Set<string>()
+    const memo = new Map<string, boolean>()
+    const hostCheck = (p: string): boolean => {
+        let v = memo.get(p)
+        if (v === undefined) memo.set(p, (v = isHost(p, known)))
+        return v
+    }
     const scan = (s: string, hosts: boolean) => {
         for (const t of s.split(SUB_BREAK)) {
+            if (out.size >= MAX_CANDIDATES) return
             if (t === '') continue
             const sep = t.indexOf('://')
-            if (sep === -1) bareCandidates(t, hosts, known, out)
+            if (sep === -1) bareCandidates(t, hosts ? hostCheck : null, out)
             else {
                 const url = urlCandidate(t, sep, opts.shell)
                 if (url !== null) out.add(url)
             }
         }
     }
+    // inline code: full extraction inside its quoted strings (fail closed), URLs and IPs elsewhere
+    const scanCode = (s: string) => {
+        let start = 0
+        let quote = ''
+        for (let i = 0; i < s.length; i++) {
+            if (quote === '' ? s[i] !== "'" && s[i] !== '"' : s[i] !== quote) continue
+            scan(s.slice(start, i), quote !== '')
+            quote = quote === '' ? s[i] : ''
+            start = i + 1
+        }
+        scan(s.slice(start), quote !== '')
+    }
+    const result = () => [...out].slice(0, MAX_CANDIDATES)
     if (!opts.shell) {
         scan(text, false)
-        return [...out]
+        return result()
     }
     let skipNext = false
     let codeNext = false
-    let interpreter = false
-    let program: string | null = null // the segment's command, past sudo/env/command and VAR=value
+    let flagsOpen = false // an interpreter's options, before its first positional argument (the script)
+    let awaitDuration = false
+    let program: string | null = null // the segment's command, past prefixes, their flags and VAR=value
     for (const w of shellWords(text)) {
+        if (out.size >= MAX_CANDIDATES) break
         if (w.newSegment) {
-            skipNext = codeNext = interpreter = false
+            skipNext = codeNext = flagsOpen = awaitDuration = false
             program = null
         }
         if (skipNext) {
             skipNext = false
             continue
         }
-        const code = codeNext
-        codeNext = false
         const lw = w.text.toLowerCase()
-        const base = lw.slice(Math.max(lw.lastIndexOf('/'), lw.lastIndexOf('\\')) + 1).replace(/\.exe$/, '')
-        if (program === null && !PROGRAM_PREFIX.has(base) && !ASSIGNMENT.test(w.text)) program = base
-        if (program !== null && MESSAGE_PROGRAMS.has(program)) {
+        if (codeNext) {
+            codeNext = flagsOpen = false
+            scanCode(w.text)
+            continue
+        }
+        if (program === null) {
+            const base = lw.slice(Math.max(lw.lastIndexOf('/'), lw.lastIndexOf('\\')) + 1).replace(/\.exe$/, '')
+            if (PROGRAM_PREFIX.has(base)) awaitDuration = base === 'timeout'
+            else if (ASSIGNMENT.test(w.text) || lw.startsWith('-')) {
+                // an assignment or a prefix's flag
+            } else if (awaitDuration) {
+                awaitDuration = !DIGIT.test(lw[0]) // `timeout -s KILL 30 cmd`: the duration starts with a digit
+            } else {
+                program = base
+                flagsOpen = INTERPRETER.test(base)
+            }
+        } else if (MESSAGE_PROGRAMS.has(program)) {
             if (MESSAGE_FLAGS.includes(lw)) {
                 skipNext = true
                 continue
             }
             if (MESSAGE_FLAGS.some((f) => f.startsWith('--') && lw.startsWith(`${f}=`))) continue
+        } else if (flagsOpen) {
+            if (CODE_FLAG.test(w.text)) {
+                codeNext = true
+                continue
+            }
+            if (!lw.startsWith('-')) flagsOpen = false
         }
-        if (interpreter && CODE_FLAG.test(w.text)) {
-            codeNext = true
-            continue
-        }
-        if (INTERPRETER.test(base)) interpreter = true
-        scan(w.text, !code)
+        scan(w.text, true)
     }
-    return [...out]
+    return result()
 }
 
 /**
@@ -251,7 +306,10 @@ export function hostsInToolInput(tool: string, input: unknown, knownDomains?: re
         for (const h of extractHosts(t, { shell, knownDomains })) out.add(h)
     }
     // fail closed: an unscanned remainder could hide a host
-    const result = () => (truncated ? [...out, INPUT_TOO_LARGE] : [...out])
+    const result = () => {
+        const hosts = [...out].slice(0, MAX_CANDIDATES)
+        return truncated ? [...hosts, INPUT_TOO_LARGE] : hosts
+    }
     if (SHELL_TOOLS.has(tool)) {
         if (typeof input.command === 'string') take(input.command, true)
         return result()
@@ -261,7 +319,7 @@ export function hostsInToolInput(tool: string, input: unknown, knownDomains?: re
     const stack: [string, unknown][] = Object.entries(input)
         .filter(([k]) => !skip.includes(k))
         .reverse()
-    while (stack.length > 0 && !truncated) {
+    while (stack.length > 0 && !truncated && out.size < MAX_CANDIDATES) {
         const [key, v] = stack.pop()!
         if (typeof v === 'string') take(v, HOST_FIELD.test(key))
         else if (Array.isArray(v)) for (let i = v.length - 1; i >= 0; i--) stack.push([key, v[i]])

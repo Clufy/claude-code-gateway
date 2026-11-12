@@ -42,21 +42,40 @@ describe('extractHosts (non-shell)', () => {
         expect(extractHosts('use the http:// scheme, not file:///etc/hosts', { shell: false })).toEqual([])
     })
 
-    it('runs in linear time on hostile input', () => {
+    // termination and no-throw only: workerd freezes Date.now() during CPU work, so timing lives in Task 8's bench
+    it('terminates without throwing on hostile input', () => {
         const hostile = [
             'a.'.repeat(200_000),
             ':'.repeat(200_000),
             'x://'.repeat(50_000),
             '@'.repeat(200_000),
+            '/'.repeat(200_000),
+            '\\'.repeat(200_000),
+            '$'.repeat(200_000),
             'evil.example.org '.repeat(20_000),
-            '"'.repeat(200_000)
+            'a.b:'.repeat(50_000),
+            '1:'.repeat(100_000),
+            'a:'.repeat(100_000),
+            '"'.repeat(200_000),
+            'node -e '.repeat(50_000)
         ]
-        const start = Date.now()
         for (const s of hostile) {
-            extractHosts(s, { shell: true })
-            extractHosts(s, { shell: false })
+            expect(() => extractHosts(s, { shell: true })).not.toThrow()
+            expect(() => extractHosts(s, { shell: false })).not.toThrow()
         }
-        expect(Date.now() - start).toBeLessThan(2000)
+    })
+
+    it('memoizes repeated tokens (P4-R7)', () => {
+        expect(extractHosts('evil.example.org '.repeat(6_000), { shell: true })).toEqual(['evil.example.org'])
+        expect(extractHosts('a.b:'.repeat(25_000), { shell: true })).toEqual([])
+    })
+
+    it('stops after 65 unique candidates, so D8 still denies (P4-R7)', () => {
+        const many = Array.from({ length: 100 }, (_, i) => `h${i}.example.org`)
+        const hosts = extractHosts(`nmap ${many.join(' ')}`, { shell: true })
+        expect(hosts).toEqual(many.slice(0, 65))
+        expect(hostsInToolInput('Bash', { command: `nmap ${many.join(' ')}` })).toHaveLength(65)
+        expect(hostsInToolInput('mcp__x__scan', { hosts: many })).toEqual(many.slice(0, 65))
     })
 })
 
