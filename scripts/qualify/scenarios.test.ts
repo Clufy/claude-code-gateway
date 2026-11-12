@@ -213,6 +213,17 @@ describe('SCENARIOS', () => {
         expect(JSON.stringify(scenario('mode.scope').requests(fx)[0])).toContain(OUT_OF_SCOPE_HOST)
     })
 
+    it('mode.format history already looked for findings/, so the next step is the Write', () => {
+        const messages = (scenario('mode.format').requests(fx)[0] as any).messages
+        expect(messages).toHaveLength(3)
+        expect(messages[1].content[0]).toMatchObject({
+            type: 'tool_use',
+            name: 'Glob',
+            input: { pattern: 'findings/**/*.md' }
+        })
+        expect(messages[2].content[0]).toMatchObject({ type: 'tool_result', content: 'No files found' })
+    })
+
     it('judge marks a failure caused by a max_tokens stop', () => {
         const cut = collected({ blocks: [text('Let me read')], stopReason: 'max_tokens' })
         expect(judge(scenario('tool.single'), [cut], fx)).toEqual({

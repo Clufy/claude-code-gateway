@@ -214,7 +214,10 @@ export const SCENARIOS: Scenario[] = [
             body(fx, [
                 user(
                     "Record this finding: SQL injection in the id parameter of /api/items; payload ' OR 1=1-- returned every row; technique T1190. Write the finding file now."
-                )
+                ),
+                // The model has already checked for findings/; the scenario measures the Write that follows.
+                toolUse('toolu_1', 'Glob', { pattern: 'findings/**/*.md' }),
+                user([toolResult('toolu_1', 'No files found')])
             ])
         ],
         check: ([c], fx) => checkFormat(c, fx)
