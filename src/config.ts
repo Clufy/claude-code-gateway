@@ -153,9 +153,9 @@ function parseRoutes(raw: Raw, urlCfg: Pick<ProxyConfig, 'allowedHosts' | 'allow
             if (
                 !Array.isArray(r.fallback) ||
                 r.fallback.length > 3 ||
-                !r.fallback.every((f) => typeof f === 'string')
+                !r.fallback.every((f) => typeof f === 'string' && f !== '')
             ) {
-                return bad(`route "${pattern}" fallback must be an array of at most 3 strings`)
+                return bad(`route "${pattern}" fallback must be an array of at most 3 non-empty strings`)
             }
             route.fallback = r.fallback as string[]
         }

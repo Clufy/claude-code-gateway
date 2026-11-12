@@ -65,6 +65,7 @@ describe('routing', () => {
         [JSON.stringify({ x: { ...ext, keySecret: 'PROXY_KEY' } })],
         [JSON.stringify({ x: { ...ext, fallback: ['a', 'b', 'c', 'd'] } })],
         [JSON.stringify({ x: { ...ext, fallback: ['a', 1] } })],
+        [JSON.stringify({ x: { ...ext, fallback: ['a', ''] } })],
         [JSON.stringify({ x: { ...ext, contextTokens: 0 } })],
         [JSON.stringify({ x: { ...ext, contextTokens: 1.5 } })],
         [JSON.stringify({ x: { ...ext, contextTokens: '5' } })],
