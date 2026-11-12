@@ -251,10 +251,10 @@ describe('neighbouring secrets (fix round)', () => {
         expect(longRun(ex)).toBe(false)
     })
     it('redacts a quoted value with spaces up to the closing quote', () => {
-        const ex = secretEgress(tr('password="Tq9#Lz2vK7!m rest-of-pass phrase" ok'))!
+        const ex = secretEgress(tr('password="Tq9#Lz2vK7!m rest-of-pass" ok'))!
         expect(ex).toContain('Tq9#…[redacted]')
         expect(ex).not.toContain('rest-of-pass')
-        expect(ex).not.toContain('phrase')
+        expect(ex).not.toContain('rest')
     })
     it('masks long high-entropy runs cut at the slice edge', () => {
         const run = b64(40, 9)
@@ -273,6 +273,48 @@ describe('neighbouring secrets (fix round)', () => {
                 )
             )
         ).toBeNull()
+    })
+})
+
+describe('fix round 2', () => {
+    it('N1: a JSON-escaped PEM (service account) leaks no body, including a short last line', () => {
+        const l1 = b64(64, 21)
+        const l2 = b64(64, 22)
+        const last = 'Zq9xK7mTw3=='
+        const json = JSON.stringify({
+            type: 'service_account',
+            private_key: `-----BEGIN PRIVATE KEY-----\n${l1}\n${l2}\n${last}\n-----END PRIVATE KEY-----\n`,
+            client_email: 'svc@proj.iam.gserviceaccount.com'
+        })
+        expect(json).toContain('\\n' + last) // literal backslash-n escapes
+        const ex = secretEgress(tr(json))!
+        expect(ex).not.toContain(l1.slice(0, 12))
+        expect(ex).not.toContain(l2.slice(0, 12))
+        expect(ex).not.toContain(last)
+        expect(ex).not.toContain('Zq9x')
+        const wide = excerptAt(json, json.indexOf('client_email'), json.indexOf('client_email') + 12)
+        expect(wide).not.toContain(last)
+        expect(wide).toContain('client_email')
+    })
+    it.each([
+        'secretName: "my-app-tls-secret-production"',
+        '"passwordHint": "Use at least eight characters, including a number"',
+        '"tokenExpired": "Your session has expired, please sign in again"',
+        '"token": "node scripts/token.js"',
+        "const tokenizer = 'bert-base-uncased-whole-word'",
+        'TOKEN_URL="https://oauth2.googleapis.com/token"',
+        'password_policy = "min 12 chars, one digit"'
+    ])('N3: does not flag %s', (text) => {
+        expect(secretEgress(tr(text))).toBeNull()
+    })
+    it.each([
+        'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+        'DB_PASSWORD=T7#kq9!Lz@2vXw',
+        'OPENAI_API_KEY=sk-proj-' + b64(40, 4),
+        '{"password": "T7#kq9!Lz@2vXw"}',
+        'password="Tq9#Lz2vK7!m rest"'
+    ])('N3: still flags %s', (text) => {
+        expect(secretEgress(tr(text))).not.toBeNull()
     })
 })
 

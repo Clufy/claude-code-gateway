@@ -54,3 +54,34 @@ describe('adversarial 1 MB input stays fast', () => {
         }
     }
 })
+
+describe('fix round 2 units stay fast', () => {
+    const rep = (unit: string) => unit.repeat(Math.ceil(MB / unit.length))
+    let x = 1
+    const body = Array.from({ length: MB }, () => {
+        x = (x * 1103515245 + 12345) & 0x7fffffff
+        return 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'[(x >> 8) % 64]
+    }).join('')
+    const cases: [string, string, (t: string) => unknown][] = [
+        [
+            'exfilMarkup on long-valued links',
+            rep('[](http://a?x=aaaaaaaaaaaaaaaaaaaaaaaaa&y=bbbbbbbbbbbbbbbbbbbbbbbbb)'),
+            (t) => exfilMarkup({ kind: 'tool_result', text: t })
+        ],
+        [
+            'secretEgress on a PEM header plus 1 MB base64',
+            '-----BEGIN PRIVATE KEY-----\n' + body,
+            (t) => secretEgress({ kind: 'tool_result', text: t })
+        ],
+        [
+            'secretEgress on repeated PEM headers',
+            rep('-----BEGIN PRIVATE KEY-----'),
+            (t) => secretEgress({ kind: 'tool_result', text: t })
+        ],
+        ['redact on a PEM header plus 1 MB base64', '-----BEGIN PRIVATE KEY-----\n' + body, (t) => redact(t)]
+    ]
+    it.each(cases)('%s', (_name, text, pass) => {
+        pass(text)
+        expect(best(() => pass(text))).toBeLessThanOrEqual(MAX_MS)
+    })
+})

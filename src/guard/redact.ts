@@ -13,7 +13,7 @@ export const SECRET_PATTERNS: readonly { name: string; re: RegExp }[] = [
     {
         name: 'generic',
         // Quoted values run to the closing quote; unquoted ones stop at whitespace, a quote, ) ] } , or ; (P4-R23).
-        re: /(?<![a-z0-9])(?:password|passwd|pwd|secret|api[_-]?key|token|access[_-]?key)[\w-]{0,30}["']?\s{0,3}[:=]\s{0,3}(?:"([^"\n]{8,200})|'([^'\n]{8,200})|([^\s"'()\]},;]{8,200}))/gi
+        re: /(?<![a-z0-9])(?:password|passwd|pwd|secret|api[_-]?key|token|access[_-]?key)(?:[_-]?(?:access[_-]?)?key|[_-]?secret|[_-]?id)?["']?\s{0,3}[:=]\s{0,3}(?:"([^"\n]{8,200})|'([^'\n]{8,200})|([^\s"'()\]},;]{8,200}))/gi
     }
 ]
 
@@ -24,7 +24,7 @@ const MIN_RUN = 32
 
 const counts = new Uint32Array(256)
 /** Shannon entropy (bits/char) of text[from, to). Chars are bucketed by their low byte; allocation-free. */
-function entropyOf(text: string, from: number, to: number): number {
+export function entropyOf(text: string, from: number, to: number): number {
     for (let i = from; i < to; i++) counts[text.charCodeAt(i) & 255]++
     const total = to - from
     let h = 0
@@ -41,10 +41,17 @@ function entropyOf(text: string, from: number, to: number): number {
 
 const DOTTED_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/
 
-function realSecretValue(value: string): boolean {
+function realSecretValue(value: string, quoted: boolean): boolean {
     if (entropyOf(value, 0, value.length) < MIN_ENTROPY) return false
     const lower = value.toLowerCase()
-    if (PLACEHOLDERS.some((p) => lower.includes(p))) return false
+    // 'example' marks a placeholder only in short values: doc sample secrets are 40 chars (P4-R24 needs them to flag).
+    if (PLACEHOLDERS.some((p) => lower.includes(p) && (p !== 'example' || value.length < 30))) return false
+    if (quoted) {
+        // Prose, commands and URLs are not secrets: 2+ spaces, an http(s) URL, or a plain lowercase first word.
+        const words = value.split(' ')
+        if (/^https?:\/\//.test(lower) || words.length > 2 || (words.length === 2 && /^[a-z]+$/.test(words[0])))
+            return false
+    }
     return !DOTTED_CHAIN.test(value) && !value.includes('(')
 }
 
@@ -70,12 +77,12 @@ const isSpace = (c: number): boolean => c === 32 || (c >= 9 && c <= 13)
 function pemEnd(text: string, from: number): number {
     let i = from
     while (i < text.length) {
-        if (text.startsWith('-----END ', i)) {
+        if (text.charCodeAt(i) === 45 && text.startsWith('-----END ', i)) {
             const close = text.indexOf('-----', i + 9)
             return close === -1 ? text.length : close + 5
         }
         const c = text.charCodeAt(i)
-        if (!isTokenChar(c) && !isSpace(c) && c !== 58 && c !== 44) break // ':' and ',' occur in Proc-Type/DEK-Info
+        if (!isTokenChar(c) && !isSpace(c) && c !== 58 && c !== 44 && c !== 92) break // ':' ',' occur in Proc-Type/DEK-Info; '\' in JSON-escaped newlines
         i++
     }
     return i
@@ -91,7 +98,7 @@ function matchSpans(text: string, firstOnly: boolean): SecretSpan[] {
             let start = m.index
             if (name === 'generic') {
                 const value = m[1] ?? m[2] ?? m[3]
-                if (!realSecretValue(value)) continue
+                if (!realSecretValue(value, m[3] === undefined)) continue
                 start = end - value.length
             } else if (name === 'pem' && end > covered) {
                 end = covered = pemEnd(text, end)

@@ -1,6 +1,6 @@
 /** Request-side detection rules (flag only). They run over the newest turn of a /v1/messages request. */
 import { checkScope, isObj, type Engagement } from '../engagement'
-import { excerptAt, findSecret } from './redact'
+import { entropyOf, excerptAt, findSecret } from './redact'
 
 export interface Segment {
     kind: 'user' | 'tool_result'
@@ -69,15 +69,8 @@ export function injectInstruction(seg: Segment): string | null {
 const MARKUP = /!?\[[^[\]\n]{0,200}\]\((https?:\/\/[^\s()]{1,2048})\)/g
 const ODD_VALUE = /[{}[\]<>$]/
 
-function entropy(s: string): number {
-    const counts = new Map<string, number>()
-    for (const ch of s) counts.set(ch, (counts.get(ch) ?? 0) + 1)
-    let h = 0
-    for (const n of counts.values()) h -= (n / s.length) * Math.log2(n / s.length)
-    return h
-}
-
 function decode(v: string): string {
+    if (!/[%+]/.test(v)) return v
     const spaced = v.replace(/\+/g, ' ')
     try {
         return decodeURIComponent(spaced)
@@ -90,7 +83,13 @@ function decode(v: string): string {
 function suspiciousValue(raw: string): boolean {
     const v = decode(raw)
     if (ODD_VALUE.test(v)) return true
-    return v.length >= 24 && !v.includes(' ') && !v.startsWith('data:') && !v.startsWith('http') && entropy(v) >= 4.2
+    return (
+        v.length >= 24 &&
+        !v.includes(' ') &&
+        !v.startsWith('data:') &&
+        !v.startsWith('http') &&
+        entropyOf(v, 0, v.length) >= 4.2
+    )
 }
 
 /** Lexical query check: no URL parsing, and only URLs that contain '?'. */
