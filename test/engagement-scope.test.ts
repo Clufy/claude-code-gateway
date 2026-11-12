@@ -132,7 +132,7 @@ describe('checkScope verdicts', () => {
         for (const c of ['::ffff:0:0/95', '::/0']) {
             expect(() => make({ exclude: { cidrs: [c] } })).toThrow(/exclude\.cidrs\[0\]: overlaps/)
         }
-        expect(() => make({ scope: { cidrs: ['2001:db8::/32', '::ffff:0:0/96'] } })).not.toThrow()
+        expect(() => make({ scope: { cidrs: ['2001:db8::/32', '::ffff:10.0.0.0/104'] } })).not.toThrow()
     })
 
     it('rejects scope CIDRs below /8 (IPv4) or /16 (IPv6) as too broad, before the mapped-overlap check', () => {
@@ -141,6 +141,13 @@ describe('checkScope verdicts', () => {
         }
         expect(make({ scope: { cidrs: ['10.0.0.0/8', '2001::/16'] } }).scope.cidrs).toEqual(['10.0.0.0/8', '2001::/16'])
         expect(make({ exclude: { cidrs: ['0.0.0.0/0'] } }).exclude.cidrs).toEqual(['0.0.0.0/0'])
+    })
+
+    it('measures the floor of an IPv4-mapped scope CIDR as IPv4', () => {
+        for (const c of ['::ffff:0:0/96', '::ffff:8.0.0.0/103']) {
+            expect(() => make({ scope: { cidrs: [c] } })).toThrow(/scope\.cidrs\[0\]: too broad/)
+        }
+        expect(make({ scope: { cidrs: ['::ffff:10.0.0.0/104'] } }).scope.cidrs).toEqual(['::ffff:10.0.0.0/104'])
     })
 
     it('pins the IPv6 target form', () => {

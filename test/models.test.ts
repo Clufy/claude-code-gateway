@@ -104,6 +104,14 @@ describe('models', () => {
         }
     )
 
+    it('GET /v1/models/redteam/ is 404 even when a catch-all route exists', async () => {
+        const env = makeEnv({
+            MODEL_ROUTES: JSON.stringify({ '*': { provider: 'workers-ai', model: '@cf/zai-org/glm-5.3' } })
+        })
+        const res = await callWorker('/v1/models/redteam%2F', auth, env)
+        expect(res.status).toBe(404)
+    })
+
     it('GET /v1/models/{id} returns 404 for an unrouted unknown id', async () => {
         const res = await callWorker('/v1/models/nope-1', auth, makeEnv({ MODEL_ROUTES }))
         expect(res.status).toBe(404)

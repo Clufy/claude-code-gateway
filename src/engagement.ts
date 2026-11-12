@@ -198,7 +198,8 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
         list(v, where).map((c, i) => {
             const p = parseCidr(c)
             if (p === null) return bad(`${where}[${i}]: invalid CIDR or IP`)
-            if (inScope && p.bits < (p.family === 4 ? 8 : 16)) {
+            const f = mappedToV4(p) // an IPv4-mapped CIDR is floored as IPv4
+            if (inScope && f.bits < (f.family === 4 ? 8 : 16)) {
                 return bad(`${where}[${i}]: too broad (scope CIDRs need at least /8 for IPv4, /16 for IPv6)`)
             }
             // a short IPv6 prefix covering ::ffff:0:0/96 would never match the IPv4-collapsed targets
