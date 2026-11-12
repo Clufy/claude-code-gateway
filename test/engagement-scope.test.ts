@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { loadConfig } from '../src/config'
 import { checkScope, inWindow, normalizeTarget, type Engagement } from '../src/engagement'
 
@@ -43,7 +43,16 @@ describe('checkScope verdicts', () => {
         ['https://chat.acme-test.com/api/v1/chat', 'in_scope'],
         ['https://chat.acme-test.com/apix', 'in_scope'],
         ['https://MAIL.acme-test.com./x', 'excluded'],
-        ['ftp2://app.acme-test.com', 'invalid_target'],
+        ['ssh://root@app.acme-test.com', 'in_scope'],
+        ['ftp://203.0.114.1', 'out_of_scope'],
+        ['app.acme-test.com..', 'invalid_target'],
+        ['app.acme-test.com\\@evil.com', 'invalid_target'],
+        ['app.acme-test.com\\@203.0.114.1:8080', 'invalid_target'],
+        ['https://app.acme-test.com\\@evil.com/', 'invalid_target'],
+        ['straße.acme-test.com', 'invalid_target'],
+        ['aς.acme-test.com', 'invalid_target'],
+        ['a‌b.acme-test.com', 'invalid_target'],
+        ['a‍b.acme-test.com', 'invalid_target'],
         ['app.acme-test.com/a b', 'invalid_target'],
         ['', 'invalid_target'],
         ['http://', 'invalid_target']
@@ -76,6 +85,25 @@ describe('checkScope verdicts', () => {
         expect(checkScope(e, '203.0.113.20', NOW).verdict).toBe('in_scope')
     })
 
+    it('collapses mapped IPv6 CIDRs to IPv4 for scope and exclusion', () => {
+        const ex = make({ exclude: { cidrs: ['::ffff:203.0.113.0/124'] } })
+        expect(checkScope(ex, '203.0.113.3', NOW).verdict).toBe('excluded')
+        expect(checkScope(ex, '::ffff:203.0.113.3', NOW).verdict).toBe('excluded')
+        const sc = make({ scope: { cidrs: ['::ffff:198.51.100.0/120'] } })
+        expect(checkScope(sc, '198.51.100.9', NOW).verdict).toBe('in_scope')
+        expect(checkScope(sc, '198.51.101.9', NOW).verdict).toBe('out_of_scope')
+    })
+
+    it('pins the IPv6 target form', () => {
+        expect(normalizeTarget('2001:DB8:0:0::1')).toBe('2001:db8::1')
+    })
+
+    it('rejects IDNA deviation characters in config domains', () => {
+        for (const d of ['straße.test', '*.aς.test', 'a‌b.test']) {
+            expect(() => make({ scope: { domains: [d] } })).toThrow(/scope\.domains/)
+        }
+    })
+
     it('llmTargets respects the path boundary', () => {
         const e = make({ scope: { llmTargets: ['https://chat.x-test.com/api'] }, exclude: {} })
         expect(checkScope(e, 'https://chat.x-test.com/api/x', NOW).verdict).toBe('in_scope')
@@ -86,6 +114,8 @@ describe('checkScope verdicts', () => {
         expect(checkScope(e, 'http://chat.x-test.com/api/x', NOW).verdict).toBe('out_of_scope')
         expect(checkScope(e, 'https://chat.x-test.com:8443/api/x', NOW).verdict).toBe('out_of_scope')
         expect(checkScope(e, 'chat.x-test.com', NOW).verdict).toBe('out_of_scope')
+        expect(checkScope(e, 'HTTPS://CHAT.X-TEST.COM./api/x', NOW).verdict).toBe('in_scope')
+        expect(checkScope(e, 'ws://chat.x-test.com/api/x', NOW).verdict).toBe('out_of_scope')
     })
 })
 
@@ -104,7 +134,12 @@ describe('window', () => {
         expect(checkScope(acme, 'app.acme-test.com', NOW).inWindow).toBe(true)
     })
 
+    afterEach(() => vi.useRealTimers())
     it('defaults now to Date.now()', () => {
-        expect(typeof checkScope(acme, 'app.acme-test.com').inWindow).toBe('boolean')
+        vi.useFakeTimers()
+        vi.setSystemTime(end + 1)
+        expect(checkScope(acme, 'app.acme-test.com').inWindow).toBe(false)
+        vi.setSystemTime(start)
+        expect(checkScope(acme, 'app.acme-test.com').inWindow).toBe(true)
     })
 })

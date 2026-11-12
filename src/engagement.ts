@@ -110,6 +110,8 @@ function parseIsoInstant(v: unknown): number {
     if (h > 23 || mi > 59 || sec > 59 || oh > 23 || om > 59) return NaN
     return Date.parse(v as string)
 }
+// IDNA deviation characters resolve differently across clients (ß, ς, ZWNJ, ZWJ), so they are refused
+const DEVIATION_RE = /[ßς‌‍]/
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
 const MODES: readonly string[] = ['redteam', 'purple', 'off']
@@ -126,7 +128,7 @@ function isObj(v: unknown): v is Obj {
 
 /** Lowercase, drop a trailing dot, punycode via the URL parser. Null when not a plain hostname. */
 function normalizeHostname(h: string): string | null {
-    if (!/^[A-Za-z0-9.\u0080-￿-]+$/.test(h) || /\s/.test(h)) return null
+    if (!/^[A-Za-z0-9.\u0080-￿-]+$/.test(h) || /\s/.test(h) || DEVIATION_RE.test(h)) return null
     let host: string
     try {
         host = new URL(`http://${h}`).hostname
@@ -265,15 +267,20 @@ function dottedV4(v: bigint): string {
     return [24n, 16n, 8n, 0n].map((s) => String((v >> s) & 0xffn)).join('.')
 }
 
-/** Parse a host, IP or http(s)/ws(s) URL into the URL object the parser canonicalizes. Null when unusable. */
+/**
+ * Parse a host, IP or scheme://URL into a URL whose host is canonicalized. Any scheme is accepted: its host is
+ * read by swapping the scheme to http://. Null when unusable. A backslash is refused, since the URL parser reads
+ * it as "/" while curl and urlsplit treat "a\@b" as userinfo.
+ */
 function parseTargetUrl(input: string): URL | null {
-    if (input === '' || /\s/.test(input)) return null
+    if (input === '' || /[\s\\]/.test(input)) return null
     const scheme = SCHEME_RE.exec(input)
-    if (scheme !== null && !['http', 'https', 'ws', 'wss'].includes(scheme[1].toLowerCase())) return null
+    const rest = scheme === null ? input : input.slice(scheme[0].length)
+    if (DEVIATION_RE.test(rest.split(/[/?#]/)[0])) return null
     // a bare IPv6 address has no brackets, and http://2001:db8::1 does not parse
     const bareV6 = scheme === null && input.split(':').length > 2 && BARE_V6_RE.test(input)
     try {
-        return new URL(scheme !== null ? input : `http://${bareV6 ? `[${input}]` : input}`)
+        return new URL(`http://${bareV6 ? `[${input}]` : rest}`)
     } catch {
         return null
     }
@@ -284,7 +291,7 @@ function hostOf(url: URL): string | null {
     const v6 = host.startsWith('[') && host.endsWith(']')
     if (v6) host = host.slice(1, -1)
     else host = host.replace(/\.$/, '')
-    if (host === '' || host.startsWith('.') || host.includes('..')) return null
+    if (host === '' || host.startsWith('.') || host.endsWith('.') || host.includes('..')) return null
     if (v6) {
         const ip = parseIp(host)
         if (ip === null) return null
@@ -310,10 +317,20 @@ interface ParsedLists {
 }
 const cidrCache = new WeakMap<Engagement, ParsedLists>()
 
+/** A ::ffff:a.b.c.d/n CIDR (n >= 96) is the IPv4 CIDR /(n-96), matching how mapped inputs are collapsed. */
+function mappedToV4(c: ParsedCidr): ParsedCidr {
+    if (c.family !== 6 || c.bits < 96 || c.base >> 32n !== 0xffffn) return c
+    return { family: 4, base: c.base & 0xffffffffn, bits: c.bits - 96 }
+}
+
 function cidrsOf(e: Engagement): ParsedLists {
     let c = cidrCache.get(e)
     if (c === undefined) {
-        const parse = (l: string[]) => l.map(parseCidr).filter((x): x is ParsedCidr => x !== null)
+        const parse = (l: string[]) =>
+            l
+                .map(parseCidr)
+                .filter((x): x is ParsedCidr => x !== null)
+                .map(mappedToV4)
         c = { scope: parse(e.scope.cidrs), exclude: parse(e.exclude.cidrs) }
         cidrCache.set(e, c)
     }
@@ -333,12 +350,37 @@ function cidrMatches(ip: ParsedIp | null, list: ParsedCidr[]): boolean {
     })
 }
 
+function effectivePort(u: URL): string {
+    return u.port || (u.protocol === 'https:' ? '443' : '80')
+}
+
+/** Compare protocol, normalized host and effective port (not url.origin), then the path boundary. */
 function llmTargetMatches(url: URL, targets: string[]): boolean {
+    const host = hostOf(url)
     return targets.some((t) => {
         const u = new URL(t)
         const path = u.pathname.replace(/\/$/, '')
-        return u.origin === url.origin && (url.pathname === path || url.pathname.startsWith(`${path}/`))
+        return (
+            u.protocol === url.protocol &&
+            hostOf(u) === host &&
+            effectivePort(u) === effectivePort(url) &&
+            (url.pathname === path || url.pathname.startsWith(`${path}/`))
+        )
     })
+}
+
+function realHttpUrl(input: string): URL | null {
+    if (!/^https?:\/\//i.test(input)) return null
+    try {
+        return new URL(input)
+    } catch {
+        return null
+    }
+}
+
+function llmMatches(input: string, e: Engagement): boolean {
+    const real = realHttpUrl(input)
+    return real !== null && llmTargetMatches(real, e.scope.llmTargets)
 }
 
 export function checkScope(e: Engagement, input: string, now: number = Date.now()): ScopeResult {
@@ -349,11 +391,7 @@ export function checkScope(e: Engagement, input: string, now: number = Date.now(
     const c = cidrsOf(e)
     let verdict: ScopeVerdict = 'out_of_scope'
     if (domainMatches(target, e.exclude.domains) || cidrMatches(ip, c.exclude)) verdict = 'excluded'
-    else if (
-        domainMatches(target, e.scope.domains) ||
-        cidrMatches(ip, c.scope) ||
-        (SCHEME_RE.test(input) && llmTargetMatches(url, e.scope.llmTargets))
-    ) {
+    else if (domainMatches(target, e.scope.domains) || cidrMatches(ip, c.scope) || llmMatches(input, e)) {
         verdict = 'in_scope'
     }
     return { verdict, target, inWindow: inWindow(e, now) }
