@@ -2,7 +2,7 @@
  * Secret patterns and redaction (Global Constraints: a secret never reaches a log line unredacted).
  * Every regex is bounded (no unbounded runs, no nested quantifiers) so it stays linear on adversarial input.
  */
-/** `anchors`: literals every match contains; a pattern whose anchors are all absent is skipped (an indexOf pass). */
+/** `anchors`: literals every match contains; a pattern whose anchors are all absent is skipped (an indexOf pass). Checked case-sensitively on the raw text, so use them only for case-sensitive regexes. */
 export const SECRET_PATTERNS: readonly { name: string; re: RegExp; anchors?: readonly string[] }[] = [
     { name: 'aws', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, anchors: ['AKIA', 'ASIA'] },
     { name: 'github', re: /\bgh[pousr]_[A-Za-z0-9]{36}\b/g, anchors: ['gh'] },

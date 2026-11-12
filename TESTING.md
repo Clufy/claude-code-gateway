@@ -274,4 +274,15 @@ curl -sS -D - -o /dev/null -H "x-api-key: $PROXY_KEY" -X POST "$BASE/v1/messages
 
 Run it on a quiet machine, plugged in, with nothing else running. A failure under load is not a regression unless it reproduces on a quiet machine. (The same inputs run in `npm test` as termination-only tests.)
 
-Last measured (2026-11-13, a loaded dev laptop, one run): request iteration p95 4.92 ms (median 3.81 ms); `scanRequest` alone p95 4.08 ms; `onToolUse` on a 4 KB command p95 0.37 ms; custom rule 0.21 ms per rule per MB (best-of-15); `decideToolCall` on 64 KB averages 14.6 ms; 1 MB `Write` input with 16 response custom rules 5.7 ms (best-of-15). Another run on the same machine measured the request iteration p95 at 6.2 ms, so expect this budget to be borderline on slow hardware.
+Last measured (2026-11-13, a loaded dev laptop, two runs; p95 is pooled over 200 measured iterations):
+
+| Budget                                                 | Run 1                    | Run 2                    |
+| ------------------------------------------------------ | ------------------------ | ------------------------ |
+| Request iteration (default config), p95 <= 5 ms        | p95 8.12 ms, median 5.03 | p95 8.65 ms, median 4.48 |
+| `scanRequest` alone, p95 <= 5 ms                       | p95 8.07 ms              | p95 7.33 ms              |
+| `onToolUse` 4 KB command, p95 <= 5 ms                  | p95 1.04 ms              | p95 1.34 ms              |
+| Custom rule, <= 0.4 ms per rule per MB (best-of-15)    | 0.241 ms                 | 0.237 ms                 |
+| `decideToolCall` 64 KB, average <= 50 ms               | 16.3 ms                  | 11.3 ms                  |
+| 1 MB `Write` with 16 response rules (best-of-15) <= 50 | 6.9 ms                   | 6.1 ms                   |
+
+Both runs missed the 5 ms p95 on the request iteration and on `scanRequest` alone on this machine; the medians (4.5-5.0 ms) are near the budget. Re-measure on a quiet machine before treating this as a regression or relaxing the budget.

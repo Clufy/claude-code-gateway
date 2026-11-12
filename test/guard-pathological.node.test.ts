@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadConfig } from '../src/config'
 import { decideToolCall } from '../src/guard/decide'
 import { hostsInToolInput } from '../src/guard/hosts'
@@ -22,7 +22,7 @@ const env = {
     GUARD_RULES: JSON.stringify({
         custom: [
             { id: 'custom.req', side: 'request', pattern: 'mimikatz', flags: 'i' },
-            { id: 'custom.res', side: 'response', pattern: 'vssadmin\s{1,5}delete', flags: 'i' }
+            { id: 'custom.res', side: 'response', pattern: 'vssadmin\\s{1,5}delete', flags: 'i' }
         ]
     })
 }
@@ -30,7 +30,10 @@ const env = {
 describe('guard pathological inputs terminate', () => {
     const cfg = loadConfig(env)
     const e = cfg.engagements.get('alpha')!
-    const quiet = () => vi.spyOn(console, 'log').mockImplementation(() => {})
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => {})
+    })
+    afterEach(() => vi.restoreAllMocks())
     const units: Record<string, (n: number) => string> = {
         a: (n) => 'a'.repeat(n),
         spaces: (n) => ' '.repeat(n),
@@ -43,7 +46,6 @@ describe('guard pathological inputs terminate', () => {
     }
     for (const [name, make] of Object.entries(units)) {
         it(`1 MB tool_result of ${name}`, () => {
-            const spy = quiet()
             const b = {
                 messages: [
                     { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'Read', input: {} }] },
@@ -51,13 +53,10 @@ describe('guard pathological inputs terminate', () => {
                 ]
             }
             expect(() => createGuard(cfg, 'r', e, NOW).scanRequest(b)).not.toThrow()
-            spy.mockRestore()
         })
         it(`100 KB Bash command of ${name}`, () => {
-            const spy = quiet()
             const command = make(100 * KB)
             expect(() => createGuard(cfg, 'r', e, NOW).onToolUse('Bash', { command })).not.toThrow()
-            spy.mockRestore()
         })
     }
 
@@ -71,11 +70,9 @@ describe('guard pathological inputs terminate', () => {
     })
 
     it('100 KB of "iwr " through onToolUse(PowerShell) and a 1 MB Write input', () => {
-        const spy = quiet()
         const command = rep('iwr ', 100 * KB)
         expect(() => createGuard(cfg, 'r', e, NOW).onToolUse('PowerShell', { command })).not.toThrow()
         const content = rep('export const add = (a: number, b: number) => a + b\n', MB)
         expect(() => createGuard(cfg, 'r', e, NOW).onToolUse('Write', { file_path: 'x', content })).not.toThrow()
-        spy.mockRestore()
     })
 })

@@ -114,6 +114,7 @@ function percentile(xs: number[], p: number): number {
     const s = [...xs].sort((a, b) => a - b)
     return s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)]!
 }
+/** Best of 15: the 50 ms units are worst-case termination checks, so the fastest run is what they assert on. */
 function best(fn: () => unknown, n = 15): number {
     let min = Infinity
     for (let i = 0; i < n; i++) {
@@ -123,21 +124,16 @@ function best(fn: () => unknown, n = 15): number {
     }
     return min
 }
-/** p95 of 40 iterations after 5 warm-ups; the best of 10 such batches, so one noisy batch cannot fail the run. */
+/** Honest p95: 5 warm-ups, then 200 measured iterations pooled together; no best-of-batches. */
 function p95Of(iter: () => void): { p95: number; median: number } {
     for (let i = 0; i < 5; i++) iter()
-    let out = { p95: Infinity, median: Infinity }
-    for (let batch = 0; batch < 10; batch++) {
-        const times: number[] = []
-        for (let i = 0; i < 40; i++) {
-            const t0 = performance.now()
-            iter()
-            times.push(performance.now() - t0)
-        }
-        const p95 = percentile(times, 0.95)
-        if (p95 < out.p95) out = { p95, median: percentile(times, 0.5) }
+    const times: number[] = []
+    for (let i = 0; i < 200; i++) {
+        const t0 = performance.now()
+        iter()
+        times.push(performance.now() - t0)
     }
-    return out
+    return { p95: percentile(times, 0.95), median: percentile(times, 0.5) }
 }
 
 beforeAll(() => {
@@ -286,11 +282,7 @@ describe('units deferred from earlier reviews', () => {
 
 // Per-rule timing units (moved from guard-request-rules.node.test.ts)
 
-// Runs in the bench project (npm run bench): the workers runtime freezes its clock, so timing is meaningless there.
-const RMB = 1024 * 1024
-const RMAX_MS = 50
-
-const units: Record<string, string> = {
+const ruleUnits: Record<string, string> = {
     pem: '-----BEGIN ',
     password: 'password=',
     'password space': 'password= ',
@@ -317,65 +309,55 @@ const passes: Record<string, (text: string) => unknown> = {
     excerpt: (t) => excerptAt(t, t.length >> 1, (t.length >> 1) + 50)
 }
 
-function rbest(fn: () => unknown): number {
-    let min = Infinity
-    for (let i = 0; i < 7; i++) {
-        const t0 = performance.now()
-        fn()
-        min = Math.min(min, performance.now() - t0)
-    }
-    return min
-}
-
-describe('adversarial 1 RMB input stays fast', () => {
-    for (const [uname, unit] of Object.entries(units)) {
-        const text = unit.repeat(Math.ceil(RMB / unit.length))
+describe('adversarial 1 MB input stays fast', () => {
+    for (const [uname, unit] of Object.entries(ruleUnits)) {
+        const text = rep(unit, MB)
         for (const [pname, pass] of Object.entries(passes)) {
             it(`${pname} on ${uname}`, () => {
                 pass(text) // warm-up
-                expect(rbest(() => pass(text))).toBeLessThanOrEqual(RMAX_MS)
+                expect(best(() => pass(text))).toBeLessThanOrEqual(MAX_MS)
             })
         }
     }
 })
 
 describe('fix round 2 units stay fast', () => {
-    const rep = (unit: string) => unit.repeat(Math.ceil(RMB / unit.length))
+    const repMB = (unit: string) => rep(unit, MB)
     let x = 1
-    const body = Array.from({ length: RMB }, () => {
+    const body = Array.from({ length: MB }, () => {
         x = (x * 1103515245 + 12345) & 0x7fffffff
         return 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'[(x >> 8) % 64]
     }).join('')
     const cases: [string, string, (t: string) => unknown][] = [
         [
             'exfilMarkup on long-valued links',
-            rep('[](http://a?x=aaaaaaaaaaaaaaaaaaaaaaaaa&y=bbbbbbbbbbbbbbbbbbbbbbbbb)'),
+            repMB('[](http://a?x=aaaaaaaaaaaaaaaaaaaaaaaaa&y=bbbbbbbbbbbbbbbbbbbbbbbbb)'),
             (t) => exfilMarkup({ kind: 'tool_result', text: t })
         ],
         [
-            'secretEgress on a PEM header plus 1 RMB base64',
+            'secretEgress on a PEM header plus 1 MB base64',
             '-----BEGIN PRIVATE KEY-----\n' + body,
             (t) => secretEgress({ kind: 'tool_result', text: t })
         ],
         [
             'secretEgress on repeated PEM headers',
-            rep('-----BEGIN PRIVATE KEY-----'),
+            repMB('-----BEGIN PRIVATE KEY-----'),
             (t) => secretEgress({ kind: 'tool_result', text: t })
         ],
-        ['redact on a PEM header plus 1 RMB base64', '-----BEGIN PRIVATE KEY-----\n' + body, (t) => redact(t)]
+        ['redact on a PEM header plus 1 MB base64', '-----BEGIN PRIVATE KEY-----\n' + body, (t) => redact(t)]
     ]
     it.each(cases)('%s', (_name, text, pass) => {
         pass(text)
-        expect(rbest(() => pass(text))).toBeLessThanOrEqual(RMAX_MS)
+        expect(best(() => pass(text))).toBeLessThanOrEqual(MAX_MS)
     })
 })
 
 describe('fix round 3 quoted-value units stay fast', () => {
-    const rep = (unit: string) => unit.repeat(Math.ceil(RMB / unit.length))
+    const repMB = (unit: string) => rep(unit, MB)
     it.each([
-        ['runner word', rep('pwd="hunter Xk9#qLz2" ')],
-        ['url value', rep('pwd="https://ab.cd/Xk9#qLz2" ')],
-        ['prose value', rep('password="the quick brown fox jumps over" ')]
+        ['runner word', repMB('pwd="hunter Xk9#qLz2" ')],
+        ['url value', repMB('pwd="https://ab.cd/Xk9#qLz2" ')],
+        ['prose value', repMB('password="the quick brown fox jumps over" ')]
     ])('secretEgress, redact and excerpt on %s', (_name, text) => {
         for (const pass of [
             (t: string) => secretEgress({ kind: 'tool_result', text: t }),
@@ -383,18 +365,17 @@ describe('fix round 3 quoted-value units stay fast', () => {
             (t: string) => excerptAt(t, t.length >> 1, (t.length >> 1) + 50)
         ]) {
             pass(text)
-            expect(rbest(() => pass(text))).toBeLessThanOrEqual(RMAX_MS)
+            expect(best(() => pass(text))).toBeLessThanOrEqual(MAX_MS)
         }
     })
 })
 
 describe('cmdRisky stays fast on 100 KB commands', () => {
-    const RKB100 = 100 * 1024
     for (const unit of ['curl ', 'rm -rf ', 'iex ', 'procdump ', 'Set-MpPreference -Disable', 'a.']) {
         it(`unit ${JSON.stringify(unit)}`, () => {
-            const command = unit.repeat(Math.ceil(RKB100 / unit.length))
+            const command = rep(unit, 100 * KB)
             cmdRisky('Bash', { command }) // warm-up
-            expect(rbest(() => cmdRisky('Bash', { command }))).toBeLessThanOrEqual(RMAX_MS)
+            expect(best(() => cmdRisky('Bash', { command }))).toBeLessThanOrEqual(MAX_MS)
         })
     }
 })
@@ -413,7 +394,7 @@ describe('scopeOutOfScope stays fast on 100 KB commands', () => {
             const command = unit.repeat(Math.ceil((100 * 1024) / unit.length))
             const run = () => scopeOutOfScope('Bash', { command }, eng, 1)
             run()
-            expect(rbest(run)).toBeLessThanOrEqual(RMAX_MS)
+            expect(best(run)).toBeLessThanOrEqual(MAX_MS)
         })
     }
 })
