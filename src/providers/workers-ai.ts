@@ -168,16 +168,18 @@ function extractReasoning(payload: any): string {
         if (typeof v === 'string' && v.length > 0) parts.push(v)
     }
 
-    push(payload.reasoning_content)
-    push(payload.reasoning)
+    // `reasoning_content` and `reasoning` are aliases; some models (glm-5.3) send both with the same text.
+    const one = (o: any) => {
+        if (typeof o?.reasoning_content === 'string' && o.reasoning_content.length > 0) push(o.reasoning_content)
+        else push(o?.reasoning)
+    }
+    one(payload)
 
     const choices = payload.choices
     if (Array.isArray(choices)) {
         for (const choice of choices) {
-            push(choice?.delta?.reasoning_content)
-            push(choice?.delta?.reasoning)
-            push(choice?.message?.reasoning_content)
-            push(choice?.message?.reasoning)
+            one(choice?.delta)
+            one(choice?.message)
         }
     }
 
