@@ -8,6 +8,7 @@
         "check": "wrangler types && tsc --noEmit && tsc -p test/tsconfig.json --noEmit && tsc -p scripts/tsconfig.json --noEmit && prettier --check .",
         "test": "vitest run",
         "smoke": "bash scripts/self-test.sh",
+        "update-psl": "node scripts/update-psl.ts",
         "qualify": "node scripts/qualify/index.ts",
         "qualify:capture": "node scripts/qualify/capture.ts"
     },

@@ -223,3 +223,18 @@ describe('IP and CIDR helpers', () => {
         expect(parseCidr(s)).toBeNull()
     })
 })
+
+describe('wildcard over a public suffix', () => {
+    it.each(['*.co.uk', '*.com.au', '*.uk'])('rejects %s', (d) => {
+        const run = () => eng({ x: { ...MIN, scope: { domains: [d] } } })
+        expect(run).toThrow(ConfigError)
+        try {
+            run()
+        } catch (e) {
+            expect((e as ConfigError).variable).toBe('ENGAGEMENTS')
+        }
+    })
+    it.each(['*.acme.co.uk', '*.acme-test.com'])('accepts %s', (d) => {
+        expect(() => eng({ x: { ...MIN, scope: { domains: [d] } } })).not.toThrow()
+    })
+})

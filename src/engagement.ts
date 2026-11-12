@@ -1,4 +1,5 @@
 import { ConfigError } from './config'
+import { publicSuffixOf } from './guard/psl'
 
 export type ProxyMode = 'redteam' | 'purple' | 'off'
 export interface Engagement {
@@ -186,7 +187,8 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
             const wild = d.startsWith('*.')
             const host = normalizeHostname(wild ? d.slice(2) : d)
             if (host === null) return bad(`${where}[${i}]: invalid domain`)
-            if (wild && !host.includes('.')) return bad(`${where}[${i}]: too broad (a wildcard needs a domain)`)
+            if (wild && (!host.includes('.') || publicSuffixOf(host) === host))
+                return bad(`${where}[${i}]: too broad (a wildcard needs a domain below a public suffix)`)
             return wild ? `*.${host}` : host
         })
     const cidrs = (v: unknown, where: string, inScope: boolean): string[] =>
