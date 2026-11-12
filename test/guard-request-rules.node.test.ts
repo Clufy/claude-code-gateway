@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { excerptAt, redact, SECRET_PATTERNS } from '../src/guard/redact'
+import { cmdRisky } from '../src/guard/response-rules'
 import { exfilMarkup, injectInstruction, secretEgress } from '../src/guard/request-rules'
 
 // Runs in the node project: the workers runtime freezes its clock, so timing is meaningless there.
@@ -102,4 +103,15 @@ describe('fix round 3 quoted-value units stay fast', () => {
             expect(best(() => pass(text))).toBeLessThanOrEqual(MAX_MS)
         }
     })
+})
+
+describe('cmdRisky stays fast on 100 KB commands', () => {
+    const KB100 = 100 * 1024
+    for (const unit of ['curl ', 'rm -rf ', 'iex ', 'procdump ', 'Set-MpPreference -Disable', 'a.']) {
+        it(`unit ${JSON.stringify(unit)}`, () => {
+            const command = unit.repeat(Math.ceil(KB100 / unit.length))
+            cmdRisky('Bash', { command }) // warm-up
+            expect(best(() => cmdRisky('Bash', { command }))).toBeLessThanOrEqual(MAX_MS)
+        })
+    }
 })
