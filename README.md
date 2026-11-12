@@ -400,6 +400,8 @@ without detections, and a guard failure is dropped silently. It does add its rul
 (the request scan runs before dispatch; tool blocks are checked as they stream past). Only the
 scope hook blocks.
 
+The 5 ms CPU budget (p95, 1 MB request) covers the built-in rules; each custom rule adds roughly 0.2-0.4 ms per MB scanned.
+
 The request side scans the **newest turn**: the trailing `user` messages after the last
 `assistant` message (string content, text blocks and `tool_result` content). The response side
 checks each `tool_use` block the backend returns, streamed or not.

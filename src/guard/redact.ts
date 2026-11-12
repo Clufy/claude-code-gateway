@@ -2,14 +2,15 @@
  * Secret patterns and redaction (Global Constraints: a secret never reaches a log line unredacted).
  * Every regex is bounded (no unbounded runs, no nested quantifiers) so it stays linear on adversarial input.
  */
-export const SECRET_PATTERNS: readonly { name: string; re: RegExp }[] = [
-    { name: 'aws', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
-    { name: 'github', re: /\bgh[pousr]_[A-Za-z0-9]{36}\b/g },
-    { name: 'github_pat', re: /\bgithub_pat_[A-Za-z0-9_]{82}\b/g },
-    { name: 'slack', re: /\bxox[baprs]-[A-Za-z0-9-]{10,200}/g },
-    { name: 'stripe', re: /\b[sr]k_live_[A-Za-z0-9]{24,200}/g },
-    { name: 'pem', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/g },
-    { name: 'jwt', re: /(?<![\w-])eyJ[\w-]{10,300}\.eyJ[\w-]{10,40}/g },
+/** `anchors`: literals every match contains; a pattern whose anchors are all absent is skipped (an indexOf pass). */
+export const SECRET_PATTERNS: readonly { name: string; re: RegExp; anchors?: readonly string[] }[] = [
+    { name: 'aws', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, anchors: ['AKIA', 'ASIA'] },
+    { name: 'github', re: /\bgh[pousr]_[A-Za-z0-9]{36}\b/g, anchors: ['gh'] },
+    { name: 'github_pat', re: /\bgithub_pat_[A-Za-z0-9_]{82}\b/g, anchors: ['_pat_'] },
+    { name: 'slack', re: /\bxox[baprs]-[A-Za-z0-9-]{10,200}/g, anchors: ['xox'] },
+    { name: 'stripe', re: /\b[sr]k_live_[A-Za-z0-9]{24,200}/g, anchors: ['_live_'] },
+    { name: 'pem', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/g, anchors: ['-----BEGIN '] },
+    { name: 'jwt', re: /(?<![\w-])eyJ[\w-]{10,300}\.eyJ[\w-]{10,40}/g, anchors: ['yJ'] },
     {
         name: 'generic',
         // Quoted values run to the closing quote; unquoted ones stop at whitespace, a quote, ) ] } , or ; (P4-R23).
@@ -125,6 +126,7 @@ function matchSpans(text: string, firstOnly: boolean, permissive: boolean): Secr
     const out: SecretSpan[] = []
     for (const pattern of SECRET_PATTERNS) {
         const name = pattern.name
+        if (pattern.anchors && !pattern.anchors.some((a) => text.includes(a))) continue
         const re = name === 'generic' && permissive ? REDACT_KEYWORD : pattern.re
         let covered = 0 // a PEM scan never restarts inside text it already covered (keeps repeated headers linear)
         for (const m of text.matchAll(re)) {

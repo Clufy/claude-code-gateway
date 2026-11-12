@@ -45,20 +45,36 @@ export function newestTurn(messages: unknown): Segment[] {
 }
 
 // P4-R23: fake tags keep system/tool_result/function_*; user/assistant/human and "admin"/"in" are too common.
-const INJECT_PATTERNS: readonly RegExp[] = [
-    /ignore (?:all |any )?(?:the )?(?:previous|prior|above|earlier) (?:instructions|prompts|messages|rules)/i,
-    /disregard (?:all |the )?(?:previous|prior|above) /i,
-    /<\/?(?:system|tool_result|function_results|function_calls)>/i,
-    /<\|im_(?:start|end)\|>/i,
-    /\byou are now (?:an?|the) (?:[\w-]+ ){0,3}(?:assistant|ai|model|agent|developer mode|dan|jailbroken)\b/i,
-    /[\u{E0000}-\u{E007F}]/u,
-    /[\u200B-\u200D\u2060\uFEFF]{3}/
+// `anchors` are lowercase literals every match of the pattern contains. A pattern runs only if the lowercased text
+// holds one (an indexOf pass, far cheaper than the case-insensitive regex), which keeps clean 1 MB results fast.
+const INJECT_PATTERNS: readonly { re: RegExp; anchors?: readonly string[] }[] = [
+    {
+        re: /ignore (?:all |any )?(?:the )?(?:previous|prior|above|earlier) (?:instructions|prompts|messages|rules)/i,
+        anchors: ['gnore']
+    },
+    { re: /disregard (?:all |the )?(?:previous|prior|above) /i },
+    {
+        re: /<\/?(?:system|tool_result|function_results|function_calls)>/i,
+        anchors: ['<']
+    },
+    { re: /<\|im_(?:start|end)\|>/i, anchors: ['<|'] },
+    {
+        re: /\byou are now (?:an?|the) (?:[\w-]+ ){0,3}(?:assistant|ai|model|agent|developer mode|dan|jailbroken)\b/i,
+        anchors: ['you a']
+    },
+    { re: /[\u{E0000}-\u{E007F}]/u },
+    { re: /[\u200B-\u200D\u2060\uFEFF]{3}/ }
 ]
 
 /** Prompt-injection triggers inside a tool result. */
 export function injectInstruction(seg: Segment): string | null {
     if (seg.kind !== 'tool_result') return null
-    for (const re of INJECT_PATTERNS) {
+    let lower: string | undefined
+    for (const { re, anchors } of INJECT_PATTERNS) {
+        if (anchors) {
+            lower ??= seg.text.toLowerCase()
+            if (!anchors.some((a) => lower!.includes(a))) continue
+        }
         const m = re.exec(seg.text)
         if (m) return excerptAt(seg.text, m.index, m.index + m[0].length)
     }
