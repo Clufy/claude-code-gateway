@@ -25,7 +25,7 @@ type Message = { role: 'user' | 'assistant'; content: unknown }
 const body = (fx: Fixture, messages: Message[], stream = true): Record<string, unknown> => ({
     system: fx.system,
     tools: fx.tools,
-    max_tokens: 1024,
+    max_tokens: 4096,
     stream,
     messages
 })
@@ -224,3 +224,17 @@ export const SCENARIOS: Scenario[] = [
         }
     }
 ]
+
+/** Runs a scenario's check without throwing; a failure from a max_tokens stop says so. */
+export function judge(scenario: Scenario, results: Collected[], fx: Fixture): ScenarioCheck {
+    let check: ScenarioCheck
+    try {
+        check = scenario.check(results, fx)
+    } catch (e) {
+        return fail(`check threw: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    if (!check.pass && results.some((c) => c.stopReason === 'max_tokens')) {
+        return fail(`${check.detail} (stop_reason max_tokens)`)
+    }
+    return check
+}

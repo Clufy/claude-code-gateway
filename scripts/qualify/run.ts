@@ -1,7 +1,7 @@
 import { collectResponse, type Collected } from './collect.ts'
 import { loadFixture } from './fixture.ts'
 import { buildModelReport, type ModelReport, type ScenarioRun } from './report.ts'
-import { SCENARIOS } from './scenarios.ts'
+import { judge, SCENARIOS } from './scenarios.ts'
 
 export interface QualifyOptions {
     base: string
@@ -70,12 +70,7 @@ export async function runQualification(opts: QualifyOptions, fetchImpl: typeof f
                             collected.push(failed(`request failed: ${e instanceof Error ? e.message : String(e)}`))
                         }
                     }
-                    let check: { pass: boolean; detail: string }
-                    try {
-                        check = scenario.check(collected, fx)
-                    } catch (e) {
-                        check = { pass: false, detail: `check threw: ${e instanceof Error ? e.message : String(e)}` }
-                    }
+                    const check = judge(scenario, collected, fx)
                     result = {
                         scenarioId: scenario.id,
                         run: n,

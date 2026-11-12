@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Collected, CollectedBlock } from './collect.ts'
 import { loadFixture } from './fixture.ts'
-import { CANARY, SCENARIOS } from './scenarios.ts'
+import { CANARY, judge, SCENARIOS } from './scenarios.ts'
 
 const fx = loadFixture('test/fixtures/claude-code-request.synthetic.json')
 
@@ -47,7 +47,7 @@ describe('SCENARIOS', () => {
         for (const s of SCENARIOS.filter((x) => !x.requires && x.id !== 'stream.parity')) {
             const reqs = s.requests(fx)
             expect(reqs).toHaveLength(1)
-            expect(reqs[0]).toMatchObject({ system: fx.system, tools: fx.tools, max_tokens: 1024, stream: true })
+            expect(reqs[0]).toMatchObject({ system: fx.system, tools: fx.tools, max_tokens: 4096, stream: true })
         }
         const parity = scenario('stream.parity').requests(fx)
         expect(parity.map((r) => r.stream)).toEqual([false, true])
@@ -130,6 +130,31 @@ describe('SCENARIOS', () => {
         expect(check('stream.parity', ok, ok).pass).toBe(true)
         expect(check('stream.parity', ok, bad).pass).toBe(false)
         expect(check('stream.parity', bad, ok).pass).toBe(false)
+    })
+
+    it('judge marks a failure caused by a max_tokens stop', () => {
+        const cut = collected({ blocks: [text('Let me read')], stopReason: 'max_tokens' })
+        expect(judge(scenario('tool.single'), [cut], fx)).toEqual({
+            pass: false,
+            detail: 'expected exactly one tool_use, got 0 (stop_reason max_tokens)'
+        })
+        const plain = collected({ blocks: [text('no')], stopReason: 'end_turn' })
+        expect(judge(scenario('tool.single'), [plain], fx).detail).toBe('expected exactly one tool_use, got 0')
+        const ok = collected({
+            blocks: [use('Read', { file_path: '/work/app/config.json' })],
+            stopReason: 'max_tokens'
+        })
+        expect(judge(scenario('tool.single'), [ok], fx)).toEqual({ pass: true, detail: 'ok' })
+    })
+
+    it('judge turns a throwing check into a failure', () => {
+        const throwing = {
+            ...scenario('tool.single'),
+            check: () => {
+                throw new Error('bad')
+            }
+        }
+        expect(judge(throwing, [], fx)).toEqual({ pass: false, detail: 'check threw: bad' })
     })
 
     it('inject.tool_result', () => {
