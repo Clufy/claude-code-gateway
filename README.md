@@ -392,6 +392,77 @@ Response `200`:
     - `engagement <name> window is closed`
 - Each call logs one `hook.decision` line (engagement, tool, decision, up to 20 hosts, reason count).
 
+### Scope hook
+
+`claude-code/hooks/scope-guard.mjs` is a dependency-free Node script that registers as a Claude
+Code `PreToolUse` hook. During an engagement it sends each Bash, PowerShell or WebFetch call to
+`POST /v1/guard/check` and denies the call when the Worker says deny or cannot be reached. It
+never auto-approves: an allow is a silent exit, so Claude Code's normal permission prompt still
+applies.
+
+Add this to `settings.json` (use the absolute path to your checkout; the same line works when
+hooks run in Git Bash or in PowerShell on Windows):
+
+```json
+{
+    "hooks": {
+        "PreToolUse": [
+            {
+                "matcher": "Bash|PowerShell|WebFetch",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node \"<absolute path>/claude-code/hooks/scope-guard.mjs\"",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ]
+    }
+}
+```
+
+`timeout` is in seconds. The hook itself gives up after 3 s.
+
+**When it acts.** Only when `ANTHROPIC_CUSTOM_HEADERS` (newline-separated `Name: Value` lines)
+has a non-empty `x-engagement` and `PROXY_SCOPE_HOOK` is not `off`. Otherwise it exits silently
+without a network call. The endpoint is `/v1/guard/check` on `ANTHROPIC_BASE_URL` (any path in
+the base URL is ignored). The key sent as `x-api-key` is the first of: custom header
+`x-proxy-key`, custom header `x-api-key`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`.
+
+**Verify that `env` reaches hooks.** Whether the `env` block of `settings.json` is passed to hook
+processes is not documented. Set the variables there, trigger a Bash call and confirm the Worker
+logs a `hook.decision` line. If it does not, export the variables in the shell that starts Claude
+Code.
+
+**Decisions** (made by the Worker, see Scope check endpoint):
+
+| Situation                                                      | Result |
+| -------------------------------------------------------------- | ------ |
+| No hosts found in the call                                     | allow  |
+| Any host out of scope, excluded or not a checkable target      | deny   |
+| Window closed and a non-loopback host is present               | deny   |
+| Loopback (`127.0.0.0/8`, `::1`, `localhost`, `*.localhost`)    | allow  |
+| Private ranges (`10/8`, `192.168/16`, ...) not in scope        | deny   |
+| More than 64 targets, or tool input over 1 MB                  | deny   |
+| Worker unreachable, timeout, non-200, bad JSON, bad hook input | deny   |
+
+A deny reads `scope-guard (<engagement>): <reasons>`. When the check cannot be completed the
+reason is exactly `scope check unavailable; set PROXY_SCOPE_HOOK=off to bypass`. Setting
+`PROXY_SCOPE_HOOK=off` (case-insensitive) disables the hook.
+
+**Known limits.** The check is lexical and flag-based, not a sandbox. It does not catch:
+
+- shell indirection: variables, `$(...)`, base64;
+- scripts written to a file and then run;
+- targets read from files (`nmap -iL`, `wget -i`, `nuclei -l`);
+- obfuscated names: a backtick or caret inside a name, short or decimal IPv4 forms;
+- names resolved inside tools;
+- single-label hosts outside the engagement domains.
+
+**Cost.** One round trip to the Worker per Bash, PowerShell or WebFetch call while an engagement
+is active, up to 3 s when the Worker is slow.
+
 ## Session guard
 
 Every `/v1/messages` request (both routes, not `count_tokens`) passes a flag-only guard. It

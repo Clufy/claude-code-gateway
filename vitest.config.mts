@@ -23,7 +23,7 @@ export default defineConfig({
                 test: {
                     name: 'node',
                     environment: 'node',
-                    include: ['scripts/**/*.test.ts', 'test/**/*.node.test.ts']
+                    include: ['scripts/**/*.test.ts', 'test/**/*.node.test.ts', 'claude-code/**/*.test.ts']
                 }
             },
             {

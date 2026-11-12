@@ -264,6 +264,20 @@ curl -sS -D - -o /dev/null -H "x-api-key: $PROXY_KEY" -X POST "$BASE/v1/messages
 - [ ] **`GUARD_RULES`.** Set `GUARD_RULES` to `{"disable":["inject.instruction"]}` and repeat the first step. **Expected:** no header, no line. Set `{"severity":{"engagement.out_of_window":"high"}}` and send a request with an engagement whose window has closed. **Expected:** the out-of-window line has `severity: "high"` and the response has `x-proxy-detections: engagement.out_of_window`. Set `{"custom":[{"id":"custom.bad","side":"request","pattern":"a+"}]}`. **Expected:** every request returns `500 invalid config: GUARD_RULES`. Remove the var afterwards.
 - [ ] **Never breaks a request.** Send `"messages":[{"role":"user","content":5}]`. **Expected:** the backend's normal answer and one `request` line.
 
+## 13. Scope hook
+
+Register the hook (README, Scope hook) and start Claude Code with `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` (with `x-engagement`) and a key set.
+
+- [ ] **Env reaches the hook.** Run a Bash call such as `echo hi`. **Expected:** one `hook.decision` line in `wrangler tail`. If none, the `settings.json` `env` block does not reach hooks; export the variables in the shell instead.
+- [ ] **In scope.** `nmap <in-scope host>`. **Expected:** the normal permission prompt (never auto-approved).
+- [ ] **Out of scope.** `nmap <host outside scope>`. **Expected:** denied with `scope-guard (<engagement>): ... is out of scope ...`.
+- [ ] **Loopback and no hosts.** `curl http://127.0.0.1:1` and `ls`. **Expected:** not denied by the hook.
+- [ ] **WebFetch and PowerShell.** WebFetch an out-of-scope URL, and (on Windows) run a PowerShell `Invoke-WebRequest` against one. **Expected:** both denied.
+- [ ] **Worker unreachable.** Point `ANTHROPIC_BASE_URL` at a closed loopback port. **Expected:** denied with `scope check unavailable; set PROXY_SCOPE_HOOK=off to bypass`.
+- [ ] **Bypass.** `PROXY_SCOPE_HOOK=off`. **Expected:** no hook line; calls reach the normal prompt.
+- [ ] **No engagement.** Remove `x-engagement`. **Expected:** no hook line, no delay.
+- [ ] **Windows.** Repeat the in-scope and out-of-scope checks under Git Bash and under PowerShell (if both are available).
+
 ## CPU budget benchmark (`npm run bench`)
 
 `npm test` asserts no wall-clock time. The spec's CPU budgets are checked by `npm run bench` (vitest project `bench`, `test/guard-bench.bench.test.ts`):
