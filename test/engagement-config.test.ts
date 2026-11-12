@@ -81,6 +81,36 @@ describe('ENGAGEMENTS parsing', () => {
             /"x" window\.start/
         ],
         ['a date-only value', { x: { ...MIN, window: { start: '2026-01-01', end: W.end } } }, /"x" window\.start/],
+        [
+            'an impossible date 2026-02-30T00:00:00Z',
+            { x: { ...MIN, window: { start: '2026-02-30T00:00:00Z', end: '2030-01-01T00:00:00Z' } } },
+            /"x" window\.start/
+        ],
+        [
+            'an impossible date 2026-02-29T00:00:00Z',
+            { x: { ...MIN, window: { start: '2026-02-29T00:00:00Z', end: '2030-01-01T00:00:00Z' } } },
+            /"x" window\.start/
+        ],
+        [
+            'an impossible date 2026-04-31T00:00:00Z',
+            { x: { ...MIN, window: { start: '2026-04-31T00:00:00Z', end: '2030-01-01T00:00:00Z' } } },
+            /"x" window\.start/
+        ],
+        [
+            'an impossible date 2026-11-10T24:00:00Z',
+            { x: { ...MIN, window: { start: '2026-11-10T24:00:00Z', end: '2030-01-01T00:00:00Z' } } },
+            /"x" window\.start/
+        ],
+        [
+            'an impossible date 2026-11-10T00:60:00Z',
+            { x: { ...MIN, window: { start: '2026-11-10T00:60:00Z', end: '2030-01-01T00:00:00Z' } } },
+            /"x" window\.start/
+        ],
+        [
+            'an impossible date 2026-11-10T00:00:60Z',
+            { x: { ...MIN, window: { start: '2026-11-10T00:00:60Z', end: '2030-01-01T00:00:00Z' } } },
+            /"x" window\.start/
+        ],
         ['a numeric date', { x: { ...MIN, window: { start: 5, end: W.end } } }, /"x" window\.start/],
         ['start >= end', { x: { ...MIN, window: { start: W.end, end: W.start } } }, /"x" window\.start must be before/],
         ['an unknown defaultMode', { x: { ...MIN, defaultMode: 'blue' } }, /"x" defaultMode/],
@@ -102,6 +132,11 @@ describe('ENGAGEMENTS parsing', () => {
 
     it.each([[{ a: 1 }], [5], [null], [true], [[]]])('rejects a non-string ENGAGEMENTS value %j', (v) => {
         expect(() => loadConfig({ ENGAGEMENTS: v })).toThrow(ConfigError)
+    })
+
+    it.each(['2028-02-29T00:00:00Z', '2026-11-10T09:00:00+05:30'])('accepts valid instant %s', (t) => {
+        const e = eng({ x: { ...MIN, window: { start: t, end: '2030-01-01T00:00:00Z' } } })
+        expect(e.engagements.get('x')!.window.start).toBe(Date.parse(t))
     })
 
     it('accepts ISO date-times with a numeric offset', () => {

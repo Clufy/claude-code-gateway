@@ -98,7 +98,18 @@ export function parseCidr(s: string): ParsedCidr | null {
     return { family: ip.family, base: (ip.value >> hostBits) << hostBits, bits }
 }
 
-const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/
+const ISO_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-](\d{2}):(\d{2}))$/
+
+/** Epoch ms for a strict ISO 8601 date-time, or NaN. Rejects values Date.parse would roll over (Feb 30, T24:00). */
+function parseIsoInstant(v: unknown): number {
+    const m = typeof v === 'string' ? ISO_RE.exec(v) : null
+    if (m === null) return NaN
+    const [y, mo, d, h, mi, sec = 0, oh = 0, om = 0] = m.slice(1).map((x) => (x === undefined ? 0 : Number(x)))
+    const probe = new Date(Date.UTC(y, mo - 1, d))
+    if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d) return NaN
+    if (h > 23 || mi > 59 || sec > 59 || oh > 23 || om > 59) return NaN
+    return Date.parse(v as string)
+}
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
 const MODES: readonly string[] = ['redteam', 'purple', 'off']
@@ -219,7 +230,7 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
         const time = (k: 'start' | 'end'): number => {
             const t = value.window as Obj
             const v = t[k]
-            const n = typeof v === 'string' && ISO_RE.test(v) ? Date.parse(v) : NaN
+            const n = parseIsoInstant(v)
             return Number.isNaN(n) ? bad(`${at} window.${k} must be an ISO 8601 date-time with Z or an offset`) : n
         }
         const start = time('start')
