@@ -1,4 +1,5 @@
 import { resolveProviderUrl } from './provider-url'
+import { parseEngagements, type Engagement } from './engagement'
 
 export type BackendType = 'workers-ai' | 'openai' | 'openai-responses' | 'gemini'
 export interface Route {
@@ -23,6 +24,7 @@ export interface ProxyConfig {
     upstreamTtfbMs: number
     upstreamTotalMs: number
     routes: RouteEntry[]
+    engagements: ReadonlyMap<string, Engagement>
 }
 
 export class ConfigError extends Error {
@@ -182,6 +184,7 @@ export function loadConfig(env: unknown): ProxyConfig {
         maxBodyBytes: parseInt10(raw, 'MAX_BODY_BYTES', DEFAULT_MAX_BODY_BYTES),
         upstreamTtfbMs: parseInt10(raw, 'UPSTREAM_TTFB_MS', DEFAULT_UPSTREAM_TTFB_MS),
         upstreamTotalMs: parseInt10(raw, 'UPSTREAM_TOTAL_MS', DEFAULT_UPSTREAM_TOTAL_MS),
-        routes: parseRoutes(raw, { allowedHosts, allowHttp })
+        routes: parseRoutes(raw, { allowedHosts, allowHttp }),
+        engagements: parseEngagements(str(raw, 'ENGAGEMENTS'))
     }
 }
