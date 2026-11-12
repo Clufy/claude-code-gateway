@@ -91,19 +91,19 @@ curl -sSN -H "x-api-key: $PROXY_KEY" -X POST "$BASE/v1/messages" \
 
 ```bash
 # Gemini
-curl -sS -X POST "$BASE/gemini/generativelanguage.googleapis.com/v1/messages" \
+curl -sS -X POST "$BASE/gemini/generativelanguage.googleapis.com/v1beta/v1/messages" \
   -H "x-proxy-key: $PROXY_KEY" -H "x-api-key: $GOOGLE_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"gemini-1.5-flash","messages":[{"role":"user","content":"hi"}]}'
 
 # OpenAI Chat Completions
-curl -sS -X POST "$BASE/openai/api.openai.com/v1/messages" \
+curl -sS -X POST "$BASE/openai/api.openai.com/v1/v1/messages" \
   -H "x-proxy-key: $PROXY_KEY" -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
 
 # OpenAI Responses API
-curl -sS -X POST "$BASE/openai-responses/api.openai.com/v1/messages" \
+curl -sS -X POST "$BASE/openai-responses/api.openai.com/v1/v1/messages" \
   -H "x-proxy-key: $PROXY_KEY" -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
@@ -124,13 +124,13 @@ curl -sS -X POST "$BASE/openai-responses/api.openai.com/v1/messages" \
 The allowlist is always active (defaults in README). With `ALLOWED_HOSTS="api.openai.com"`:
 
 ```bash
-curl -sS -X POST "$BASE/gemini/generativelanguage.googleapis.com/v1/messages" \
+curl -sS -X POST "$BASE/gemini/generativelanguage.googleapis.com/v1beta/v1/messages" \
   -H "x-api-key: $GOOGLE_API_KEY" -H 'Content-Type: application/json' \
   -d '{"model":"gemini-1.5-flash","messages":[{"role":"user","content":"hi"}]}' \
   -w "\n[%{http_code}]\n"
 ```
 
-**Expected:** `[403]` `permission_error` `Provider host not allowed by ALLOWED_HOSTS`. A request to `/openai/api.openai.com/v1/messages` still succeeds.
+**Expected:** `[403]` `permission_error` `Provider host not allowed by ALLOWED_HOSTS`. A request to `/openai/api.openai.com/v1/v1/messages` still succeeds.
 
 ## 8b2. Hardening behaviors
 

@@ -21,25 +21,27 @@ the OpenAI Responses API using the provider path convention.
 ## External provider path convention
 
 The proxy key (if any) goes in `x-proxy-key`; the provider API key goes in `x-api-key`
-or `Authorization: Bearer <key>`.
+or `Authorization: Bearer <key>`. `{provider_url}` includes the provider's version prefix
+(`api.openai.com/v1`, `generativelanguage.googleapis.com/v1beta`), because the proxy appends
+`chat/completions`, `responses` or `models/...` to it.
 
 Examples:
 
 ```bash
 # Gemini (Google AI Studio)
-curl -X POST https://<worker>/gemini/generativelanguage.googleapis.com/v1/messages \
+curl -X POST https://<worker>/gemini/generativelanguage.googleapis.com/v1beta/v1/messages \
   -H 'x-api-key: $GOOGLE_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"model":"gemini-1.5-flash","messages":[{"role":"user","content":"hi"}]}'
 
 # OpenAI Chat Completions
-curl -X POST https://<worker>/openai/api.openai.com/v1/messages \
+curl -X POST https://<worker>/openai/api.openai.com/v1/v1/messages \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
 
 # OpenAI Responses API
-curl -X POST https://<worker>/openai-responses/api.openai.com/v1/messages \
+curl -X POST https://<worker>/openai-responses/api.openai.com/v1/v1/messages \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
@@ -144,8 +146,9 @@ Each route has these keys (unknown keys are rejected):
   returned as is.
 - **Workers AI errors:** a Workers AI `429` or `5xx` is retried twice with backoff, then
   returned with its status (`429 rate_limit_error`, or `502 api_error` for a `5xx`), so
-  route fallback applies. Other `4xx` errors (such as an unknown model) are returned at once
-  as `invalid_request_error`.
+  route fallback applies. Other `4xx` responses are returned at once as
+  `invalid_request_error`. An unknown model is not retried; if the binding reports it as a
+  thrown error it comes back as `502 api_error`, so route fallback still applies.
 - **Errors:** a malformed `MODEL_ROUTES`, or a `keySecret` that is not set, makes the
   request fail with `500 invalid config: <VAR>`. Secrets are resolved up front, so a missing
   secret for a fallback target fails every request on that route, even when the primary is

@@ -262,7 +262,7 @@ export interface WorkersAIOptions {
     stats?: BackendStats
 }
 
-const NON_RETRYABLE = /\b(400|401|403|404|413|422)\b|invalid|not found|No such model|5007/i
+const NON_RETRYABLE = /\b(400|401|403|404|413|422)\b|invalid|not found|No such model|\b5007\b/i
 const UNPARSED_TOOL_TEXT = /<tool_call|<function|"name"\s*:\s*"[^"]+"\s*,\s*"(arguments|parameters)"\s*:/
 
 const TIMED_OUT = Symbol('timed out')
@@ -392,7 +392,11 @@ export class WorkersAIProvider {
                 continue
             }
             if (result instanceof Response && !result.ok) {
-                const text = await result.text().catch(() => '')
+                const read = await raceTimeout(
+                    result.text().catch(() => ''),
+                    this.ttfbMs
+                )
+                const text = read === TIMED_OUT ? '' : read
                 const retryable = result.status === 429 || result.status >= 500
                 if (!retryable || attempt > this.retries) {
                     throw new WorkersAIHttpError(result.status, httpErrorMessage(text, result.status))
