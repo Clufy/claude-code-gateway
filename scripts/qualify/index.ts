@@ -34,6 +34,7 @@ try {
             only: { type: 'string' },
             'skip-long': { type: 'boolean', default: false },
             fixture: { type: 'string' },
+            engagement: { type: 'string' },
             out: { type: 'string', default: 'qualify-results' }
         }
     }))
@@ -70,6 +71,7 @@ const reports = await runQualification({
     runs,
     only,
     skipLong: values['skip-long'],
+    engagement: values.engagement,
     fixturePath: values.fixture,
     onRun: (model, run) => {
         rawRuns.push({ model, run })

@@ -10,6 +10,8 @@ export interface QualifyOptions {
     runs: number
     only?: string[]
     skipLong?: boolean
+    /** Engagement name: enables the mode.* scenarios, sent as x-engagement with x-proxy-mode: redteam. */
+    engagement?: string
     fixturePath?: string
     /** Called after every scenario run (progress output, raw result capture). */
     onRun?: (model: string, run: ScenarioRun) => void
@@ -39,7 +41,8 @@ export async function runQualification(opts: QualifyOptions, fetchImpl: typeof f
         for (const scenario of scenarios) {
             for (let n = 1; n <= opts.runs; n++) {
                 const skipped =
-                    scenario.requires !== undefined || (opts.skipLong === true && scenario.id === 'context.long')
+                    (scenario.requires !== undefined && opts.engagement === undefined) ||
+                    (opts.skipLong === true && scenario.id === 'context.long')
                 const collected: Collected[] = []
                 if (!skipped) {
                     for (const request of scenario.requests(fx)) {
@@ -51,7 +54,10 @@ export async function runQualification(opts: QualifyOptions, fetchImpl: typeof f
                                     'content-type': 'application/json',
                                     'anthropic-version': '2023-06-01',
                                     'x-api-key': opts.key,
-                                    'x-proxy-debug': '1'
+                                    'x-proxy-debug': '1',
+                                    ...(scenario.requires !== undefined && opts.engagement !== undefined
+                                        ? { 'x-engagement': opts.engagement, 'x-proxy-mode': 'redteam' }
+                                        : {})
                                 },
                                 body: JSON.stringify({ ...request, model })
                             })

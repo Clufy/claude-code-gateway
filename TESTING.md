@@ -231,3 +231,15 @@ Set `~/.claude/settings.json`:
 ```
 
 Then `export ANTHROPIC_API_KEY="sk-ant-dummy"` and run `claude -p "Say hello in one sentence"`.
+
+## 11. Engagement and mode log fields
+
+Set `ENGAGEMENTS` (see the README), then send a request that names an engagement:
+
+```bash
+curl -sS -H "x-api-key: $PROXY_KEY" -H "x-engagement: <name>" -H "x-proxy-mode: redteam" \
+  -X POST "$BASE/v1/messages" -H 'Content-Type: application/json' \
+  -d '{"model":"'"$MODEL"'","max_tokens":50,"messages":[{"role":"user","content":"hi"}]}'
+```
+
+**Expected:** `[200]`, and in `npx wrangler tail` the `event: "request"` line has `engagement` and `mode: "redteam"`. Repeat with an unknown `x-engagement` for a `400`.

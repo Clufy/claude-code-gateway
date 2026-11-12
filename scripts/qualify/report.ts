@@ -37,7 +37,7 @@ export const THRESHOLDS = {
 
 // tool.parallel is reported but not gating: parallel calls are an optimization.
 const GATING_TOOL_SCENARIOS = ['tool.single', 'tool.args_complex', 'tool.choice', 'tool.after_result', 'context.long']
-const MODE_SCOPE_NOTE = 'mode.scope not measurable before Phase 3'
+const MODE_SCOPE_NOTE = 'mode.scope not measured (run with --engagement)'
 const EPS = 1e-9
 
 const num = (n: number) => String(Math.round(n * 100) / 100)

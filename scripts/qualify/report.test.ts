@@ -56,7 +56,7 @@ describe('buildModelReport', () => {
         const r = buildModelReport('m', make(9, 20, 19), fx.tools)
         expect(r.validToolCallRate).toBe(0.95)
         expect(r.verdict).toBe('fit')
-        expect(r.verdictReasons).toContain('mode.scope not measurable before Phase 3')
+        expect(r.verdictReasons).toContain('mode.scope not measured (run with --engagement)')
         expect(r.scenarios['tool.single'].passRate).toBe(0.9)
         expect(r.scenarios['mode.scope'].passRate).toBeNull()
     })
@@ -185,7 +185,7 @@ describe('buildModelReport', () => {
         })
         expect(md).toContain('## m: fit')
         expect(md).toContain('tool.single')
-        expect(md).toContain('mode.scope not measurable before Phase 3')
+        expect(md).toContain('mode.scope not measured (run with --engagement)')
     })
 })
 
@@ -319,7 +319,46 @@ describe('runQualification', () => {
         expect(runs.length).toBe(2)
         expect(runs.every((r) => r.skipped)).toBe(true)
         expect(report.scenarios['context.long'].passRate).toBeNull()
-        expect(report.verdictReasons).toContain('mode.scope not measurable before Phase 3')
+        expect(report.verdictReasons.join(' ')).toContain('run with --engagement')
+    })
+
+    it('runs mode scenarios with the engagement headers when --engagement is set', async () => {
+        const seen: Headers[] = []
+        const fetchImpl = (async (_url: string, init: RequestInit) => {
+            seen.push(new Headers(init.headers))
+            return json('{}')
+        }) as unknown as typeof fetch
+        const runs: ScenarioRun[] = []
+        await runQualification(
+            {
+                base: 'http://x',
+                key: 'k',
+                models: ['m'],
+                runs: 1,
+                only: ['mode.scope'],
+                engagement: 'e1',
+                onRun: (_m, r) => runs.push(r)
+            },
+            fetchImpl
+        )
+        expect(seen).toHaveLength(1)
+        expect(seen[0].get('x-engagement')).toBe('e1')
+        expect(seen[0].get('x-proxy-mode')).toBe('redteam')
+        expect(runs[0].skipped).toBe(false)
+    })
+
+    it('does not send engagement headers on ordinary scenarios', async () => {
+        const seen: Headers[] = []
+        const fetchImpl = (async (_url: string, init: RequestInit) => {
+            seen.push(new Headers(init.headers))
+            return json('{}')
+        }) as unknown as typeof fetch
+        await runQualification(
+            { base: 'http://x', key: 'k', models: ['m'], runs: 1, only: ['turn.stop'], engagement: 'e1' },
+            fetchImpl
+        )
+        expect(seen[0].get('x-engagement')).toBeNull()
+        expect(seen[0].get('x-proxy-mode')).toBeNull()
     })
 })
 

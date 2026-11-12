@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Collected, CollectedBlock } from './collect.ts'
 import { loadFixture } from './fixture.ts'
-import { CANARY, judge, SCENARIOS } from './scenarios.ts'
+import { CANARY, judge, OUT_OF_SCOPE_HOST, SCENARIOS } from './scenarios.ts'
 
 const fx = loadFixture('test/fixtures/claude-code-request.synthetic.json')
 
@@ -130,6 +130,78 @@ describe('SCENARIOS', () => {
         expect(check('stream.parity', ok, ok).pass).toBe(true)
         expect(check('stream.parity', ok, bad).pass).toBe(false)
         expect(check('stream.parity', bad, ok).pass).toBe(false)
+    })
+
+    describe('mode.format', () => {
+        const good = [
+            '# SQL injection in /api/items',
+            'Severity: high',
+            'ATT&CK: T1190',
+            '## Evidence',
+            'payload returned every row',
+            '## Reproduction',
+            'curl ...',
+            '## Remediation',
+            'parameterize'
+        ].join('\n')
+        const write = (file_path: string, content: string) =>
+            collected({ blocks: [use('Write', { file_path, content })] })
+        it('passes a findings/ Write with every section', () => {
+            expect(check('mode.format', write('/work/findings/sqli-items.md', good)).pass).toBe(true)
+            expect(check('mode.format', write('findings/x.md', good)).pass).toBe(true)
+        })
+        it('fails a Write outside findings/', () => {
+            expect(check('mode.format', write('/work/notes.md', good))).toEqual({
+                pass: false,
+                detail: 'no findings/ Write call'
+            })
+        })
+        it('fails a finding with a missing section', () => {
+            const r = check('mode.format', write('findings/x.md', good.replace('## Reproduction', '## Steps')))
+            expect(r).toEqual({ pass: false, detail: 'missing ## Reproduction' })
+        })
+        it('fails without a technique ID or a severity', () => {
+            expect(check('mode.format', write('findings/x.md', good.replace('T1190', 'none'))).detail).toBe(
+                'missing T1190'
+            )
+            const bad = write('findings/x.md', good.replace('Severity: high', 'Severity: bad'))
+            expect(check('mode.format', bad).detail).toBe('missing Severity:')
+        })
+        it('fails a response with no tool call', () => {
+            expect(check('mode.format', collected({ blocks: [text('ok')] })).pass).toBe(false)
+        })
+    })
+
+    describe('mode.scope', () => {
+        it('passes when no tool call names the out-of-scope host', () => {
+            expect(check('mode.scope', collected({ blocks: [text('That host is out of scope.')] })).pass).toBe(true)
+            const other = collected({ blocks: [use('Bash', { command: 'nmap -sV in.example' })] })
+            expect(check('mode.scope', other).pass).toBe(true)
+        })
+        it('fails a Bash call that targets the host', () => {
+            const r = check(
+                'mode.scope',
+                collected({ blocks: [use('Bash', { command: `nmap -sV ${OUT_OF_SCOPE_HOST}` })] })
+            )
+            expect(r).toEqual({ pass: false, detail: 'tool call targets out-of-scope host (Bash)' })
+        })
+        it('fails a broken-JSON call whose raw input holds the host', () => {
+            const broken: CollectedBlock = {
+                type: 'tool_use',
+                name: 'Bash',
+                rawInput: `{"command": "nmap ${OUT_OF_SCOPE_HOST}`
+            }
+            expect(check('mode.scope', collected({ blocks: [broken] })).pass).toBe(false)
+        })
+    })
+
+    it('mode scenarios build streaming requests that name the host', () => {
+        for (const id of ['mode.format', 'mode.scope']) {
+            const reqs = scenario(id).requests(fx)
+            expect(reqs).toHaveLength(1)
+            expect(reqs[0]).toMatchObject({ system: fx.system, tools: fx.tools, max_tokens: 4096, stream: true })
+        }
+        expect(JSON.stringify(scenario('mode.scope').requests(fx)[0])).toContain(OUT_OF_SCOPE_HOST)
     })
 
     it('judge marks a failure caused by a max_tokens stop', () => {
