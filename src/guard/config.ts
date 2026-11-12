@@ -16,18 +16,17 @@ export interface GuardConfig {
 
 const MAX_PATTERN = 256
 const MAX_BOUND = 100
+const MAX_SLACK = 128
 const MAX_CUSTOM = 32
 
 interface Frame {
     quant: boolean // contains a quantifier (at any depth)
     alt: boolean // contains a `|` (at any depth)
-    leading: boolean // the start of this group is a leading position
-    started: boolean // a non-optional atom has been seen in the current alternative
 }
 
+const UNBOUNDED = 'unbounded quantifier (use {n,m}, m ≤ 100)'
+
 interface Last {
-    frame: Frame
-    leadingAtom: boolean
     group?: Frame
 }
 
@@ -38,16 +37,13 @@ export function unsafePatternReason(source: string, flags: string): string | nul
         return 'flags must be a subset of imsu, no repeats'
     }
 
-    const stack: Frame[] = [{ quant: false, alt: false, leading: true, started: false }]
-    let unbounded = 0
-    let leadingBad = false // reported last so a nested quantifier is named first
+    const stack: Frame[] = [{ quant: false, alt: false }]
+    let slack = 1 // product of (max - min + 1) over every quantified atom
     let last: Last | null = null // the atom a following quantifier applies to
     const top = (): Frame => stack[stack.length - 1]!
 
     const atom = (group?: Frame): void => {
-        const f = top()
-        last = { frame: f, leadingAtom: f.leading && !f.started, group }
-        f.started = true
+        last = { group }
     }
 
     let i = 0
@@ -64,6 +60,8 @@ export function unsafePatternReason(source: string, flags: string): string | nul
             }
             i += 2
             if ((n === 'p' || n === 'P' || n === 'u') && source[i] === '{') {
+                // without the u flag these braces are a quantifier on a letter
+                if (!flags.includes('u')) return 'escape needs the u flag'
                 const close = source.indexOf('}', i)
                 if (close === -1) return 'unbalanced braces'
                 i = close + 1
@@ -86,7 +84,6 @@ export function unsafePatternReason(source: string, flags: string): string | nul
             continue
         }
         if (c === '(') {
-            const leading = top().leading && !top().started
             if (source[i + 1] === '?') {
                 const n = source[i + 2]
                 if (n === ':') i += 3
@@ -97,7 +94,7 @@ export function unsafePatternReason(source: string, flags: string): string | nul
                 } else if (n === '=' || n === '!' || n === '<') return 'lookaround'
                 else return 'unsupported group'
             } else i++
-            stack.push({ quant: false, alt: false, leading, started: false })
+            stack.push({ quant: false, alt: false })
             last = null
             continue
         }
@@ -110,7 +107,6 @@ export function unsafePatternReason(source: string, flags: string): string | nul
         }
         if (c === '|') {
             for (const f of stack) f.alt = true
-            top().started = false
             last = null
             i++
             continue
@@ -133,7 +129,9 @@ export function unsafePatternReason(source: string, flags: string): string | nul
                 min = Number(m[1])
                 max = m[2] === undefined ? min : m[3] === '' ? -1 : Number(m[3])
                 len = m[0].length
-                if (min > MAX_BOUND || max > MAX_BOUND) return 'repetition bound over 100'
+                if (max === -1) return UNBOUNDED
+                if (min > max) return 'does not compile'
+                if (max > MAX_BOUND) return 'repetition bound over 100'
             }
         }
         if (len === 0) {
@@ -141,23 +139,18 @@ export function unsafePatternReason(source: string, flags: string): string | nul
             atom()
             continue
         }
+        if (max === -1) return UNBOUNDED
         const prev = last as Last | null
         if (prev === null) return 'quantifier without an atom'
         if (prev.group && (prev.group.quant || prev.group.alt)) return 'nested quantifier'
         for (const f of stack) f.quant = true
-        if (max === -1) {
-            unbounded++
-            if (unbounded > 1) return 'more than one unbounded quantifier'
-            if (prev.leadingAtom) leadingBad = true
-        }
-        // an optional atom does not end the leading position
-        if (prev.leadingAtom && min === 0) prev.frame.started = false
+        slack *= max - min + 1
+        if (slack > MAX_SLACK) return 'too much backtracking slack'
         i += len
         if (source[i] === '?') i++ // lazy modifier
         last = null
     }
     if (stack.length !== 1) return 'unbalanced group'
-    if (leadingBad) return 'leading unbounded quantifier'
     try {
         new RegExp(source, flags)
     } catch {

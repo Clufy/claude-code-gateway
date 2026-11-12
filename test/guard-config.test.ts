@@ -3,6 +3,8 @@ import { ConfigError, loadConfig } from '../src/config'
 import { unsafePatternReason } from '../src/guard/config'
 import { makeEnv } from './helpers'
 
+const UNBOUNDED = 'unbounded quantifier (use {n,m}, m ≤ 100)'
+
 const guard = (g: unknown) =>
     loadConfig(makeEnv({ GUARD_RULES: typeof g === 'string' ? g : JSON.stringify(g) } as never)).guard
 const rule = (pattern: string, flags?: string) => ({
@@ -45,33 +47,50 @@ describe('GUARD_RULES', () => {
         expect(g.custom[0]!.re.test('SEKURLSA::logonpasswords')).toBe(true)
     })
 
-    it.each([
-        ['(a+)+$'],
-        ['(a|aa)+'],
-        ['(.*a){10}'],
-        ['(\\w+\\s?)+$'],
-        ['^(a|a?)+$'],
-        ['a*a*b'],
-        ['\\s+$'],
-        ['.*secret'],
-        ['^\\s+x'],
-        ['(\\d)\\1'],
-        ['(?<n>a)\\k<n>'],
-        ['(?<=x)y'],
-        ['(?<!x)y'],
-        ['(?=x)y'],
-        ['(?!x)y'],
-        ['a{1,500}'],
-        ['a{500}'],
-        [''],
-        ['a'.repeat(257)],
-        ['('],
-        ['a)'],
-        ['[)(]+x']
-    ])('rejects pattern %s without echoing it', (pattern) => {
+    it.each<[string, string]>([
+        ['(a+)+$', UNBOUNDED],
+        ['(a|aa)+', UNBOUNDED],
+        ['(.*a){10}', UNBOUNDED],
+        ['(\\w+\\s?)+$', UNBOUNDED],
+        ['^(a|a?)+$', UNBOUNDED],
+        ['a*a*b', UNBOUNDED],
+        ['a+?b', UNBOUNDED],
+        ['a{2,}b', UNBOUNDED],
+        ['\\s+$', UNBOUNDED],
+        ['.*secret', UNBOUNDED],
+        ['^\\s+x', UNBOUNDED],
+        ['[)(]+x', UNBOUNDED],
+        ['a[)(]+x', UNBOUNDED],
+        ['certutil\\s+-urlcache', UNBOUNDED],
+        ['a.*.{0,100}b', UNBOUNDED],
+        ['a\\w*\\d?\\w?b', UNBOUNDED],
+        ['(a{1,2}){1,2}', 'nested quantifier'],
+        ['(a|aa){1,5}', 'nested quantifier'],
+        ['(\\d)\\1', 'backreference'],
+        ['(?<n>a)\\k<n>', 'backreference'],
+        ['(?<=x)y', 'lookaround'],
+        ['(?<!x)y', 'lookaround'],
+        ['(?=x)y', 'lookaround'],
+        ['(?!x)y', 'lookaround'],
+        ['a{1,500}', 'repetition bound over 100'],
+        ['a{500}', 'repetition bound over 100'],
+        ['', 'length must be 1-256'],
+        ['a'.repeat(257), 'length must be 1-256'],
+        ['(', 'unbalanced group'],
+        ['a)', 'unbalanced group'],
+        ['a.{0,100}.{0,100}b', 'too much backtracking slack'],
+        ['a?'.repeat(40) + 'a{40}', 'too much backtracking slack'],
+        ['x\\u{0,100}\\u{0,100}y', 'escape needs the u flag'],
+        ['\\p{L}', 'escape needs the u flag'],
+        ['\\P{L}', 'escape needs the u flag']
+    ])('rejects pattern %s with its reason, without echoing it', (pattern, reason) => {
         const e = rejects(rule(pattern))
-        expect(e.message).toMatch(/^custom\[0\]\.pattern: /)
+        expect(e.message).toBe(`custom[0].pattern: ${reason}`)
         if (pattern.length > 0) expect(e.message).not.toContain(pattern)
+    })
+
+    it('allows \\p{...} with the u flag', () => {
+        expect(unsafePatternReason('\\p{L}{1,3}x', 'u')).toBeNull()
     })
 
     it('rejects flags g', () => {
@@ -81,15 +100,14 @@ describe('GUARD_RULES', () => {
 
     it.each([
         ['sekurlsa::'],
-        ['certutil\\s+-urlcache'],
         ['(?:Invoke-Mimikatz|sekurlsa)'],
         ['(?<n>a|b)c'],
         ['[A-Z]{3}-\\d{4}'],
         ['procdump[^\\n]{0,80}lsass'],
-        ['a[)(]+x'],
+        ['certutil\\s{1,10}-urlcache'],
+        ['a.{0,100}b'],
         ['a[+*]x'],
-        ['ab+c'],
-        ['ab+?c']
+        ['a?b{2,3}c']
     ])('accepts pattern %s', (pattern) => {
         expect(unsafePatternReason(pattern, 'i')).toBeNull()
         expect(guard(rule(pattern)).custom).toHaveLength(1)
@@ -100,7 +118,7 @@ describe('GUARD_RULES', () => {
             custom: [
                 { id: 'custom.a', side: 'request', pattern: 'ok' },
                 { id: 'custom.b', side: 'request', pattern: 'ok' },
-                { id: 'custom.c', side: 'request', pattern: '(a+)+$' }
+                { id: 'custom.c', side: 'request', pattern: '(a{1,2}){1,2}' }
             ]
         })
         expect(e.message).toBe('custom[2].pattern: nested quantifier')
@@ -127,6 +145,41 @@ describe('GUARD_RULES', () => {
         rejects('not json')
         rejects('[]')
         rejects({ custom: 'x' })
+    })
+
+    it('drops a disabled custom rule and ignores its severity override', () => {
+        const g = guard({
+            disable: ['custom.a', 'cmd.risky'],
+            severity: { 'custom.a': 'high', 'cmd.risky': 'low' },
+            custom: [
+                { id: 'custom.a', side: 'request', pattern: 'a' },
+                { id: 'custom.b', side: 'request', pattern: 'b' }
+            ]
+        })
+        expect(g.custom.map((c) => c.id)).toEqual(['custom.b'])
+        expect(g.disabled.has('custom.a')).toBe(true)
+        expect(g.severity.has('custom.a')).toBe(false)
+        expect(g.severity.has('cmd.risky')).toBe(false)
+    })
+
+    it('does not echo client values in messages', () => {
+        expect(rejects({ 'secret-key-zz': 1 }).message).not.toContain('secret-key-zz')
+        expect(rejects({ disable: ['secret-id-zz'] }).message).not.toContain('secret-id-zz')
+        const dup = rejects({
+            custom: [
+                { id: 'custom.dupzz', side: 'request', pattern: 'a' },
+                { id: 'custom.dupzz', side: 'request', pattern: 'b' }
+            ]
+        })
+        expect(dup.message).toBe('custom[1].id is a duplicate')
+        expect(
+            rejects({ custom: [{ id: 'custom.a', side: 'request', pattern: 'a', zzkey: 1 }] }).message
+        ).not.toContain('zzkey')
+    })
+
+    it('rejects a non-object custom entry', () => {
+        expect(rejects({ custom: ['x'] }).message).toBe('custom[0] must be an object')
+        expect(rejects({ custom: [null] }).message).toBe('custom[0] must be an object')
     })
 
     it('accepts 32 custom rules', () => {
