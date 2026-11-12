@@ -26,14 +26,13 @@ export function loadFixture(path?: string): Fixture {
 
 const SECRET = /sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}/g
 
-const replaceAll = (s: string, from: string, to: string) => (from ? s.split(from).join(to) : s)
-
 /** Keeps system + tools, scrubs paths, user name and secrets. Works on parsed strings, never on JSON text. */
 export function redactFixture(raw: any, opts: { home: string; user: string }): Fixture {
     const homes = [opts.home, opts.home.replace(/\\/g, '/')]
     const scrub = (s: string): string => {
-        for (const h of homes) s = replaceAll(s, h, '/home/user')
-        return replaceAll(s, opts.user, 'user').replace(SECRET, '[redacted]')
+        for (const h of homes) if (h) s = s.replaceAll(h, '/home/user')
+        if (opts.user) s = s.replaceAll(opts.user, 'user')
+        return s.replace(SECRET, '[redacted]')
     }
     const walk = (v: unknown): unknown => {
         if (typeof v === 'string') return scrub(v)

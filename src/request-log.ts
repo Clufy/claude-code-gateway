@@ -22,15 +22,6 @@ export interface RequestLog {
     cancelled?: boolean // the client cancelled the stream before it ended
 }
 
-export interface ProxyStats {
-    backend: string
-    model: string
-    fallbackUsed: boolean
-    ttfbMs: number
-    toolCallsFromText: number
-    unparsedToolText: boolean
-}
-
 export function logRequest(record: RequestLog): void {
     console.log(JSON.stringify({ event: 'request', ...record }))
 }
@@ -73,7 +64,7 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
         ...(input.keepalive ? { keepalive: true } : {}),
         ...extra
     })
-    const proxyStats = (): ProxyStats => ({
+    const proxyStats = () => ({
         backend: input.backend,
         model: input.model ?? '',
         fallbackUsed: input.fallbackUsed,

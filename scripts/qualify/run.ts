@@ -40,18 +40,8 @@ export async function runQualification(opts: QualifyOptions, fetchImpl: typeof f
             for (let n = 1; n <= opts.runs; n++) {
                 const skipped =
                     scenario.requires !== undefined || (opts.skipLong === true && scenario.id === 'context.long')
-                let result: ScenarioRun
-                if (skipped) {
-                    result = {
-                        scenarioId: scenario.id,
-                        run: n,
-                        skipped: true,
-                        pass: false,
-                        detail: 'skipped',
-                        collected: []
-                    }
-                } else {
-                    const collected: Collected[] = []
+                const collected: Collected[] = []
+                if (!skipped) {
                     for (const request of scenario.requests(fx)) {
                         const startedAt = Date.now()
                         try {
@@ -70,16 +60,9 @@ export async function runQualification(opts: QualifyOptions, fetchImpl: typeof f
                             collected.push(failed(`request failed: ${e instanceof Error ? e.message : String(e)}`))
                         }
                     }
-                    const check = judge(scenario, collected, fx)
-                    result = {
-                        scenarioId: scenario.id,
-                        run: n,
-                        skipped: false,
-                        pass: check.pass,
-                        detail: check.detail,
-                        collected
-                    }
                 }
+                const check = skipped ? { pass: false, detail: 'skipped' } : judge(scenario, collected, fx)
+                const result: ScenarioRun = { scenarioId: scenario.id, run: n, skipped, ...check, collected }
                 runs.push(result)
                 opts.onRun?.(model, result)
             }

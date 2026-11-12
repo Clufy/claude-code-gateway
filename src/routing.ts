@@ -26,34 +26,27 @@ export function resolveRoute(model: string, routes: RouteEntry[]): Route | null 
     return findRouteEntry(model, routes)?.route ?? null
 }
 
-interface Planned {
-    route: Route | null
-    backend: BackendType
-    model: string
-    label: string
-}
-
-function plan(model: string, route: Route | null): Planned {
-    const backend = route?.provider ?? 'workers-ai'
-    const m = route?.model ?? model
-    return { route, backend, model: m, label: `${backend}:${m}` }
-}
-
-function attachKey(p: Planned, env: Record<string, unknown>): Target {
-    const { route } = p
-    if (!route || route.provider === 'workers-ai') return { backend: 'workers-ai', model: p.model, label: p.label }
-    const key = route.keySecret ? env[route.keySecret] : undefined
-    if (typeof key !== 'string' || key === '') {
-        throw new ConfigError(route.keySecret ?? 'MODEL_ROUTES', 'secret not set')
-    }
-    return { backend: p.backend, model: p.model, baseUrl: route.baseUrl, apiKey: key, label: p.label }
-}
-
 export function planTargets(requestedModel: string, cfg: ProxyConfig, env: Record<string, unknown>): Target[] {
     const primary = resolveRoute(requestedModel, cfg.routes)
-    const planned = [plan(requestedModel, primary)]
-    for (const name of primary?.fallback ?? []) planned.push(plan(name, resolveRoute(name, cfg.routes)))
     const seen = new Set<string>()
-    // Dedupe first, then attach keys: a dropped duplicate's secret is never required.
-    return planned.filter((p) => !seen.has(p.label) && seen.add(p.label)).map((p) => attachKey(p, env))
+    const targets: Target[] = []
+    // Dedupe before reading keys: a dropped duplicate's secret is never required.
+    for (const name of [requestedModel, ...(primary?.fallback ?? [])]) {
+        const route = resolveRoute(name, cfg.routes)
+        const backend = route?.provider ?? 'workers-ai'
+        const model = route?.model ?? name
+        const label = `${backend}:${model}`
+        if (seen.has(label)) continue
+        seen.add(label)
+        if (!route || route.provider === 'workers-ai') {
+            targets.push({ backend: 'workers-ai', model, label })
+            continue
+        }
+        const key = route.keySecret ? env[route.keySecret] : undefined
+        if (typeof key !== 'string' || key === '') {
+            throw new ConfigError(route.keySecret ?? 'MODEL_ROUTES', 'secret not set')
+        }
+        targets.push({ backend, model, baseUrl: route.baseUrl, apiKey: key, label })
+    }
+    return targets
 }

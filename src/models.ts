@@ -32,18 +32,21 @@ function commaSet(value?: string): Set<string> {
     )
 }
 
-function toModel(id: string, env: Env, maxInputTokens: number, backingModel?: string): ClaudeModelListing {
+// An id a route matches (exact or glob) is served by that route, so the route describes it (P2-R24).
+function toModel(id: string, env: Env, cfg: ProxyConfig): ClaudeModelListing {
     const visionModels = commaSet((env as { VISION_MODELS?: string }).VISION_MODELS)
     const multiToolModels = commaSet((env as { MULTI_TOOL_MODELS?: string }).MULTI_TOOL_MODELS)
+    const route = findRouteEntry(id, cfg.routes)?.route
+    const backing = route?.model ?? id
 
-    const has = (set: Set<string>) => set.has(id) || (backingModel !== undefined && set.has(backingModel))
+    const has = (set: Set<string>) => set.has(id) || set.has(backing)
 
     return {
         id,
         type: 'model',
         display_name: id,
         created_at: 0,
-        max_input_tokens: maxInputTokens,
+        max_input_tokens: route?.contextTokens ?? CONTEXT_TOKENS[backing] ?? DEFAULT_CONTEXT_TOKENS,
         max_tokens: null,
         capabilities: {
             tools: { name: 'tool_use', supported: true },
@@ -63,23 +66,10 @@ function configuredModelIds(env: Env): string[] {
     return ids.length > 0 ? ids : DEFAULT_MODELS
 }
 
-function routeContext(route: { model: string; contextTokens?: number }): number {
-    return route.contextTokens ?? CONTEXT_TOKENS[route.model] ?? DEFAULT_CONTEXT_TOKENS
-}
-
 function listing(env: Env, cfg: ProxyConfig): ClaudeModelListing[] {
-    // An id a route matches (exact or glob) is served by that route, so the route describes it (P2-R24).
-    const workersAi = configuredModelIds(env).map((id) => {
-        const entry = findRouteEntry(id, cfg.routes)
-        return entry
-            ? toModel(id, env, routeContext(entry.route), entry.route.model)
-            : toModel(id, env, CONTEXT_TOKENS[id] ?? DEFAULT_CONTEXT_TOKENS)
-    })
-    const seen = new Set(workersAi.map((m) => m.id))
-    const routed = cfg.routes
-        .filter(({ pattern }) => !pattern.includes('*') && !seen.has(pattern))
-        .map(({ pattern, route }) => toModel(pattern, env, routeContext(route), route.model))
-    return [...workersAi, ...routed]
+    const ids = configuredModelIds(env)
+    const routed = cfg.routes.map((e) => e.pattern).filter((p) => !p.includes('*') && !ids.includes(p))
+    return [...ids, ...routed].map((id) => toModel(id, env, cfg))
 }
 
 export function listModels(env: Env, cfg: ProxyConfig): Response {
@@ -87,9 +77,8 @@ export function listModels(env: Env, cfg: ProxyConfig): Response {
 }
 
 export function getModel(id: string, env: Env, cfg: ProxyConfig, requestId: string): Response {
-    const found = listing(env, cfg).find((m) => m.id === id)
-    if (found) return jsonResponse(found, 200, requestId)
-    const entry = findRouteEntry(id, cfg.routes)
-    if (!entry) return anthropicError(404, 'not_found_error', `Model '${id}' not found.`, requestId)
-    return jsonResponse(toModel(id, env, routeContext(entry.route), entry.route.model), 200, requestId)
+    if (!configuredModelIds(env).includes(id) && !findRouteEntry(id, cfg.routes)) {
+        return anthropicError(404, 'not_found_error', `Model '${id}' not found.`, requestId)
+    }
+    return jsonResponse(toModel(id, env, cfg), 200, requestId)
 }

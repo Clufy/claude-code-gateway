@@ -18,50 +18,31 @@ export default {
         const url = new URL(request.url)
         const isMessages = url.pathname === '/v1/messages' || /\/v1\/messages$/.test(url.pathname)
         const start = Date.now()
+        const log = (status: number) => {
+            if (!isMessages) return
+            logRequest({
+                requestId,
+                method: request.method,
+                path: url.pathname,
+                status,
+                durationMs: Date.now() - start
+            })
+        }
         try {
-            let config: ProxyConfig
-            try {
-                config = loadConfig(env)
-            } catch (e) {
-                if (e instanceof ConfigError) {
-                    console.error(e.message)
-                    const response = anthropicError(500, 'api_error', `invalid config: ${e.variable}`, requestId)
-                    if (isMessages) {
-                        logRequest({
-                            requestId,
-                            method: request.method,
-                            path: url.pathname,
-                            status: 500,
-                            durationMs: Date.now() - start
-                        })
-                    }
-                    return response
-                }
-                throw e
-            }
-            const response = await handleRequest(request, env, requestId, config, start)
-            if (isMessages && !finalized.has(response)) {
-                logRequest({
-                    requestId,
-                    method: request.method,
-                    path: url.pathname,
-                    status: response.status,
-                    durationMs: Date.now() - start
-                })
-            }
+            const response = await handleRequest(request, env, requestId, loadConfig(env), start)
+            if (!finalized.has(response)) log(response.status)
             return withRequestId(response, requestId)
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
-            console.error(error)
-            if (isMessages) {
-                logRequest({
-                    requestId,
-                    method: request.method,
-                    path: url.pathname,
-                    status: 500,
-                    durationMs: Date.now() - start
-                })
+            // A ConfigError (from loadConfig or planTargets) names only the variable.
+            let message: string
+            if (error instanceof ConfigError) {
+                console.error(error.message)
+                message = `invalid config: ${error.variable}`
+            } else {
+                console.error(error)
+                message = error instanceof Error ? error.message : String(error)
             }
+            log(500)
             return anthropicError(500, 'api_error', message, requestId)
         }
     }
@@ -120,19 +101,11 @@ async function handleRequest(
         if (!body) return anthropicError(400, 'invalid_request_error', 'invalid JSON body', requestId)
         // A missing or non-string model is planned as-is so Workers AI keeps returning its 400.
         const model = body.model
-        let targets: Target[]
-        try {
-            targets =
-                typeof model === 'string' && model !== ''
-                    ? planTargets(model, config, env as unknown as Record<string, unknown>)
-                    : [{ backend: 'workers-ai', model: model as string, label: 'workers-ai:invalid' }]
-        } catch (e) {
-            if (e instanceof ConfigError) {
-                console.error(e.message)
-                return anthropicError(500, 'api_error', `invalid config: ${e.variable}`, requestId)
-            }
-            throw e
-        }
+        // A ConfigError (route secret not set) propagates to fetch's 500.
+        const targets: Target[] =
+            typeof model === 'string' && model !== ''
+                ? planTargets(model, config, env as unknown as Record<string, unknown>)
+                : [{ backend: 'workers-ai', model: model as string, label: 'workers-ai:invalid' }]
         const ctx = { env, cfg: config, requestId, inboundHeaders: request.headers, stats: newStats() }
         const input: FinalizeInput = {
             request,

@@ -66,6 +66,7 @@ export function buildModelReport(model: string, runs: ScenarioRun[], tools: Fixt
     const fromText = collected.reduce((n, c) => n + (c.proxyStats?.toolCallsFromText ?? 0), 0)
     const clean = collected.filter((c) => !c.error)
     const ttfbs = clean.map((c) => c.ttfbMs).filter((t): t is number => t !== null)
+    const totals = clean.map((c) => c.totalMs)
 
     const gating = GATING_TOOL_SCENARIOS.map((id) => scenarios[id]?.passRate).filter((r): r is number => r != null)
     const toolScenarioPassRate = gating.length ? gating.reduce((a, b) => a + b, 0) / gating.length : 1
@@ -110,14 +111,8 @@ export function buildModelReport(model: string, runs: ScenarioRun[], tools: Fixt
         unparsedCount: collected.filter((c) => c.proxyStats?.unparsedToolText).length,
         ttfbP50: percentile(ttfbs, 50),
         ttfbP95: percentile(ttfbs, 95),
-        totalP50: percentile(
-            clean.map((c) => c.totalMs),
-            50
-        ),
-        totalP95: percentile(
-            clean.map((c) => c.totalMs),
-            95
-        ),
+        totalP50: percentile(totals, 50),
+        totalP95: percentile(totals, 95),
         outputTokens: collected.reduce((n, c) => n + (c.usage.output_tokens ?? 0), 0),
         errors: runs.filter((r) => r.collected.some((c) => c.error)).length,
         fallbackRuns,
