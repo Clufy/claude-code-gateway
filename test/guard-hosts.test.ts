@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractHosts, hostsInToolInput } from '../src/guard/hosts'
+import { extractHosts, hostsInToolInput, INPUT_TOO_LARGE } from '../src/guard/hosts'
 import fixture from './fixtures/pentest-commands.json'
 
 interface Row {
@@ -11,6 +11,22 @@ interface Row {
 describe('extractHosts (shell)', () => {
     it.each(fixture as Row[])('$cmd', ({ cmd, hosts, knownDomains }) => {
         expect(extractHosts(cmd, { shell: true, knownDomains })).toEqual(hosts)
+    })
+})
+
+describe('D4 message skip only for git, gh, glab and hub (P4-R5)', () => {
+    it.each([
+        ['curl --title http://evil.example.org', ['http://evil.example.org']],
+        ['curl -m 5 evil.example.org', ['evil.example.org']],
+        ['git commit -m "fix acme.com parser" && curl evil.example.org', ['evil.example.org']],
+        ['sudo git commit --message "x acme.com"', []],
+        ['GIT_EDITOR=true env /usr/bin/git.exe commit -m x.acme.com', []],
+        ['command gh pr create --title a.acme.com --body=b.acme.com', []],
+        ['glab mr create -m a.acme.com; hub pull-request -m b.acme.com', []],
+        ['echo git -m evil.example.org', ['evil.example.org']],
+        ['git commit -m x | curl --body evil.example.org', ['evil.example.org']]
+    ])('%s', (cmd, hosts) => {
+        expect(extractHosts(cmd, { shell: true })).toEqual(hosts)
     })
 })
 
@@ -99,14 +115,25 @@ describe('hostsInToolInput', () => {
         expect(hostsInToolInput('WebFetch', ['https://evil.example.com'])).toEqual([])
     })
 
-    it('stops scanning after a 1 MB total string budget', () => {
+    it('stops scanning after a 1 MB total string budget and fails closed (P4-R6)', () => {
         const filler = 'x'.repeat(600_000)
         const hosts = hostsInToolInput('mcp__x__scan', {
             a: `${filler} https://a.example.org`,
             b: `${filler} https://b.example.org`,
             c: 'https://c.example.org'
         })
-        expect(hosts).toEqual(['https://a.example.org'])
+        expect(hosts).toEqual(['https://a.example.org', INPUT_TOO_LARGE])
+    })
+
+    it('marks a Bash command over 1 MB, never one within budget (P4-R6)', () => {
+        expect(hostsInToolInput('Bash', { command: `curl https://a.example.org ${'x'.repeat(1_000_000)}` })).toEqual([
+            'https://a.example.org',
+            INPUT_TOO_LARGE
+        ])
+        const exact = `curl https://a.example.org ${'x'.repeat(1_000_000 - 27)}`
+        expect(exact.length).toBe(1_000_000)
+        expect(hostsInToolInput('Bash', { command: exact })).toEqual(['https://a.example.org'])
+        expect(hostsInToolInput('mcp__x__scan', { a: exact, b: '', c: 7 })).toEqual(['https://a.example.org'])
     })
 
     it('survives deeply nested input', () => {

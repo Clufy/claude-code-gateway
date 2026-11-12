@@ -22,8 +22,13 @@ export interface ExtractOptions {
 
 const MAX_HOST = 253
 const BUDGET = 1_000_000
+/** Appended by hostsInToolInput when the 1 MB budget ran out before every string was scanned (P4-R6). */
+export const INPUT_TOO_LARGE = '(tool input over 1 MB)'
 const FILE_EXTS = new Set('ai am cc gz in java md mk ml mov pl pm ps py rs sc sh so tf zip'.split(' '))
 const MESSAGE_FLAGS = ['-m', '-am', '--message', '--author', '--body', '--title'] // D4
+const MESSAGE_PROGRAMS = new Set(['git', 'gh', 'glab', 'hub']) // P4-R5: D4 applies only to these
+const PROGRAM_PREFIX = new Set(['sudo', 'env', 'command'])
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 const INTERPRETER = /^(node|nodejs|bun|deno|python[0-9.]*|py|pypy[0-9.]*|ruby|perl|php[0-9.]*|lua[0-9.]*|rscript)$/
 const CODE_FLAG = /^(-[A-Za-z]*[ceE]|-[pr]|--eval|--print)$/
 const SEGMENT = new Set([';', '|', '&', '(', ')', '\n', '\r'])
@@ -198,8 +203,12 @@ export function extractHosts(text: string, opts: ExtractOptions): string[] {
     let skipNext = false
     let codeNext = false
     let interpreter = false
+    let program: string | null = null // the segment's command, past sudo/env/command and VAR=value
     for (const w of shellWords(text)) {
-        if (w.newSegment) skipNext = codeNext = interpreter = false
+        if (w.newSegment) {
+            skipNext = codeNext = interpreter = false
+            program = null
+        }
         if (skipNext) {
             skipNext = false
             continue
@@ -207,16 +216,19 @@ export function extractHosts(text: string, opts: ExtractOptions): string[] {
         const code = codeNext
         codeNext = false
         const lw = w.text.toLowerCase()
-        if (MESSAGE_FLAGS.includes(lw)) {
-            skipNext = true
-            continue
+        const base = lw.slice(Math.max(lw.lastIndexOf('/'), lw.lastIndexOf('\\')) + 1).replace(/\.exe$/, '')
+        if (program === null && !PROGRAM_PREFIX.has(base) && !ASSIGNMENT.test(w.text)) program = base
+        if (program !== null && MESSAGE_PROGRAMS.has(program)) {
+            if (MESSAGE_FLAGS.includes(lw)) {
+                skipNext = true
+                continue
+            }
+            if (MESSAGE_FLAGS.some((f) => f.startsWith('--') && lw.startsWith(`${f}=`))) continue
         }
-        if (MESSAGE_FLAGS.some((f) => f.startsWith('--') && lw.startsWith(`${f}=`))) continue
         if (interpreter && CODE_FLAG.test(w.text)) {
             codeNext = true
             continue
         }
-        const base = lw.slice(Math.max(lw.lastIndexOf('/'), lw.lastIndexOf('\\')) + 1).replace(/\.exe$/, '')
         if (INTERPRETER.test(base)) interpreter = true
         scan(w.text, !code)
     }
@@ -231,21 +243,25 @@ export function hostsInToolInput(tool: string, input: unknown, knownDomains?: re
     if (!isObj(input)) return []
     const out = new Set<string>()
     let budget = BUDGET
+    let truncated = false
     const take = (s: string, shell: boolean) => {
+        if (s.length > budget) truncated = true
         const t = s.slice(0, budget)
         budget -= t.length
         for (const h of extractHosts(t, { shell, knownDomains })) out.add(h)
     }
+    // fail closed: an unscanned remainder could hide a host
+    const result = () => (truncated ? [...out, INPUT_TOO_LARGE] : [...out])
     if (SHELL_TOOLS.has(tool)) {
         if (typeof input.command === 'string') take(input.command, true)
-        return [...out]
+        return result()
     }
     const skip = FILE_CONTENT.get(tool) ?? []
     // iterative walk in document order (deep nesting must not overflow the stack)
     const stack: [string, unknown][] = Object.entries(input)
         .filter(([k]) => !skip.includes(k))
         .reverse()
-    while (stack.length > 0 && budget > 0) {
+    while (stack.length > 0 && !truncated) {
         const [key, v] = stack.pop()!
         if (typeof v === 'string') take(v, HOST_FIELD.test(key))
         else if (Array.isArray(v)) for (let i = v.length - 1; i >= 0; i--) stack.push([key, v[i]])
@@ -254,5 +270,5 @@ export function hostsInToolInput(tool: string, input: unknown, knownDomains?: re
             for (let i = entries.length - 1; i >= 0; i--) stack.push(entries[i])
         }
     }
-    return [...out]
+    return result()
 }
