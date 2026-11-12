@@ -111,7 +111,7 @@ function parseIsoInstant(v: unknown): number {
     return Date.parse(v as string)
 }
 // IDNA deviation characters resolve differently across clients (ß, ẞ, ς, ZWNJ, ZWJ), so they are refused
-const DEVIATION_RE = /[ßẞς‌‍]/
+const DEVIATION_RE = /[\u00DF\u1E9E\u03C2\u200C\u200D]/
 /** Deviation check on the host only (text after the last @), percent-decoded and NFKC-normalized. */
 function hasDeviation(authority: string): boolean {
     let host = authority.slice(authority.lastIndexOf('@') + 1)
