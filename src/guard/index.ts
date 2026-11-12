@@ -34,16 +34,21 @@ function responseText(name: string, input: unknown): string {
     return (shellCommand(name, input) ?? JSON.stringify(input) ?? '').slice(0, MAX_CUSTOM_INPUT)
 }
 
+/**
+ * outOfWindow: applyMode already logged engagement.out_of_window for this request. It counts as one of the 20 lines
+ * and leads the request-side ids, so it appears in x-proxy-detections (P4-R29).
+ */
 export function createGuard(
     cfg: ProxyConfig,
     requestId: string,
     engagement?: Engagement,
-    now: number = Date.now()
+    now: number = Date.now(),
+    outOfWindow = false
 ): Guard {
     const { disabled, severity, custom } = cfg.guard
     const requestCustom = custom.filter((c) => c.side === 'request')
     const responseCustom = custom.filter((c) => c.side === 'response')
-    let lines = 0
+    let lines = outOfWindow ? 1 : 0
 
     /** Runs one rule; logs a hit while under the cap. Returns whether the rule hit. */
     const run = (ruleId: string, rule: () => string | null): boolean => {
@@ -70,7 +75,7 @@ export function createGuard(
 
     return {
         scanRequest(body) {
-            const hits: string[] = []
+            const hits: string[] = outOfWindow ? ['engagement.out_of_window'] : []
             let segments: Segment[]
             try {
                 segments = newestTurn(body.messages)

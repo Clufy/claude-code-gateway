@@ -123,6 +123,20 @@ describe('HermesFilter', () => {
         expect(flushed.text).toBe('')
         expect(flushed.calls.length).toBe(0)
     })
+
+    it('droppedCall: set when a tool_call payload cannot be rebuilt, unset for good calls (P4-R30)', () => {
+        const unclosed = new HermesFilter(new Set(['f']))
+        expect(collect(unclosed, [`Sure. ${OPEN}{"name":`])).toEqual({ text: 'Sure. ', calls: [] })
+        expect(unclosed.droppedCall).toBe(true)
+
+        const closedJunk = new HermesFilter(new Set(['f']))
+        collect(closedJunk, [`${OPEN}not a call${CLOSE} ok`])
+        expect(closedJunk.droppedCall).toBe(true)
+
+        const good = new HermesFilter(new Set(['f']))
+        expect(collect(good, [`${OPEN}{"name": "f", "arguments": {}}${CLOSE}`]).calls).toHaveLength(1)
+        expect(good.droppedCall).toBe(false)
+    })
 })
 
 describe('repairJson', () => {

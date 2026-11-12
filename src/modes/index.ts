@@ -4,7 +4,8 @@ import { inWindow, MODES, type ProxyMode } from '../engagement'
 import { anthropicError } from '../errors'
 import { buildModeBlock } from './block'
 
-export type ModeOk = { ok: true; engagement?: string; mode: ProxyMode }
+/** outOfWindow: applyMode logged the engagement.out_of_window line (the guard counts it, P4-R29). */
+export type ModeOk = { ok: true; engagement?: string; mode: ProxyMode; outOfWindow?: true }
 export type ModeErr = { ok: false; response: Response }
 
 export const MODE_ALIAS = /^(redteam|purple)\//i
@@ -56,7 +57,8 @@ export function applyMode(
         appendSystem(body, buildModeBlock(mode, e))
     }
     const OUT_OF_WINDOW = 'engagement.out_of_window'
-    if (detect && !cfg.guard.disabled.has(OUT_OF_WINDOW) && !inWindow(e, now)) {
+    const outOfWindow = detect && !cfg.guard.disabled.has(OUT_OF_WINDOW) && !inWindow(e, now)
+    if (outOfWindow) {
         const iso = (t: number) => new Date(t).toISOString()
         logDetection({
             ruleId: OUT_OF_WINDOW,
@@ -66,7 +68,7 @@ export function applyMode(
             excerpt: `${iso(now)} outside ${iso(e.window.start)}..${iso(e.window.end)}`
         })
     }
-    return { ok: true, engagement: name, mode }
+    return outOfWindow ? { ok: true, engagement: name, mode, outOfWindow } : { ok: true, engagement: name, mode }
 }
 
 /** Appends a text block to body.system; existing blocks are left as they are. */

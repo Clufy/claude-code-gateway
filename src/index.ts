@@ -306,7 +306,7 @@ function guardFields(
 ): Pick<FinalizeInput, 'guard' | 'detections'> {
     try {
         const engagement = mode.engagement === undefined ? undefined : config.engagements.get(mode.engagement)
-        const guard = createGuard(config, requestId, engagement)
+        const guard = createGuard(config, requestId, engagement, Date.now(), mode.outOfWindow === true)
         return { guard, detections: guard.scanRequest(body) }
     } catch {
         return {} // flag only: a guard failure never breaks the request

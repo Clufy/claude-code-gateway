@@ -329,6 +329,9 @@ messages request (`count_tokens` does not log it):
 }
 ```
 
+The response carries `x-proxy-detections: engagement.out_of_window` (see Session guard), and
+`GUARD_RULES` can disable the rule or change its severity.
+
 The request log line gains `engagement` and `mode` fields (see Rate limiting and logging).
 
 ### Scope check
@@ -392,8 +395,10 @@ Response `200`:
 ## Session guard
 
 Every `/v1/messages` request (both routes, not `count_tokens`) passes a flag-only guard. It
-never blocks, delays or changes a response: a streamed body is byte-identical with or without
-detections, and a guard failure is dropped silently. Only the scope hook blocks.
+never blocks a request or changes response bytes: a streamed body is byte-identical with or
+without detections, and a guard failure is dropped silently. It does add its rules' CPU time
+(the request scan runs before dispatch; tool blocks are checked as they stream past). Only the
+scope hook blocks.
 
 The request side scans the **newest turn**: the trailing `user` messages after the last
 `assistant` message (string content, text blocks and `tool_result` content). The response side
@@ -427,9 +432,14 @@ Each hit logs one line:
   4-character type prefix (`AKIA…[redacted]`, `ghp_…[redacted]`, `eyJh…[redacted]`). Values after
   a keyword (`password=`, `"apiKey": "…"`) and other long high-entropy runs show
   no characters at all (`[redacted]`).
+- Keyword values, camelCase ones such as `dbPassword` or `accessToken` included, are always
+  redacted in excerpts, even when `secret.egress` does not fire; ordinary `token: "…"` text is
+  over-redacted as a result.
 - Caps: one line per rule per request segment (each text block or `tool_result`) and per rule
-  per `tool_use` block, and at most 20 detection lines per request. The out-of-window line is
-  logged before the guard runs and does not count against the 20.
+  per `tool_use` block, and at most 20 detection lines per request, the out-of-window line
+  included. Further hits are dropped (request-side ids still reach the header).
+- A streamed `tool_use` input over 1 MB is cut at 1 MB and no longer parses, so `cmd.risky` and
+  `scope.out_of_scope` skip it; only response custom rules see the cut text.
 
 Request-side hits are also listed in a response header, so the client sees them without logs:
 
@@ -438,7 +448,7 @@ x-proxy-detections: secret.egress,inject.instruction
 ```
 
 It holds the unique request-side rule ids (custom request rules included) in first-hit order,
-and is absent when there are none. Response-side hits are only logged, because the headers are
+with `engagement.out_of_window` first when it fired, and is absent when there are none. Response-side hits are only logged, because the headers are
 sent before the response body exists.
 
 See hits as they happen with `npx wrangler tail`; detection lines carry `"event":"detection"`

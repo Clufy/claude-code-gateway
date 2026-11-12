@@ -527,7 +527,7 @@ export class WorkersAIProvider {
         const flushed = hermes.flush()
         const visibleText = pushed.text + flushed.text
         const hermesCalls = [...pushed.calls, ...flushed.calls]
-        this.recordToolText(hermesCalls.length, visibleText)
+        this.recordToolText(hermesCalls.length, visibleText, hermes.droppedCall)
 
         const content: any[] = []
         if (reasoning) content.push({ type: 'thinking', thinking: reasoning })
@@ -567,9 +567,9 @@ export class WorkersAIProvider {
         )
     }
 
-    private recordToolText(calls: number, emittedText: string): void {
+    private recordToolText(calls: number, emittedText: string, droppedCall: boolean): void {
         this.stats.toolCallsFromText += calls
-        if (UNPARSED_TOOL_TEXT.test(emittedText)) this.stats.unparsedToolText = true
+        if (droppedCall || UNPARSED_TOOL_TEXT.test(emittedText)) this.stats.unparsedToolText = true
     }
 
     private parseSsePayload(line: string): any | null {
@@ -820,7 +820,7 @@ export class WorkersAIProvider {
                     hermesCallCount += calls.length
                     emitHermesCalls(controller, calls)
                 }
-                recordToolText(hermesCallCount, state.text)
+                recordToolText(hermesCallCount, state.text, hermes.droppedCall)
 
                 if (state.toolCalls.size > state.toolBlocksEmitted) {
                     emitToolCalls(controller)

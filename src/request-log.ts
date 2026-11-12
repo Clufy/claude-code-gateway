@@ -55,6 +55,7 @@ export interface FinalizeInput {
 }
 
 const MAX_TOOL_JSON = 1024 * 1024 // per streamed tool_use block
+const MAX_OPEN_TOOL_BLOCKS = 16 // P4-R30: further starts are ignored until one closes
 
 /** Feeds a finished tool_use input to the guard; a guard failure is lost silently. */
 function guardToolUse(guard: Guard | undefined, name: unknown, input: unknown): void {
@@ -81,6 +82,7 @@ function toolTracker(guard: Guard | undefined) {
         if (!guard) return
         try {
             if (event === 'content_block_start' && data?.content_block?.type === 'tool_use') {
+                if (blocks.size >= MAX_OPEN_TOOL_BLOCKS) return
                 blocks.set(data.index, { name: data.content_block.name, json: '' })
             } else if (event === 'content_block_delta' && data?.delta?.type === 'input_json_delta') {
                 const b = blocks.get(data.index)

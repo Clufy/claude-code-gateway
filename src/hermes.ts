@@ -21,6 +21,8 @@ export interface HermesCall {
 export class HermesFilter {
     private buffer = ''
     private knownTools: Set<string>
+    /** A <tool_call> payload was dropped because no call could be rebuilt from it (P4-R30: unparsed tool text). */
+    droppedCall = false
 
     constructor(knownTools: Set<string> = new Set()) {
         this.knownTools = knownTools
@@ -54,11 +56,13 @@ export class HermesFilter {
                 const call = toCall(this.buffer.slice(OPEN_TAG.length))
                 this.buffer = ''
                 if (call) calls.push(call)
+                else this.droppedCall = true
                 break
             }
             const call = toCall(this.buffer.slice(OPEN_TAG.length, close))
             this.buffer = this.buffer.slice(close + CLOSE_TAG.length)
             if (call) calls.push(call)
+            else this.droppedCall = true
         }
 
         if (this.buffer.length > 0) {

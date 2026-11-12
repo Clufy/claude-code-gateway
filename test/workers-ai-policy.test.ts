@@ -127,6 +127,17 @@ describe('Workers AI policy', () => {
         expect(stats.unparsedToolText).toBe(true)
     })
 
+    it('flags an unclosed tool_call hermes drops, streaming and not (P4-R30)', async () => {
+        for (const stream of [false, true]) {
+            const stats = newStats()
+            const ai = fakeAI([{ response: `Sure. ${OPEN}{"name":` }])
+            const res = await send(ai.run, { stats }, { stream, tools: weatherTools })
+            await res.text()
+            expect(stats.toolCallsFromText).toBe(0)
+            expect(stats.unparsedToolText).toBe(true)
+        }
+    })
+
     it('flags unparsed tool text when streaming', async () => {
         const stats = newStats()
         const ai = fakeAI([{ response: '{"name": "get_weather", "arguments": {"city": "Paris"' }])
