@@ -48,28 +48,47 @@ describe('ENGAGEMENTS parsing', () => {
         expect(e.scope.cidrs).toEqual(['203.0.113.5', '2001:db8::1'])
     })
 
+    const W = MIN.window
+    const sc = (scope: unknown) => ({ x: { ...MIN, scope } })
     it.each([
-        ['bad JSON', '{nope'],
-        ['an array', '[]'],
-        ['a bad name', { 'a b': MIN }],
-        ['a missing scope', { x: { window: MIN.window } }],
-        ['an empty scope', { x: { ...MIN, scope: { domains: [] } } }],
-        ['a * domain', { x: { ...MIN, scope: { domains: ['*'] } } }],
-        ['a *.com domain', { x: { ...MIN, scope: { domains: ['*.com'] } } }],
-        ['a bad exclude domain', { x: { ...MIN, exclude: { domains: ['a b'] } } }],
-        ['a bad CIDR', { x: { ...MIN, scope: { cidrs: ['203.0.113.0/33'] } } }],
-        ['a bad IPv6 CIDR', { x: { ...MIN, scope: { cidrs: ['2001:db8::/129'] } } }],
-        ['a non-URL llmTarget', { x: { ...MIN, scope: { llmTargets: ['not a url'] } } }],
-        ['a non-http llmTarget', { x: { ...MIN, scope: { llmTargets: ['ftp://a.test'] } } }],
-        ['a missing window', { x: { scope: MIN.scope } }],
-        ['an unparseable date', { x: { ...MIN, window: { start: 'soon', end: MIN.window.end } } }],
-        ['start >= end', { x: { ...MIN, window: { start: MIN.window.end, end: MIN.window.start } } }],
-        ['an unknown defaultMode', { x: { ...MIN, defaultMode: 'blue' } }],
-        ['a non-string roe', { x: { ...MIN, roe: 1 } }],
-        ['an unknown top-level key (scop)', { x: { ...MIN, scop: {} } }],
-        ['an unknown scope key', { x: { ...MIN, scope: { domains: ['a.test'], extra: [] } } }],
-        ['an unknown window key', { x: { ...MIN, window: { ...MIN.window, tz: 'UTC' } } }]
-    ])('rejects %s', (_label, input) => {
+        ['bad JSON', '{nope', /not valid JSON/],
+        ['an array', '[]', /must be a JSON object/],
+        ['a bad name', { 'a b': MIN }, /"a b"/],
+        ['a missing scope', { x: { window: W } }, /"x" requires a scope/],
+        ['an empty scope', sc({ domains: [] }), /"x" scope must contain/],
+        ['a * domain', sc({ domains: ['*'] }), /"x" scope\.domains entry "\*"/],
+        ['a *.com domain', sc({ domains: ['*.com'] }), /"x" scope\.domains entry "\*\.com"/],
+        ['a backslash domain', sc({ domains: ['a.test\\evil'] }), /"x" scope\.domains entry/],
+        ['a percent domain', sc({ domains: ['a%2etest'] }), /"x" scope\.domains entry/],
+        ['a control char domain', sc({ domains: ['a.test'] }), /"x" scope\.domains entry/],
+        ['a bad exclude domain', { x: { ...MIN, exclude: { domains: ['a b'] } } }, /"x" exclude\.domains entry/],
+        ['an unknown exclude key', { x: { ...MIN, exclude: { cidr: [] } } }, /"x" exclude has unknown key "cidr"/],
+        ['a bad CIDR', sc({ cidrs: ['203.0.113.0/33'] }), /"x" scope\.cidrs entry/],
+        ['a bad IPv6 CIDR', sc({ cidrs: ['2001:db8::/129'] }), /"x" scope\.cidrs entry/],
+        ['a non-URL llmTarget', sc({ llmTargets: ['not a url'] }), /"x" scope\.llmTargets entry/],
+        ['a non-http llmTarget', sc({ llmTargets: ['ftp://a.test'] }), /"x" scope\.llmTargets entry/],
+        ['a javascript: llmTarget', sc({ llmTargets: ['javascript:alert(1)'] }), /"x" scope\.llmTargets entry/],
+        ['null in a list', sc({ domains: [null] }), /"x" scope\.domains must be an array of strings/],
+        ['a number in a list', sc({ cidrs: [5] }), /"x" scope\.cidrs must be an array of strings/],
+        ['a nested array in a list', sc({ domains: [['a.test']] }), /"x" scope\.domains must be an array/],
+        ['a missing window', { x: { scope: MIN.scope } }, /"x" requires a window/],
+        ['an unparseable date', { x: { ...MIN, window: { start: 'soon', end: W.end } } }, /"x" window\.start/],
+        ['a free-form date', { x: { ...MIN, window: { start: 'Nov 10 2026', end: W.end } } }, /"x" window\.start/],
+        ['a numeric-string date', { x: { ...MIN, window: { start: '1', end: W.end } } }, /"x" window\.start/],
+        [
+            'a zoneless date',
+            { x: { ...MIN, window: { start: '2026-01-01T00:00:00', end: W.end } } },
+            /"x" window\.start/
+        ],
+        ['a date-only value', { x: { ...MIN, window: { start: '2026-01-01', end: W.end } } }, /"x" window\.start/],
+        ['a numeric date', { x: { ...MIN, window: { start: 5, end: W.end } } }, /"x" window\.start/],
+        ['start >= end', { x: { ...MIN, window: { start: W.end, end: W.start } } }, /"x" window\.start must be before/],
+        ['an unknown defaultMode', { x: { ...MIN, defaultMode: 'blue' } }, /"x" defaultMode/],
+        ['a non-string roe', { x: { ...MIN, roe: 1 } }, /"x" roe/],
+        ['an unknown top-level key (scop)', { x: { ...MIN, scop: {} } }, /"x" has unknown key "scop"/],
+        ['an unknown scope key', sc({ domains: ['a.test'], extra: [] }), /"x" scope has unknown key "extra"/],
+        ['an unknown window key', { x: { ...MIN, window: { ...W, tz: 'UTC' } } }, /"x" window has unknown key "tz"/]
+    ])('rejects %s', (_label, input, message) => {
         let err: unknown
         try {
             eng(input)
@@ -78,6 +97,18 @@ describe('ENGAGEMENTS parsing', () => {
         }
         expect(err).toBeInstanceOf(ConfigError)
         expect((err as ConfigError).variable).toBe('ENGAGEMENTS')
+        expect((err as ConfigError).message).toMatch(message)
+    })
+
+    it.each([[{ a: 1 }], [5], [null], [true], [[]]])('rejects a non-string ENGAGEMENTS value %j', (v) => {
+        expect(() => loadConfig({ ENGAGEMENTS: v })).toThrow(ConfigError)
+    })
+
+    it('accepts ISO date-times with a numeric offset', () => {
+        const e = eng({
+            x: { ...MIN, window: { start: '2026-11-10T00:00:00+05:00', end: '2026-11-11T00:00:00.500Z' } }
+        })
+        expect(e.engagements.get('x')!.window.start).toBe(Date.parse('2026-11-09T19:00:00Z'))
     })
 
     it('treats prototype-ish names as ordinary keys', () => {
@@ -99,10 +130,12 @@ describe('IP and CIDR helpers', () => {
     it('parses IPv6 forms', () => {
         expect(parseIp('::1')?.value).toBe(1n)
         expect(parseIp('::')?.value).toBe(0n)
+        expect(parseIp('1::')?.value).toBe(2n ** 112n)
         expect(parseIp('::ffff:203.0.113.5')?.value).toBe(0xffffn * 2n ** 32n + parseIp('203.0.113.5')!.value)
         expect(parseIp('2001:db8::1')?.value).toBe(0x20010db8n * 2n ** 96n + 1n)
         expect(parseCidr('2001:db8::/32')?.bits).toBe(32)
         expect(parseCidr('::1')?.bits).toBe(128)
+        expect(parseCidr('2001:db8:1::/32')?.base).toBe(0x20010db8n * 2n ** 96n)
     })
 
     it.each([
@@ -116,7 +149,16 @@ describe('IP and CIDR helpers', () => {
         '1.2.3.4/33',
         '::/129',
         'a/8',
-        '1.2.3.4/'
+        '1.2.3.4/',
+        '1.2.3.4/-1',
+        '1.2.3.4/x',
+        '1.2.3.4/024',
+        '1:',
+        '1:2:3:4:5:6:7:',
+        ':1',
+        '1:2:3:4:5:6:7:8:9',
+        'g::1',
+        '+1.2.3.4'
     ])('rejects %s', (s) => {
         expect(parseCidr(s)).toBeNull()
     })

@@ -185,6 +185,6 @@ export function loadConfig(env: unknown): ProxyConfig {
         upstreamTtfbMs: parseInt10(raw, 'UPSTREAM_TTFB_MS', DEFAULT_UPSTREAM_TTFB_MS),
         upstreamTotalMs: parseInt10(raw, 'UPSTREAM_TOTAL_MS', DEFAULT_UPSTREAM_TOTAL_MS),
         routes: parseRoutes(raw, { allowedHosts, allowHttp }),
-        engagements: parseEngagements(str(raw, 'ENGAGEMENTS'))
+        engagements: parseEngagements(raw.ENGAGEMENTS)
     }
 }

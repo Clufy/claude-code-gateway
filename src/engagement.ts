@@ -98,6 +98,7 @@ export function parseCidr(s: string): ParsedCidr | null {
     return { family: ip.family, base: (ip.value >> hostBits) << hostBits, bits }
 }
 
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
 const MODES: readonly string[] = ['redteam', 'purple', 'off']
@@ -114,7 +115,7 @@ function isObj(v: unknown): v is Obj {
 
 /** Lowercase, drop a trailing dot, punycode via the URL parser. Null when not a plain hostname. */
 function normalizeHostname(h: string): string | null {
-    if (h === '' || /[/:@?#\s*]/.test(h)) return null
+    if (!/^[A-Za-z0-9.\u0080-￿-]+$/.test(h) || /\s/.test(h)) return null
     let host: string
     try {
         host = new URL(`http://${h}`).hostname
@@ -134,7 +135,7 @@ function normalizeHostname(h: string): string | null {
  */
 export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> {
     const out = new Map<string, Engagement>()
-    if (raw === undefined || raw === null) return out
+    if (raw === undefined) return out
     const bad = (reason: string): never => {
         throw new ConfigError('ENGAGEMENTS', reason)
     }
@@ -217,8 +218,9 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
         noUnknown(value.window, WINDOW_KEYS, `${at} window`)
         const time = (k: 'start' | 'end'): number => {
             const t = value.window as Obj
-            const n = typeof t[k] === 'string' ? Date.parse(t[k]) : NaN
-            return Number.isNaN(n) ? bad(`${at} window.${k} must be a parseable date string`) : n
+            const v = t[k]
+            const n = typeof v === 'string' && ISO_RE.test(v) ? Date.parse(v) : NaN
+            return Number.isNaN(n) ? bad(`${at} window.${k} must be an ISO 8601 date-time with Z or an offset`) : n
         }
         const start = time('start')
         const end = time('end')
