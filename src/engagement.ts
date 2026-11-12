@@ -112,6 +112,16 @@ function parseIsoInstant(v: unknown): number {
 }
 // IDNA deviation characters resolve differently across clients (ß, ς, ZWNJ, ZWJ), so they are refused
 const DEVIATION_RE = /[ßς‌‍]/
+/** Deviation check on decoded, NFKC-normalized, lowercased text, so U+1E9E and %C3%9F cannot slip past. */
+function hasDeviation(s: string): boolean {
+    let t = s
+    try {
+        t = decodeURIComponent(s)
+    } catch {
+        // keep the raw text
+    }
+    return DEVIATION_RE.test(t.normalize('NFKC').toLowerCase())
+}
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
 const MODES: readonly string[] = ['redteam', 'purple', 'off']
@@ -128,7 +138,7 @@ function isObj(v: unknown): v is Obj {
 
 /** Lowercase, drop a trailing dot, punycode via the URL parser. Null when not a plain hostname. */
 function normalizeHostname(h: string): string | null {
-    if (!/^[A-Za-z0-9.\u0080-￿-]+$/.test(h) || /\s/.test(h) || DEVIATION_RE.test(h)) return null
+    if (!/^[A-Za-z0-9.\u0080-￿-]+$/.test(h) || /\s/.test(h) || hasDeviation(h)) return null
     let host: string
     try {
         host = new URL(`http://${h}`).hostname
@@ -185,7 +195,17 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
         })
     const cidrs = (v: unknown, where: string): string[] =>
         list(v, where).map((c) => {
-            if (parseCidr(c) === null) return bad(`${where} entry "${c}" is not a valid CIDR or IP`)
+            const p = parseCidr(c)
+            if (p === null) return bad(`${where} entry "${c}" is not a valid CIDR or IP`)
+            // a short IPv6 prefix covering ::ffff:0:0/96 would never match the IPv4-collapsed targets
+            if (p.family === 6 && p.bits < 96) {
+                const h = BigInt(128 - p.bits)
+                if (p.base >> h === (0xffffn << 32n) >> h) {
+                    return bad(
+                        `${where} entry "${c}" overlaps the IPv4-mapped range; write IPv4-mapped ranges as IPv4 CIDRs`
+                    )
+                }
+            }
             return c
         })
 
@@ -276,11 +296,12 @@ function parseTargetUrl(input: string): URL | null {
     if (input === '' || /[\s\\]/.test(input)) return null
     const scheme = SCHEME_RE.exec(input)
     const rest = scheme === null ? input : input.slice(scheme[0].length)
-    if (DEVIATION_RE.test(rest.split(/[/?#]/)[0])) return null
+    if (scheme !== null && rest.startsWith('/')) return null // empty authority
+    if (hasDeviation(rest.split(/[/?#]/)[0])) return null
     // a bare IPv6 address has no brackets, and http://2001:db8::1 does not parse
-    const bareV6 = scheme === null && input.split(':').length > 2 && BARE_V6_RE.test(input)
+    const bareV6 = rest.split(':').length > 2 && BARE_V6_RE.test(rest)
     try {
-        return new URL(`http://${bareV6 ? `[${input}]` : rest}`)
+        return new URL(`http://${bareV6 ? `[${rest}]` : rest}`)
     } catch {
         return null
     }

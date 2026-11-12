@@ -44,6 +44,13 @@ describe('checkScope verdicts', () => {
         ['https://chat.acme-test.com/apix', 'in_scope'],
         ['https://MAIL.acme-test.com./x', 'excluded'],
         ['ssh://root@app.acme-test.com', 'in_scope'],
+        ['STRAẞE.acme-test.com', 'invalid_target'],
+        ['ẞ.acme-test.com', 'invalid_target'],
+        ['stra%C3%9Fe.acme-test.com', 'invalid_target'],
+        ['https://stra%C3%9Fe.acme-test.com/', 'invalid_target'],
+        ['file:///etc/passwd', 'invalid_target'],
+        ['ssh:///app.acme-test.com', 'invalid_target'],
+        ['ssh://a@app.acme-test.com@evil.com', 'out_of_scope'],
         ['ftp://203.0.114.1', 'out_of_scope'],
         ['app.acme-test.com..', 'invalid_target'],
         ['app.acme-test.com\\@evil.com', 'invalid_target'],
@@ -94,12 +101,27 @@ describe('checkScope verdicts', () => {
         expect(checkScope(sc, '198.51.101.9', NOW).verdict).toBe('out_of_scope')
     })
 
+    it('keeps the last @ host and brackets bare IPv6 after a scheme', () => {
+        expect(checkScope(acme, 'ssh://a@app.acme-test.com@evil.com', NOW).target).toBe('evil.com')
+        const e = make({ scope: { cidrs: ['2001:db8::/32'] } })
+        expect(checkScope(e, 'ssh://2001:db8::1', NOW).verdict).toBe('in_scope')
+        expect(checkScope(e, 'ssh://[2001:db8::1]', NOW).verdict).toBe('in_scope')
+    })
+
+    it('rejects short IPv6 CIDRs overlapping the mapped range', () => {
+        for (const c of ['::ffff:0:0/95', '::/0']) {
+            expect(() => make({ scope: { cidrs: [c] } })).toThrow(/IPv4 CIDRs/)
+            expect(() => make({ exclude: { cidrs: [c] } })).toThrow(/exclude.cidrs/)
+        }
+        expect(() => make({ scope: { cidrs: ['2001:db8::/32', '::ffff:0:0/96'] } })).not.toThrow()
+    })
+
     it('pins the IPv6 target form', () => {
         expect(normalizeTarget('2001:DB8:0:0::1')).toBe('2001:db8::1')
     })
 
     it('rejects IDNA deviation characters in config domains', () => {
-        for (const d of ['straße.test', '*.aς.test', 'a‌b.test']) {
+        for (const d of ['STRAẞE.test', '*.ẞ.test', 'straße.test', '*.aς.test', 'a‌b.test']) {
             expect(() => make({ scope: { domains: [d] } })).toThrow(/scope\.domains/)
         }
     })
