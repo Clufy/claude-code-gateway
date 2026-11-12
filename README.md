@@ -92,18 +92,18 @@ deleted on deploy; secrets (`PROXY_KEY`) are not. Edit the `vars` block, then de
 }
 ```
 
-| Var                 | Default                   | Purpose                                                                                          |
-| ------------------- | ------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ALLOWED_HOSTS`     | built-in list (see below) | Comma-separated provider hosts; `*` allows any                                                   |
-| `ALLOW_HTTP`        | `false`                   | Allow `http://` provider URLs                                                                    |
-| `ALLOW_ANONYMOUS`   | `false`                   | Run without `PROXY_KEY`                                                                          |
-| `MAX_BODY_BYTES`    | `33554432` (32 MiB)       | Max POST body size                                                                               |
-| `UPSTREAM_TTFB_MS`  | `120000`                  | Time to first upstream byte; also the max silence between stream chunks on every streaming route |
-| `UPSTREAM_TOTAL_MS` | `600000`                  | Per-attempt limit, non-streaming requests                                                        |
-| `MODEL_ROUTES`      | none                      | JSON model routing table (see below)                                                             |
-| `MODELS`            | built-in Workers AI list  | Models returned by `GET /v1/models`                                                              |
-| `VISION_MODELS`     | none                      | Models flagged as vision-capable                                                                 |
-| `MULTI_TOOL_MODELS` | none                      | Models flagged as supporting multiple tool calls                                                 |
+| Var                 | Default                   | Purpose                                                                                                 |
+| ------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `ALLOWED_HOSTS`     | built-in list (see below) | Comma-separated provider hosts; `*` allows any                                                          |
+| `ALLOW_HTTP`        | `false`                   | Allow `http://` provider URLs                                                                           |
+| `ALLOW_ANONYMOUS`   | `false`                   | Run without `PROXY_KEY`                                                                                 |
+| `MAX_BODY_BYTES`    | `33554432` (32 MiB)       | Max POST body size                                                                                      |
+| `UPSTREAM_TTFB_MS`  | `120000`                  | Time to first upstream byte; also the max silence between stream chunks on every streaming route        |
+| `UPSTREAM_TOTAL_MS` | `600000`                  | Limit for non-streaming requests: per attempt on external providers, all retries together on Workers AI |
+| `MODEL_ROUTES`      | none                      | JSON model routing table (see below)                                                                    |
+| `MODELS`            | built-in Workers AI list  | Models returned by `GET /v1/models`                                                                     |
+| `VISION_MODELS`     | none                      | Models flagged as vision-capable                                                                        |
+| `MULTI_TOOL_MODELS` | none                      | Models flagged as supporting multiple tool calls                                                        |
 
 Default `ALLOWED_HOSTS`: `api.openai.com`, `generativelanguage.googleapis.com`,
 `api.anthropic.com`, `openrouter.ai`, `api.groq.com`, `api.deepseek.com`,
@@ -116,7 +116,7 @@ Code sends to a backend. A model with no matching route goes to Workers AI with 
 unchanged.
 
 ```jsonc
-"MODEL_ROUTES": "{\"claude-sonnet-*\": {\"provider\": \"workers-ai\", \"model\": \"@cf/zai-org/glm-5.3\", \"fallback\": [\"deepseek-chat\"]}, \"deepseek-chat\": {\"provider\": \"openai\", \"model\": \"deepseek-chat\", \"baseUrl\": \"api.deepseek.com\", \"keySecret\": \"DEEPSEEK_KEY\"}}"
+"MODEL_ROUTES": "{\"claude-sonnet-*\": {\"provider\": \"workers-ai\", \"model\": \"@cf/zai-org/glm-5.3\", \"fallback\": [\"deepseek-chat\"]}, \"deepseek-chat\": {\"provider\": \"openai\", \"model\": \"deepseek-chat\", \"baseUrl\": \"https://api.deepseek.com/v1\", \"keySecret\": \"DEEPSEEK_KEY\"}}"
 ```
 
 ```bash
@@ -125,22 +125,27 @@ npx wrangler secret put DEEPSEEK_KEY
 
 Each route has these keys (unknown keys are rejected):
 
-| Key             | Required                   | Meaning                                                                                      |
-| --------------- | -------------------------- | -------------------------------------------------------------------------------------------- |
-| `provider`      | yes                        | `workers-ai`, `openai`, `openai-responses` or `gemini`                                       |
-| `model`         | yes                        | Model name sent to the backend                                                               |
-| `baseUrl`       | non-`workers-ai` providers | Provider URL, checked against `ALLOWED_HOSTS` and `ALLOW_HTTP` like the path convention      |
-| `keySecret`     | non-`workers-ai` providers | Name (`[A-Z][A-Z0-9_]*`) of a secret set with `wrangler secret put`; `PROXY_KEY` is rejected |
-| `fallback`      | no                         | Up to 3 model names to try after this one                                                    |
-| `contextTokens` | no                         | Context window reported by `GET /v1/models`                                                  |
+| Key             | Required                   | Meaning                                                                                                                                                                                                      |
+| --------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `provider`      | yes                        | `workers-ai`, `openai`, `openai-responses` or `gemini`                                                                                                                                                       |
+| `model`         | yes                        | Model name sent to the backend                                                                                                                                                                               |
+| `baseUrl`       | non-`workers-ai` providers | Provider URL including any version prefix (e.g. `https://api.openai.com/v1`); the proxy appends `chat/completions` or `responses`. Checked against `ALLOWED_HOSTS` and `ALLOW_HTTP` like the path convention |
+| `keySecret`     | non-`workers-ai` providers | Name (`[A-Z][A-Z0-9_]*`) of a secret set with `wrangler secret put`; `PROXY_KEY` is rejected                                                                                                                 |
+| `fallback`      | no                         | Up to 3 model names to try after this one                                                                                                                                                                    |
+| `contextTokens` | no                         | Context window reported by `GET /v1/models`. Without it a route to a model the proxy doesn't know reports 24 000, so set it for large-context models                                                         |
 
 - **Matching:** a key without `*` is an exact match and always wins. Otherwise the first
   glob key (in the order written) whose `*` wildcards match the name is used.
 - **Fallback:** only before a backend's response is accepted (before any backend content is
   relayed; keepalive pings may already have reached the client). The proxy moves to the next
   name in `fallback` on a `429`, any `5xx` (including a timeout `504`) or a connection error.
-  Each fallback name is routed through `MODEL_ROUTES` too, and duplicates are skipped. The
-  last target's result is returned as is.
+  Each fallback name is routed through `MODEL_ROUTES` too (so a catch-all `"*"` route also
+  captures fallback names), and duplicates are skipped. The last target's result is
+  returned as is.
+- **Workers AI errors:** a Workers AI `429` or `5xx` is retried twice with backoff, then
+  returned with its status (`429 rate_limit_error`, or `502 api_error` for a `5xx`), so
+  route fallback applies. Other `4xx` errors (such as an unknown model) are returned at once
+  as `invalid_request_error`.
 - **Errors:** a malformed `MODEL_ROUTES`, or a `keySecret` that is not set, makes the
   request fail with `500 invalid config: <VAR>`. Secrets are resolved up front, so a missing
   secret for a fallback target fails every request on that route, even when the primary is
@@ -179,19 +184,21 @@ Cloudflare rate-limiting binding; over-limit requests get `429 rate_limit_error`
 with a `retry-after` header. Each messages request also emits one JSON log line
 (`event: "request"`) visible in `wrangler tail` and Workers Logs:
 
-| Field                                   | Meaning                                                                |
-| --------------------------------------- | ---------------------------------------------------------------------- |
-| `requestId`, `method`, `path`           | Request identity                                                       |
-| `status`, `durationMs`                  | Final status and total time                                            |
-| `streamed`                              | `true` for streamed responses                                          |
-| `model`                                 | Model name the client requested                                        |
-| `route`                                 | Matching `MODEL_ROUTES` key, if any                                    |
-| `backend`                               | Final target as `provider:model`                                       |
-| `fallbackUsed`                          | `true` if a fallback target answered                                   |
-| `ttfbMs`                                | Time until the backend answered                                        |
-| `inputTokens`, `outputTokens`           | Usage reported by the backend                                          |
-| `toolCallsFromText`, `unparsedToolText` | Tool calls recovered from, or left in, plain model text                |
-| `keepalive`                             | `true` if keepalive committed the response before the backend answered |
+| Field                                   | Meaning                                                                                              |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `requestId`, `method`, `path`           | Request identity                                                                                     |
+| `status`, `durationMs`                  | Final status and total time                                                                          |
+| `streamed`                              | `true` for streamed responses                                                                        |
+| `model`                                 | Model name the client requested                                                                      |
+| `route`                                 | Matching `MODEL_ROUTES` key, if any                                                                  |
+| `backend`                               | Final target as `provider:model`; path-convention requests log only the provider type                |
+| `fallbackUsed`                          | `true` if a fallback target answered                                                                 |
+| `ttfbMs`                                | Time until the backend answered                                                                      |
+| `inputTokens`, `outputTokens`           | Usage reported by the backend; on Workers AI often the proxy's characters/4 estimate                 |
+| `toolCallsFromText`, `unparsedToolText` | Tool calls recovered from, or left in, plain model text                                              |
+| `keepalive`                             | `true` if keepalive committed the response before the backend answered                               |
+| `streamError`                           | Streamed response ended with an SSE `error` event (its `error.type`), or `error` if the stream broke |
+| `cancelled`                             | `true` if the client cancelled the stream before it ended                                            |
 
 When keepalive has already committed, `status` is the backend's real status (the client
 saw `200`), `keepalive: true` is set, and `inputTokens` is the proxy's estimate.
@@ -272,7 +279,10 @@ Flags: `--base` (default `ANTHROPIC_BASE_URL`), `--key` (default: the `x-api-key
 (default `qualify-results`). Requests run sequentially. Results go to
 `<out>/<YYYY-MM-DD-HHmmss>.json` (raw runs) and `.md` (summary, also printed); bad arguments
 exit with code `2`. The runs send `x-proxy-debug: 1`, so the report also shows
-tool calls recovered from text and fallback use.
+tool calls recovered from text and fallback use. Requests use `max_tokens` 4096; a failure
+on a response that stopped on `max_tokens` says `(stop_reason max_tokens)`. TTFB is the
+time to the first content event (`content_block_start` or `content_block_delta`), on
+streaming requests only, so the proxy's own `message_start` and keepalive pings don't count.
 
 | Scenario             | Pass when                                                                        |
 | -------------------- | -------------------------------------------------------------------------------- |
