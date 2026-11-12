@@ -185,26 +185,27 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
         }
         return v as string[]
     }
+    // Entry messages name the field and index, never the value: config errors are logged on every request.
     const domains = (v: unknown, where: string): string[] =>
-        list(v, where).map((d) => {
+        list(v, where).map((d, i) => {
             const wild = d.startsWith('*.')
             const host = normalizeHostname(wild ? d.slice(2) : d)
-            if (host === null) return bad(`${where} entry "${d}" is not a hostname or *.hostname`)
-            if (wild && !host.includes('.'))
-                return bad(`${where} entry "${d}" is too broad (a wildcard needs a domain)`)
+            if (host === null) return bad(`${where}[${i}]: invalid domain`)
+            if (wild && !host.includes('.')) return bad(`${where}[${i}]: too broad (a wildcard needs a domain)`)
             return wild ? `*.${host}` : host
         })
-    const cidrs = (v: unknown, where: string): string[] =>
-        list(v, where).map((c) => {
+    const cidrs = (v: unknown, where: string, inScope: boolean): string[] =>
+        list(v, where).map((c, i) => {
             const p = parseCidr(c)
-            if (p === null) return bad(`${where} entry "${c}" is not a valid CIDR or IP`)
+            if (p === null) return bad(`${where}[${i}]: invalid CIDR or IP`)
+            if (inScope && p.bits < (p.family === 4 ? 8 : 16)) {
+                return bad(`${where}[${i}]: too broad (scope CIDRs need at least /8 for IPv4, /16 for IPv6)`)
+            }
             // a short IPv6 prefix covering ::ffff:0:0/96 would never match the IPv4-collapsed targets
             if (p.family === 6 && p.bits < 96) {
                 const h = BigInt(128 - p.bits)
                 if (p.base >> h === (0xffffn << 32n) >> h) {
-                    return bad(
-                        `${where} entry "${c}" overlaps the IPv4-mapped range; write IPv4-mapped ranges as IPv4 CIDRs`
-                    )
+                    return bad(`${where}[${i}]: overlaps the IPv4-mapped range; write IPv4-mapped ranges as IPv4 CIDRs`)
                 }
             }
             return c
@@ -220,16 +221,16 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
         noUnknown(value.scope, SCOPE_KEYS, `${at} scope`)
         const scope = {
             domains: domains(value.scope.domains, `${at} scope.domains`),
-            cidrs: cidrs(value.scope.cidrs, `${at} scope.cidrs`),
-            llmTargets: list(value.scope.llmTargets, `${at} scope.llmTargets`).map((u) => {
+            cidrs: cidrs(value.scope.cidrs, `${at} scope.cidrs`, true),
+            llmTargets: list(value.scope.llmTargets, `${at} scope.llmTargets`).map((u, i) => {
                 let proto: string
                 try {
                     proto = new URL(u).protocol
                 } catch {
-                    return bad(`${at} scope.llmTargets entry "${u}" is not a URL`)
+                    return bad(`${at} scope.llmTargets[${i}]: not a URL`)
                 }
                 if (proto !== 'http:' && proto !== 'https:') {
-                    return bad(`${at} scope.llmTargets entry "${u}" must be http(s)`)
+                    return bad(`${at} scope.llmTargets[${i}]: must be http(s)`)
                 }
                 return u
             })
@@ -244,7 +245,7 @@ export function parseEngagements(raw: unknown): ReadonlyMap<string, Engagement> 
             noUnknown(value.exclude, EXCLUDE_KEYS, `${at} exclude`)
             exclude = {
                 domains: domains(value.exclude.domains, `${at} exclude.domains`),
-                cidrs: cidrs(value.exclude.cidrs, `${at} exclude.cidrs`)
+                cidrs: cidrs(value.exclude.cidrs, `${at} exclude.cidrs`, false)
             }
         }
 
@@ -378,9 +379,13 @@ function effectivePort(u: URL): string {
     return u.port || (u.protocol === 'https:' ? '443' : '80')
 }
 
-/** Compare protocol, normalized host and effective port (not url.origin), then the path boundary. */
+/**
+ * Compare protocol, normalized host and effective port (not url.origin), then the path boundary. An encoded
+ * slash or backslash never matches a target with a path: servers that decode it would see a path outside it.
+ */
 function llmTargetMatches(url: URL, targets: string[]): boolean {
     const host = hostOf(url)
+    const encodedSlash = /%(2f|5c)/i.test(url.pathname)
     return targets.some((t) => {
         const u = new URL(t)
         const path = u.pathname.replace(/\/$/, '')
@@ -388,7 +393,7 @@ function llmTargetMatches(url: URL, targets: string[]): boolean {
             u.protocol === url.protocol &&
             hostOf(u) === host &&
             effectivePort(u) === effectivePort(url) &&
-            (url.pathname === path || url.pathname.startsWith(`${path}/`))
+            (path === '' || (!encodedSlash && (url.pathname === path || url.pathname.startsWith(`${path}/`))))
         )
     })
 }

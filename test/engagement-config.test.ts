@@ -56,18 +56,26 @@ describe('ENGAGEMENTS parsing', () => {
         ['a bad name', { 'a b': MIN }, /"a b"/],
         ['a missing scope', { x: { window: W } }, /"x" requires a scope/],
         ['an empty scope', sc({ domains: [] }), /"x" scope must contain/],
-        ['a * domain', sc({ domains: ['*'] }), /"x" scope\.domains entry "\*"/],
-        ['a *.com domain', sc({ domains: ['*.com'] }), /"x" scope\.domains entry "\*\.com"/],
-        ['a backslash domain', sc({ domains: ['a.test\\evil'] }), /"x" scope\.domains entry/],
-        ['a percent domain', sc({ domains: ['a%2etest'] }), /"x" scope\.domains entry/],
-        ['a control char domain', sc({ domains: ['a.test'] }), /"x" scope\.domains entry/],
-        ['a bad exclude domain', { x: { ...MIN, exclude: { domains: ['a b'] } } }, /"x" exclude\.domains entry/],
+        ['a * domain', sc({ domains: ['*'] }), /^engagement "x" scope\.domains\[0\]: invalid domain$/],
+        ['a *.com domain', sc({ domains: ['a.test', '*.com'] }), /^engagement "x" scope\.domains\[1\]: too broad/],
+        ['a backslash domain', sc({ domains: ['a.test\\evil'] }), /"x" scope\.domains\[0\]: invalid domain/],
+        ['a percent domain', sc({ domains: ['a%2etest'] }), /"x" scope\.domains\[0\]: invalid domain/],
+        ['a control char domain', sc({ domains: ['a.test'] }), /"x" scope\.domains\[0\]: invalid domain/],
+        [
+            'a bad exclude domain',
+            { x: { ...MIN, exclude: { domains: ['a b'] } } },
+            /"x" exclude\.domains\[0\]: invalid domain/
+        ],
         ['an unknown exclude key', { x: { ...MIN, exclude: { cidr: [] } } }, /"x" exclude has unknown key "cidr"/],
-        ['a bad CIDR', sc({ cidrs: ['203.0.113.0/33'] }), /"x" scope\.cidrs entry/],
-        ['a bad IPv6 CIDR', sc({ cidrs: ['2001:db8::/129'] }), /"x" scope\.cidrs entry/],
-        ['a non-URL llmTarget', sc({ llmTargets: ['not a url'] }), /"x" scope\.llmTargets entry/],
-        ['a non-http llmTarget', sc({ llmTargets: ['ftp://a.test'] }), /"x" scope\.llmTargets entry/],
-        ['a javascript: llmTarget', sc({ llmTargets: ['javascript:alert(1)'] }), /"x" scope\.llmTargets entry/],
+        ['a bad CIDR', sc({ cidrs: ['203.0.113.0/33'] }), /"x" scope\.cidrs\[0\]: invalid CIDR or IP$/],
+        ['a bad IPv6 CIDR', sc({ cidrs: ['2001:db8::/129'] }), /"x" scope\.cidrs\[0\]: invalid CIDR or IP$/],
+        ['a non-URL llmTarget', sc({ llmTargets: ['not a url'] }), /"x" scope\.llmTargets\[0\]: not a URL$/],
+        ['a non-http llmTarget', sc({ llmTargets: ['ftp://a.test'] }), /"x" scope\.llmTargets\[0\]: must be http/],
+        [
+            'a javascript: llmTarget',
+            sc({ llmTargets: ['javascript:alert(1)'] }),
+            /"x" scope\.llmTargets\[0\]: must be http/
+        ],
         ['null in a list', sc({ domains: [null] }), /"x" scope\.domains must be an array of strings/],
         ['a number in a list', sc({ cidrs: [5] }), /"x" scope\.cidrs must be an array of strings/],
         ['a nested array in a list', sc({ domains: [['a.test']] }), /"x" scope\.domains must be an array/],
@@ -128,6 +136,23 @@ describe('ENGAGEMENTS parsing', () => {
         expect(err).toBeInstanceOf(ConfigError)
         expect((err as ConfigError).variable).toBe('ENGAGEMENTS')
         expect((err as ConfigError).message).toMatch(message)
+    })
+
+    it('keeps the offending domain, CIDR and URL out of the message', () => {
+        for (const scope of [
+            { domains: ['a.test', 'secret-host;x.test'] },
+            { cidrs: ['10.0.0.0/8', 'secret-cidr/99'] },
+            { llmTargets: ['https://a.test', 'secret-url'] }
+        ]) {
+            let message = ''
+            try {
+                eng(sc(scope))
+            } catch (e) {
+                message = (e as ConfigError).message
+            }
+            expect(message).toMatch(/^engagement "x" scope\.\w+\[1\]: /)
+            expect(message).not.toContain('secret')
+        }
     })
 
     it.each([[{ a: 1 }], [5], [null], [true], [[]]])('rejects a non-string ENGAGEMENTS value %j', (v) => {

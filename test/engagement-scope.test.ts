@@ -128,11 +128,19 @@ describe('checkScope verdicts', () => {
     })
 
     it('rejects short IPv6 CIDRs overlapping the mapped range', () => {
+        expect(() => make({ scope: { cidrs: ['::ffff:0:0/95'] } })).toThrow(/scope\.cidrs\[0\]: .*IPv4 CIDRs/)
         for (const c of ['::ffff:0:0/95', '::/0']) {
-            expect(() => make({ scope: { cidrs: [c] } })).toThrow(/IPv4 CIDRs/)
-            expect(() => make({ exclude: { cidrs: [c] } })).toThrow(/exclude.cidrs/)
+            expect(() => make({ exclude: { cidrs: [c] } })).toThrow(/exclude\.cidrs\[0\]: overlaps/)
         }
         expect(() => make({ scope: { cidrs: ['2001:db8::/32', '::ffff:0:0/96'] } })).not.toThrow()
+    })
+
+    it('rejects scope CIDRs below /8 (IPv4) or /16 (IPv6) as too broad, before the mapped-overlap check', () => {
+        for (const c of ['0.0.0.0/0', '0.0.0.0/1', '10.0.0.0/7', '::/0', '2000::/15']) {
+            expect(() => make({ scope: { cidrs: ['203.0.113.0/24', c] } })).toThrow(/scope\.cidrs\[1\]: too broad/)
+        }
+        expect(make({ scope: { cidrs: ['10.0.0.0/8', '2001::/16'] } }).scope.cidrs).toEqual(['10.0.0.0/8', '2001::/16'])
+        expect(make({ exclude: { cidrs: ['0.0.0.0/0'] } }).exclude.cidrs).toEqual(['0.0.0.0/0'])
     })
 
     it('pins the IPv6 target form', () => {
@@ -170,6 +178,12 @@ describe('checkScope verdicts', () => {
         expect(checkScope(e, 'chat.x-test.com', NOW).verdict).toBe('out_of_scope')
         expect(checkScope(e, 'HTTPS://CHAT.X-TEST.COM./api/x', NOW).verdict).toBe('in_scope')
         expect(checkScope(e, 'ws://chat.x-test.com/api/x', NOW).verdict).toBe('out_of_scope')
+        for (const p of ['..%2fadmin', '..%2Fadmin', '..%5cadmin', 'x%5C..%5Cadmin']) {
+            expect(checkScope(e, `https://chat.x-test.com/api/${p}`, NOW).verdict).toBe('out_of_scope')
+        }
+        // a root target has no path boundary to cross
+        const root = make({ scope: { llmTargets: ['https://chat.x-test.com/'] }, exclude: {} })
+        expect(checkScope(root, 'https://chat.x-test.com/a%2fb', NOW).verdict).toBe('in_scope')
     })
 })
 
