@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { callWorker, fakeAI, makeEnv, readSse, stubFetch } from './helpers'
 
 const ROUTES = JSON.stringify({
@@ -135,6 +135,39 @@ describe('dispatch', () => {
         expect(((await res.json()) as any).content[0].text).toBe('hi')
         expect(models).toEqual(['@cf/busy', '@cf/busy', '@cf/busy', '@cf/ok'])
     })
+
+    it.each(['openai', 'openai-responses'])(
+        'scrubs the server-held key from a routed %s upstream error and the logs',
+        async (provider) => {
+            const key = 'sk-server-9f8e7d6c5b4a'
+            stub = stubFetch((req) => {
+                const auth = req.headers.get('authorization') ?? ''
+                return Response.json(
+                    { error: { message: `bad credentials: ${auth} (raw ${auth.replace(/^Bearer /, '')})` } },
+                    { status: 500 }
+                )
+            })
+            const routes = JSON.stringify({
+                'claude-x': { provider, baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.1', keySecret: 'UP_KEY' }
+            })
+            const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+            const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+            try {
+                const res = await post(makeEnv({ MODEL_ROUTES: routes, UP_KEY: key }), 'claude-x')
+                const text = await res.text()
+                expect(res.status).toBe(500)
+                expect(stub.calls[0].headers.get('authorization')).toBe(`Bearer ${key}`)
+                expect(text).toContain('bad credentials')
+                expect(text).not.toContain(key)
+                expect(text).not.toContain('sk-server')
+                const logged = JSON.stringify([...logSpy.mock.calls, ...errSpy.mock.calls])
+                expect(logged).not.toContain('sk-server')
+            } finally {
+                logSpy.mockRestore()
+                errSpy.mockRestore()
+            }
+        }
+    )
 
     it('unrouted model passes through to workers ai', async () => {
         stub = stubFetch(() => new Response('no', { status: 500 }))
