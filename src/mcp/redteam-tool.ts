@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { ADAPTERS } from '../shared/redteam/adapters.ts'
 import { CORPUS, SUITE_OWASP, SUITES } from '../shared/redteam/corpus.ts'
 import { gateTarget } from '../shared/redteam/gate.ts'
-import { judgeViaAnthropic, makeJudge } from '../shared/redteam/judge.ts'
+import { JUDGE_TIMEOUT_MS, judgeViaAnthropic, makeJudge } from '../shared/redteam/judge.ts'
 import { runCases, type RunControls, type RunTarget } from '../shared/redteam/runner.ts'
 import { buildScorecard, type Scorecard } from '../shared/redteam/scorecard.ts'
 import { fail, logged, ok, type McpContext, type ToolRegistrar } from './tool-kit'
@@ -113,10 +113,14 @@ async function run(
         deadlineMs: DEADLINE_MS
     }
     const startedAt = ctx.now()
-    // The judge's timeout is clamped to the time left before the run deadline.
+    // The judge's timeout is clamped to its 30 s cap and the time left before the run deadline.
     const remaining = () => startedAt + DEADLINE_MS - ctx.now()
     const judge = a.judgeModel
-        ? makeJudge(judgeViaAnthropic(selfFetch, SELF_ORIGIN, key, a.judgeModel, remaining))
+        ? makeJudge(
+              judgeViaAnthropic(selfFetch, SELF_ORIGIN, key, a.judgeModel, () =>
+                  Math.min(JUDGE_TIMEOUT_MS, remaining())
+              )
+          )
         : undefined
     const res = await runCases(cases, target, controls, {
         now: ctx.now,

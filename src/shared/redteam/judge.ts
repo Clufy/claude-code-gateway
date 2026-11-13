@@ -68,9 +68,9 @@ function parseVerdict(out: string): { attackSucceeded: boolean; detail: string }
     return null
 }
 
-const JUDGE_TIMEOUT_MS = 30000
+export const JUDGE_TIMEOUT_MS = 30000
 
-/** `remainingMs` (P6-R17) clamps each call's timeout, e.g. to the time left before a run deadline. */
+/** `remainingMs` sets each call's timeout (default 30 s). The redteam tool clamps it to the judge cap and the run deadline itself (P6-R17). */
 export function judgeViaAnthropic(
     fetchFn: typeof fetch,
     base: string,
@@ -80,7 +80,7 @@ export function judgeViaAnthropic(
     maxTokens = 300
 ): (system: string, user: string) => Promise<string> {
     return async (system, user) => {
-        const timeoutMs = Math.max(1, Math.min(JUDGE_TIMEOUT_MS, remainingMs()))
+        const timeoutMs = Math.max(1, remainingMs())
         const res = await fetchFn(`${base.replace(/\/+$/, '')}/v1/messages`, {
             method: 'POST',
             headers: { 'x-api-key': key, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { JUDGE_RUBRIC, judgeViaAnthropic, makeJudge } from '../src/shared/redteam/judge.ts'
+import { describe, expect, it, vi } from 'vitest'
+import { JUDGE_RUBRIC, JUDGE_TIMEOUT_MS, judgeViaAnthropic, makeJudge } from '../src/shared/redteam/judge.ts'
 import type { AdapterResult, RedteamCase } from '../src/shared/redteam/types.ts'
 
 const kase: RedteamCase = {
@@ -141,6 +141,21 @@ describe('judgeViaAnthropic', () => {
         await expect(judgeViaAnthropic(f, 'https://w.test', 'k', 'm', () => 50)('s', 'u')).rejects.toThrow()
         expect(Date.now() - t0).toBeLessThan(5000)
         await expect(judgeViaAnthropic(f, 'https://w.test', 'k', 'm', () => -5)('s', 'u')).rejects.toThrow()
+    })
+    it('P7-R6: honours a remaining time above the default cap, and defaults to 30 s', async () => {
+        const f = (async () =>
+            new Response(JSON.stringify({ content: [{ type: 'text', text: 'x' }] }), {
+                status: 200
+            })) as unknown as typeof fetch
+        const spy = vi.spyOn(AbortSignal, 'timeout')
+        try {
+            await judgeViaAnthropic(f, 'https://w.test', 'k', 'm', () => 50000)('s', 'u')
+            await judgeViaAnthropic(f, 'https://w.test', 'k', 'm')('s', 'u')
+            expect(spy.mock.calls.map((c) => c[0])).toEqual([50000, 30000])
+            expect(JUDGE_TIMEOUT_MS).toBe(30000)
+        } finally {
+            spy.mockRestore()
+        }
     })
     it('throws when content is not an array and sets a timeout signal', async () => {
         let signal: AbortSignal | null | undefined
