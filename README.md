@@ -4,8 +4,9 @@ A Cloudflare Worker that lets [Claude Code](https://docs.anthropic.com/en/docs/c
 run against multiple AI backends through an Anthropic-compatible API.
 
 The default `POST /v1/messages` route targets **Cloudflare Workers AI** via the local
-`env.AI.run()` binding. Additional routes proxy to Gemini, OpenAI Chat Completions, or
-the OpenAI Responses API using the provider path convention.
+`env.AI.run()` binding. Additional routes proxy to Gemini, OpenAI Chat Completions, the
+OpenAI Responses API, or a native Anthropic Messages API (`anthropic`), through the provider
+path convention or `MODEL_ROUTES`.
 
 ## Supported routes
 
@@ -18,12 +19,14 @@ the OpenAI Responses API using the provider path convention.
 | `POST` | `/v1/messages`                       | Anthropic Messages API -> Workers AI |
 | `POST` | `/{type}/{provider_url}/v1/messages` | External provider proxy              |
 
+`{type}` is `gemini`, `openai`, `openai-responses` or `anthropic`.
+
 ## External provider path convention
 
 The proxy key (if any) goes in `x-proxy-key`; the provider API key goes in `x-api-key`
 or `Authorization: Bearer <key>`. `{provider_url}` includes the provider's version prefix
-(`api.openai.com/v1`, `generativelanguage.googleapis.com/v1beta`), because the proxy appends
-`chat/completions`, `responses` or `models/...` to it.
+(`api.openai.com/v1`, `generativelanguage.googleapis.com/v1beta`, `api.anthropic.com/v1`),
+because the proxy appends `chat/completions`, `responses`, `messages` or `models/...` to it.
 
 Examples:
 
@@ -45,7 +48,33 @@ curl -X POST https://<worker>/openai-responses/api.openai.com/v1/v1/messages \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
+
+# Anthropic Messages API (native pass-through)
+curl -X POST https://<worker>/anthropic/api.anthropic.com/v1/v1/messages \
+  -H "x-proxy-key: $PROXY_KEY" \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}'
 ```
+
+### The `anthropic` provider
+
+`anthropic` is a near pass-through for Claude models and any Anthropic-compatible API, by path
+convention or as a `MODEL_ROUTES` provider (with `baseUrl`, e.g. `https://api.anthropic.com/v1`,
+and `keySecret`):
+
+- **Request:** the Messages body is sent as is to `{provider_url}/messages`, with `model` set to
+  the target model. In assistant turns, `thinking` and `redacted_thinking` blocks without a string
+  `signature` are dropped: Workers AI produces unsigned thinking, which Anthropic rejects after a
+  model switch or a fallback. Signed blocks are kept.
+- **Request headers** are built fresh: `x-api-key` (the provider key, with any `Bearer` prefix
+  removed), `anthropic-version: 2023-06-01`, `content-type`, and the client's `anthropic-beta` if
+  sent. No other inbound header is forwarded: not the proxy key, `Authorization`, `x-engagement`,
+  `x-proxy-*` or cookies.
+- **Response:** the body, streaming SSE included, is relayed unchanged; upstream errors are
+  scrubbed of the key. Only the `content-type` and `retry-after` headers are kept. Anthropic's
+  `request-id`, `anthropic-organization-id`, `anthropic-ratelimit-*` and `set-cookie` are dropped,
+  and the proxy's own `request-id` is set.
 
 ## Deploy
 
@@ -131,17 +160,17 @@ npx wrangler secret put DEEPSEEK_KEY
 
 Each route has these keys (unknown keys are rejected):
 
-| Key             | Required                   | Meaning                                                                                                                                                                                                      |
-| --------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`      | yes                        | `workers-ai`, `openai`, `openai-responses` or `gemini`                                                                                                                                                       |
-| `model`         | yes                        | Model name sent to the backend                                                                                                                                                                               |
-| `baseUrl`       | non-`workers-ai` providers | Provider URL including any version prefix (e.g. `https://api.openai.com/v1`); the proxy appends `chat/completions` or `responses`. Checked against `ALLOWED_HOSTS` and `ALLOW_HTTP` like the path convention |
-| `keySecret`     | non-`workers-ai` providers | Name (`[A-Z][A-Z0-9_]*`) of a secret set with `wrangler secret put`; `PROXY_KEY` is rejected                                                                                                                 |
-| `fallback`      | no                         | Up to 3 model names to try after this one                                                                                                                                                                    |
-| `contextTokens` | no                         | Context window reported by `GET /v1/models`. Without it (and without a one-hop inheritance, below) the model reports 24 000, so set it for large-context models                                              |
-| `reasoning`     | no                         | `true` reports the `thinking` capability in `GET /v1/models`; default `false`                                                                                                                                |
-| `vision`        | no                         | Overrides `VISION_MODELS` for this model                                                                                                                                                                     |
-| `multiTool`     | no                         | Overrides `MULTI_TOOL_MODELS` for this model                                                                                                                                                                 |
+| Key             | Required                   | Meaning                                                                                                                                                                                                                  |
+| --------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `provider`      | yes                        | `workers-ai`, `openai`, `openai-responses`, `gemini` or `anthropic`                                                                                                                                                      |
+| `model`         | yes                        | Model name sent to the backend                                                                                                                                                                                           |
+| `baseUrl`       | non-`workers-ai` providers | Provider URL including any version prefix (e.g. `https://api.openai.com/v1`); the proxy appends `chat/completions`, `responses` or `messages`. Checked against `ALLOWED_HOSTS` and `ALLOW_HTTP` like the path convention |
+| `keySecret`     | non-`workers-ai` providers | Name (`[A-Z][A-Z0-9_]*`) of a secret set with `wrangler secret put`; `PROXY_KEY` is rejected                                                                                                                             |
+| `fallback`      | no                         | Up to 3 model names to try after this one                                                                                                                                                                                |
+| `contextTokens` | no                         | Context window reported by `GET /v1/models`. Without it (and without a one-hop inheritance, below) the model reports 24 000, so set it for large-context models                                                          |
+| `reasoning`     | no                         | `true` reports the `thinking` capability in `GET /v1/models`; default `false`                                                                                                                                            |
+| `vision`        | no                         | Overrides `VISION_MODELS` for this model                                                                                                                                                                                 |
+| `multiTool`     | no                         | Overrides `MULTI_TOOL_MODELS` for this model                                                                                                                                                                             |
 
 - **Shipped defaults:** `wrangler.jsonc` ships `MODELS` and `MODEL_ROUTES` with `@cf/zai-org/glm-5.3`,
   `@cf/moonshotai/kimi-k2.6` and `@cf/deepseek-ai/deepseek-v4-pro-0813`, each an identity route that

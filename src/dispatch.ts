@@ -1,6 +1,7 @@
 import { anthropicError } from './errors'
 import { Provider } from './provider'
 import { fetchUpstream, scrubUpstreamError, UpstreamTimeoutError } from './upstream'
+import { AnthropicProvider } from './providers/anthropic'
 import { WorkersAIProvider } from './providers/workers-ai'
 import * as gemini from './providers/gemini'
 import * as openai from './providers/openai'
@@ -12,6 +13,7 @@ import type { BackendStats } from './stats'
 type ProviderCtor = { new (): Provider }
 
 export const PROVIDERS: Record<string, ProviderCtor> = {
+    anthropic: AnthropicProvider,
     gemini: gemini.impl,
     openai: openai.ChatCompletionsProvider,
     'openai-responses': openai.ResponsesProvider
