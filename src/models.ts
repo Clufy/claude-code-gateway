@@ -34,10 +34,7 @@ function toModel(id: string, env: Env, cfg: ProxyConfig): ClaudeModelListing {
     const backing = own?.model ?? id
     const hop = cfg.routes.find(
         (e) =>
-            e.pattern === backing &&
-            !e.pattern.includes('*') &&
-            e.route !== own &&
-            (own === undefined || e.route.provider === own.provider)
+            e.pattern === backing && !e.pattern.includes('*') && e.route !== own && e.route.provider === own?.provider
     )?.route
 
     const legacy = (set: Set<string>) => set.has(id) || set.has(backing)
@@ -62,13 +59,11 @@ function toModel(id: string, env: Env, cfg: ProxyConfig): ClaudeModelListing {
 }
 
 function configuredModelIds(env: Env): string[] {
-    const models = (env as { MODELS?: string }).MODELS
-    const ids =
-        models
-            ?.split(',')
+    return (
+        (env as { MODELS?: string }).MODELS?.split(',')
             .map((s) => s.trim())
             .filter(Boolean) ?? []
-    return ids
+    )
 }
 
 function listing(env: Env, cfg: ProxyConfig): ClaudeModelListing[] {
