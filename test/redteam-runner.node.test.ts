@@ -23,6 +23,17 @@ describe('gateTarget', () => {
         expect(gateTarget(eng, 'https://LLM.ACME-TEST.COM./v1', 1500)).toBeNull()
         expect(gateTarget(eng, 'https://API.other.test/x', 1500)).toBeNull()
     })
+    it('P6-R13: URL llmTargets entries compare by hostname; bare hosts still work; junk is skipped', () => {
+        const e: GateEngagement = {
+            ...eng,
+            scope: { domains: [], llmTargets: ['https://llm.acme.example/v1', 'not a url://', 'bare.example'] }
+        }
+        expect(gateTarget(e, 'https://llm.acme.example/chat', 1500)).toBeNull()
+        expect(gateTarget(e, 'https://LLM.acme.example./chat', 1500)).toBeNull()
+        expect(gateTarget(e, 'https://bare.example/x', 1500)).toBeNull()
+        expect(gateTarget(e, 'https://evil.example.org/', 1500)).not.toBeNull()
+        expect(gateTarget(e, 'https://not a url/', 1500)).toBe('invalid target URL')
+    })
     it('allows a wildcard subdomain but not the apex', () => {
         expect(gateTarget(eng, 'https://chat.acme-test.com/', 1500)).toBeNull()
         expect(gateTarget(eng, 'https://acme-test.com/', 1500)).toBe(
@@ -327,6 +338,28 @@ describe('runCases', () => {
         expect(sent).toBe(3)
         expect(r.results.map((x) => x.outcome)).toEqual(['passed', 'passed', 'passed', 'skipped', 'skipped'])
         expect(r.results[3].detail).toBe('deadline')
+    })
+
+    it('clamps the adapter timeout to the remaining deadline and skips at zero', async () => {
+        const d = deps()
+        const seen: number[] = []
+        const t = target(() => ok())
+        t.adapter = async (_c, o) => {
+            seen.push(o.timeoutMs)
+            return ok()
+        }
+        t.opts.timeoutMs = 50000
+        d.clock.t = 54000
+        await runCases(cases(1), t, ctl({ deadlineMs: 1000 }), d)
+        expect(seen[0]).toBeLessThanOrEqual(1000)
+        const d2 = deps()
+        const t2 = target(() => ok())
+        t2.adapter = async () => {
+            d2.clock.t += 2000
+            return ok()
+        }
+        const r = await runCases(cases(2), t2, ctl({ deadlineMs: 1000, concurrency: 2 }), d2)
+        expect(r.results.map((x) => x.outcome)).toContain('skipped')
     })
 
     it('passes the target gate as the adapter checkHop, defaulting to allow', async () => {

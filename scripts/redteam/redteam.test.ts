@@ -11,6 +11,7 @@ let worker: Server
 let external: Server
 let base = ''
 let extUrl = ''
+let extPort = 0
 let workerSeen: Seen[] = []
 let extSeen: Seen[] = []
 
@@ -18,7 +19,14 @@ const hour = 3600_000
 const iso = (ms: number) => new Date(ms).toISOString()
 
 function engagementFor(name: string) {
-    const llmTargets = name === 'acme' ? ['127.0.0.1'] : name === 'other' ? ['other.example.org'] : null
+    const llmTargets =
+        name === 'acme'
+            ? ['127.0.0.1']
+            : name === 'other'
+              ? ['other.example.org']
+              : name === 'acmeurl'
+                ? [`http://127.0.0.1:${extPort}/v1`]
+                : null
     if (!llmTargets) return null
     return {
         name,
@@ -81,7 +89,8 @@ beforeAll(async () => {
     })
     await Promise.all([worker, external].map((s) => new Promise<void>((r) => s.listen(0, '127.0.0.1', r))))
     base = `http://127.0.0.1:${(worker.address() as AddressInfo).port}`
-    extUrl = `http://127.0.0.1:${(external.address() as AddressInfo).port}/v1/messages`
+    extPort = (external.address() as AddressInfo).port
+    extUrl = `http://127.0.0.1:${extPort}/v1/messages`
 })
 
 afterAll(async () => {
@@ -184,6 +193,21 @@ describe('runRedteam external', () => {
         expect(progress[0]).toMatch(/ starting \(3 cases\)$/)
         expect(progress).toHaveLength(4)
         for (const l of progress.slice(1)) expect(l).toMatch(/^\[\d+\/3\] [a-z0-9-]+ (attacked|passed|error|skipped)$/)
+    })
+    it('P6-R13: runs when the engagement llmTargets entry is a URL', async () => {
+        const { io } = makeIo()
+        await runRedteam(
+            opts({
+                target: `anthropic:${extUrl}`,
+                engagement: 'acmeurl',
+                model: 'm',
+                suites: ['direct-injection'],
+                maxCases: 2
+            }),
+            fetch,
+            io
+        )
+        expect(extSeen).toHaveLength(2)
     })
     it('sends --header-env headers to the external target only', async () => {
         const { io } = makeIo({ RT_TOKEN: 'secret-1' })

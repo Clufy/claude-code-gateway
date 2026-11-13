@@ -17,17 +17,13 @@ const bytes = (s: string) => new TextEncoder().encode(s).length
 
 const toGate = (e: Engagement): GateEngagement => ({
     name: e.name,
-    // Engagement llmTargets are URLs; the core gate compares bare hosts.
-    scope: {
-        domains: e.scope.domains,
-        llmTargets: e.scope.llmTargets.flatMap((u) => URL.parse(u)?.hostname ?? [])
-    },
+    scope: { domains: e.scope.domains, llmTargets: e.scope.llmTargets },
     exclude: { domains: e.exclude.domains },
     window: { start: e.window.start, end: e.window.end }
 })
 
 /** Serialise within MAX_BYTES: drop examples first, then truncate judge details, then judge rows. */
-function capCard(card: Scorecard): string {
+export function capCard(card: Scorecard): string {
     let text = JSON.stringify(card)
     if (bytes(text) <= MAX_BYTES) return text
     const slim: Scorecard = { ...card, suites: card.suites.map((s) => ({ ...s, examples: [] })) }
@@ -71,7 +67,9 @@ async function run(
                 timeoutMs: TIMEOUT_MS
             },
             gate: (u) =>
-                new URL(u).origin === SELF_ORIGIN ? null : `redirect blocked: self target must stay on ${SELF_ORIGIN}`,
+                new URL(u).origin + new URL(u).pathname === SELF_ORIGIN + '/v1/messages'
+                    ? null
+                    : `redirect blocked: self target must stay on ${SELF_ORIGIN}/v1/messages`,
             isSelf: true
         }
     } else {

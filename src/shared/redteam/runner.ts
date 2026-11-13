@@ -74,10 +74,16 @@ function skipped(c: RedteamCase, detail: string): CaseResult {
 
 type Done = { result: CaseResult; adapterError: boolean }
 
-async function runOneInner(c: RedteamCase, target: RunTarget, deps: RunDeps): Promise<Done> {
+async function runOneInner(c: RedteamCase, target: RunTarget, deps: RunDeps, deadline?: number): Promise<Done> {
     let r: AdapterResult
+    let timeoutMs = target.opts.timeoutMs
+    if (deadline !== undefined) {
+        const remaining = deadline - deps.now()
+        if (remaining <= 0) return { adapterError: false, result: skipped(c, 'deadline') }
+        timeoutMs = Math.min(timeoutMs, remaining)
+    }
     try {
-        r = await target.adapter(c, { ...target.opts, checkHop: target.gate ?? (() => null) })
+        r = await target.adapter(c, { ...target.opts, timeoutMs, checkHop: target.gate ?? (() => null) })
     } catch (e) {
         return { adapterError: true, result: make(c, 'error', `adapter threw: ${errMsg(e)}`, 'error') }
     }
@@ -108,9 +114,9 @@ async function runOneInner(c: RedteamCase, target: RunTarget, deps: RunDeps): Pr
     }
 }
 
-async function runOne(c: RedteamCase, target: RunTarget, deps: RunDeps): Promise<Done> {
+async function runOne(c: RedteamCase, target: RunTarget, deps: RunDeps, deadline?: number): Promise<Done> {
     try {
-        return await runOneInner(c, target, deps)
+        return await runOneInner(c, target, deps, deadline)
     } catch {
         return { adapterError: false, result: make(c, 'error', 'internal error', 'error') }
     }
@@ -189,7 +195,7 @@ export async function runCases(
         for (;;) {
             const i = await claim()
             if (i < 0) return
-            const { result, adapterError } = await runOne(cases[i], target, deps)
+            const { result, adapterError } = await runOne(cases[i], target, deps, deadline)
             set(i, result)
             // The streak counts adapter errors (target health) only, in completion order.
             consecutiveErrors = adapterError ? consecutiveErrors + 1 : 0

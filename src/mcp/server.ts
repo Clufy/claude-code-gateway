@@ -51,7 +51,7 @@ export async function handleMcp(
     )
     const selfFetch =
         opts?.selfFetch ??
-        (() => {
+        (async () => {
             throw new Error('selfFetch not configured')
         })
     const ctx: McpContext = { config, requestId, now, selfFetch }
