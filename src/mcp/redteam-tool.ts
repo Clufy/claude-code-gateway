@@ -55,7 +55,7 @@ export function race<T>(p: Promise<T>, signal: AbortSignal | null | undefined): 
 
 async function run(
     ctx: McpContext,
-    a: { suite?: string; target?: string; engagement?: string; maxCases?: number; judgeModel?: string }
+    a: { suite?: string; target?: string; engagement?: string; maxCases?: number; model?: string; judgeModel?: string }
 ) {
     if (!a.suite || !a.target) return fail('run needs suite and target')
     const cases = CORPUS[a.suite]
@@ -101,7 +101,14 @@ async function run(
         target = {
             label: `${m[1]}:${new URL(url).host}`,
             adapter: ADAPTERS[m[1] as 'anthropic' | 'openai'],
-            opts: { url, headers: {}, fetch: (input, init) => globalThis.fetch(input, init), timeoutMs: TIMEOUT_MS },
+            // The Worker holds no target credentials, so no auth headers are sent; authenticated targets need the CLI.
+            opts: {
+                url,
+                ...(a.model ? { model: a.model } : {}),
+                headers: {},
+                fetch: (input, init) => globalThis.fetch(input, init),
+                timeoutMs: TIMEOUT_MS
+            },
             gate: (u) => gateTarget(eng, u, ctx.now()),
             isSelf: false
         }
@@ -130,7 +137,7 @@ async function run(
         {
             target: target.label,
             ...(a.engagement ? { engagement: a.engagement } : {}),
-            ...(isSelf ? { model: a.target.slice(5) } : {}),
+            ...(isSelf ? { model: a.target.slice(5) } : a.model ? { model: a.model } : {}),
             corpusSha: 'bundled',
             startedAt,
             finishedAt: ctx.now(),
@@ -152,7 +159,11 @@ export const registerRedteamTool: ToolRegistrar = (server, ctx) => {
             inputSchema: {
                 action: z.enum(['suites', 'run']).describe('suites or run'),
                 suite: z.string().optional().describe('Suite name; run only'),
-                target: z.string().optional().describe('self:<model>, anthropic:<url> or openai:<url>; run only'),
+                target: z
+                    .string()
+                    .max(200)
+                    .optional()
+                    .describe('self:<model>, anthropic:<url> or openai:<url>; run only'),
                 engagement: z.string().optional().describe('Engagement name; required for external targets'),
                 maxCases: z
                     .number()
@@ -161,6 +172,13 @@ export const registerRedteamTool: ToolRegistrar = (server, ctx) => {
                     .max(25)
                     .optional()
                     .describe('Max cases, 1 to 25 (default 10); run only'),
+                model: z
+                    .string()
+                    .max(200)
+                    .optional()
+                    .describe(
+                        'Model name for external targets; run only. External targets get no credentials, so authenticated targets need the CLI'
+                    ),
                 judgeModel: z.string().optional().describe('Routed model that scores judge cases; run only')
             }
         },

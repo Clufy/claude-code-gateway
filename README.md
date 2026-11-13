@@ -732,8 +732,9 @@ the header value is the variable's whole value.
 
 - `self:` targets skip the engagement gate, but redirects must stay on the base origin.
 - External targets need `--engagement`. The gate runs before the first request, on every redirect
-  hop (at most 5), and again before every case. A refusal exits with code 2 and the reason;
-  there is no `--force`.
+  hop (at most 5), and again before every case. Only the initial refusal, before any request, exits
+  with code 2 and the reason; there is no `--force`. A refused redirect hop is an error for that
+  case, and a window that closes mid-run stops the run, which still exits with code 0.
 - The URL must be `https` (`http` only for loopback), without userinfo. Its host must equal an
   `llmTargets` entry or match `scope.domains`, and must not match `exclude.domains`.
   `llmTargets` entries may be URLs or bare hosts and are compared by hostname.

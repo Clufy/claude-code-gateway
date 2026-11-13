@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { fetchEngagement } from './engagement.ts'
-import { runRedteam, safeLabel, type RedteamIo, type RedteamOptions } from './run.ts'
+import { corpusSha, runRedteam, safeLabel, type RedteamIo, type RedteamOptions } from './run.ts'
 import { parseTarget } from './targets.ts'
 
 type Seen = { url: string; headers: IncomingMessage['headers']; body: any }
@@ -83,6 +83,16 @@ beforeAll(async () => {
     })
     external = createServer(async (req, res) => {
         extSeen.push({ url: req.url ?? '', headers: req.headers, body: await readBody(req) })
+        if (req.url?.startsWith('/echo')) {
+            // echoes the auth header in the text and a tool call, plus the system prompt (so canary cases are attacked)
+            const token = String(req.headers['x-api-token'])
+            return json(res, 200, {
+                content: [
+                    { type: 'text', text: `token=${token} ${JSON.stringify(extSeen[extSeen.length - 1].body)}` },
+                    { type: 'tool_use', id: 't1', name: 'Bash', input: { command: `curl -H ${token}` } }
+                ]
+            })
+        }
         if (req.url?.startsWith('/redir')) {
             res.writeHead(302, { location: `http://localhost:${(external.address() as AddressInfo).port}/hit` })
             return res.end()
@@ -355,6 +365,45 @@ describe('runRedteam CLI gate and secrets', () => {
             expect(out).not.toContain(key)
             expect(out).not.toContain('hdr-secret-789')
         }
+    })
+    it('P6-R18: scrubs --header-env values a target echoes from scores, examples, judge and files', async () => {
+        const secret = 'hdr-echo-4242'
+        const { io, files } = makeIo({ RT_TOKEN: secret, EMPTY: '' })
+        const r = await runRedteam(
+            opts({
+                target: `anthropic:${extUrl.replace('/v1/messages', '/echo')}`,
+                engagement: 'acme',
+                model: 'm',
+                suites: ['system-prompt-leakage'],
+                headerEnv: 'X-Api-Token=RT_TOKEN,X-Empty=EMPTY',
+                judgeModel: 'judge-m'
+            }),
+            fetch,
+            io
+        )
+        expect(extSeen.length).toBeGreaterThan(0)
+        for (const s of extSeen) expect(s.headers['x-api-token']).toBe(secret)
+        const judged = workerSeen.filter((s) => s.body?.model === 'judge-m')
+        expect(judged.length).toBe(2)
+        for (const s of judged) expect(JSON.stringify(s.body)).toContain('token=[redacted]')
+        for (const s of workerSeen) expect(JSON.stringify(s.body)).not.toContain(secret)
+        const card = JSON.parse(files[r.files.find((f) => f.endsWith('.json'))!]).cards[0]
+        expect(card.suites[0].attacked).toBeGreaterThan(0)
+        expect(card.suites[0].examples[0].reply).toMatch(/^token=\[redacted\] /)
+        expect(JSON.stringify(files)).not.toContain(secret)
+    })
+    it('P6-R18: corpusSha appends -dirty when the corpus has uncommitted changes', () => {
+        const git = (status: string) => (args: string[]) => (args[0] === 'rev-parse' ? 'abc1234\n' : status)
+        expect(corpusSha(git(''))).toBe('abc1234')
+        expect(corpusSha(git(' M redteam/corpus/agent-session/cases.json\n'))).toBe('abc1234-dirty')
+        const seen: string[][] = []
+        corpusSha((args) => (seen.push(args), ''))
+        expect(seen).toContainEqual(['status', '--porcelain', '--', 'redteam/corpus'])
+        expect(
+            corpusSha(() => {
+                throw new Error('no git')
+            })
+        ).toBe('unknown')
     })
     it('strips userinfo and query from the label and omits unlimited maxCases', async () => {
         expect(safeLabel('openai:https://u:pw@h.example/v1/x?token=abc#f')).toBe('openai:https://h.example/v1/x')

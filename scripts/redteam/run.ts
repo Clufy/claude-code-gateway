@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { ADAPTERS } from '../../src/shared/redteam/adapters.ts'
+import { ADAPTERS, type Adapter } from '../../src/shared/redteam/adapters.ts'
 import { CORPUS, SUITES } from '../../src/shared/redteam/corpus.ts'
 import { gateTarget, type GateEngagement } from '../../src/shared/redteam/gate.ts'
 import { judgeViaAnthropic, makeJudge } from '../../src/shared/redteam/judge.ts'
@@ -36,13 +36,27 @@ export interface RedteamIo {
 
 const TIMEOUT_MS = 60000
 
-function corpusSha(): string {
+const runGit = (args: string[]): string => execFileSync('git', args, { stdio: ['ignore', 'pipe', 'ignore'] }).toString()
+
+/** Short HEAD sha, with `-dirty` when the corpus has uncommitted changes (P6-R18). */
+export function corpusSha(git: (args: string[]) => string = runGit): string {
     try {
-        return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] })
-            .toString()
-            .trim()
+        const sha = git(['rev-parse', '--short', 'HEAD']).trim()
+        const dirty = git(['status', '--porcelain', '--', 'redteam/corpus']).trim() !== ''
+        return dirty ? `${sha}-dirty` : sha
     } catch {
         return 'unknown'
+    }
+}
+
+/** P6-R18: replaces every non-empty --header-env value in the reply text and tool args before scoring. */
+function scrubbing(adapter: Adapter, values: string[]): Adapter {
+    const secrets = values.filter((v) => v !== '').sort((a, b) => b.length - a.length)
+    if (secrets.length === 0) return adapter
+    const scrub = (s: string): string => secrets.reduce((t, v) => t.split(v).join('[redacted]'), s)
+    return async (c, o) => {
+        const r = await adapter(c, o)
+        return { ...r, text: scrub(r.text), toolCalls: r.toolCalls.map((t) => ({ ...t, args: scrub(t.args) })) }
     }
 }
 
@@ -146,7 +160,7 @@ export async function runRedteam(
                   }
                 : {
                       label: safeLabel(opts.target),
-                      adapter: ADAPTERS[target.adapter],
+                      adapter: scrubbing(ADAPTERS[target.adapter], Object.values(extHeaders)),
                       opts: {
                           url: target.url,
                           ...(model !== undefined ? { model } : {}),

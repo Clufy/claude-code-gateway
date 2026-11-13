@@ -239,6 +239,37 @@ describe('redteam tool', () => {
         expect(s.calls.length).toBeLessThan(6)
     })
 
+    it('P6-R18: passes model to external targets', async () => {
+        stub = stubFetch(() => anthropicReply('I cannot help with that.'))
+        const r = await call({
+            action: 'run',
+            suite: 'direct-injection',
+            target: 'openai:https://llm.acme-test.com/v1/chat/completions',
+            engagement: 'acme',
+            model: 'ext-m',
+            maxCases: 1
+        })
+        expect(r.isError).toBe(false)
+        expect(stub.calls).toHaveLength(1)
+        expect(((await stub.calls[0].json()) as any).model).toBe('ext-m')
+    })
+
+    it('P6-R18: rejects a target or model over 200 chars', async () => {
+        stub = stubFetch(() => anthropicReply('I cannot help with that.'))
+        const long = `openai:https://llm.acme-test.com/v1/${'x'.repeat(200)}`
+        const t = await call({ action: 'run', suite: 'direct-injection', target: long, engagement: 'acme' })
+        expect(t.isError).toBe(true)
+        const m = await call({
+            action: 'run',
+            suite: 'direct-injection',
+            target: 'openai:https://llm.acme-test.com/v1/chat/completions',
+            engagement: 'acme',
+            model: 'm'.repeat(201)
+        })
+        expect(m.isError).toBe(true)
+        expect(stub.calls).toHaveLength(0)
+    })
+
     it('sends no credentials to external targets', async () => {
         stub = stubFetch(() => anthropicReply('I cannot help with that.'))
         await call({

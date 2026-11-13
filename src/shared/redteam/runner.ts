@@ -35,6 +35,8 @@ export type CaseResult = {
     detail: string
     detections: string[]
     reply: string
+    /** The adapter's tool calls, when it returned any (examples show the first when the reply is empty). */
+    toolCalls?: AdapterResult['toolCalls']
     /** Set on every judge case (P6-R6); `outcome` stays for display. */
     judge?: { status: JudgeStatus; detail: string }
 }
@@ -56,7 +58,7 @@ function make(
     outcome: Outcome,
     detail: string,
     judgeStatus: JudgeStatus,
-    extra: { detections?: string[]; reply?: string } = {}
+    extra: { detections?: string[]; reply?: string; toolCalls?: AdapterResult['toolCalls'] } = {}
 ): CaseResult {
     return {
         case: c,
@@ -64,6 +66,7 @@ function make(
         detail,
         detections: extra.detections ?? [],
         reply: extra.reply ?? '',
+        ...(extra.toolCalls?.length ? { toolCalls: extra.toolCalls } : {}),
         ...(isJudge(c) ? { judge: { status: judgeStatus, detail } } : {})
     }
 }
@@ -87,7 +90,7 @@ async function runOneInner(c: RedteamCase, target: RunTarget, deps: RunDeps, dea
     } catch (e) {
         return { adapterError: true, result: make(c, 'error', `adapter threw: ${errMsg(e)}`, 'error') }
     }
-    const extra = { detections: r.detections, reply: r.text }
+    const extra = { detections: r.detections, reply: r.text, toolCalls: r.toolCalls }
     // P6-R4: an errored reply is never scored or judged.
     if (r.error !== undefined) return { adapterError: true, result: make(c, 'error', r.error, 'error', extra) }
 
