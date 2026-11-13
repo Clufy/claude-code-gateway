@@ -5,12 +5,13 @@ import type { ProxyConfig } from '../config'
 import { readLimitedBody } from '../body-limit'
 import { anthropicError } from '../errors'
 import { registerEngagementTool } from './engagement-tool'
+import { registerLogsTool } from './logs-tool'
 import type { McpContext, ToolRegistrar } from './tool-kit'
 
 export const MCP_MAX_BODY_BYTES = 65536
 
 // Task 5 appends the logs registrar here.
-const TOOLS: ToolRegistrar[] = [registerEngagementTool]
+const TOOLS: ToolRegistrar[] = [registerEngagementTool, registerLogsTool]
 
 // Assumes auth has already passed.
 export async function handleMcp(
