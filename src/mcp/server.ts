@@ -4,7 +4,7 @@ import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validatio
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ProxyConfig } from '../config'
 import { readLimitedBody } from '../body-limit'
-import { jsonResponse } from '../errors'
+import { anthropicError } from '../errors'
 
 export const MCP_MAX_BODY_BYTES = 65536
 
@@ -28,9 +28,17 @@ export async function handleMcp(
 ): Promise<Response> {
     const body = await readLimitedBody(request, MCP_MAX_BODY_BYTES)
     if (!body.ok) {
-        return jsonResponse({ error: `request body exceeds ${MCP_MAX_BODY_BYTES} bytes` }, 413)
+        return anthropicError(
+            413,
+            'invalid_request_error',
+            `request body too large (max ${MCP_MAX_BODY_BYTES} bytes)`,
+            requestId
+        )
     }
-    const bounded = new Request(request.url, { method: 'POST', headers: request.headers, body: body.text })
+    const headers = new Headers(request.headers)
+    headers.delete('content-length')
+    headers.delete('transfer-encoding')
+    const bounded = new Request(request.url, { method: 'POST', headers, body: body.text })
 
     const server = new McpServer(
         { name: 'claude-worker-proxy', version: '0.5.0' },
