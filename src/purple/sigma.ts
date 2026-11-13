@@ -41,7 +41,7 @@ class RuleError extends Error {}
 
 const clip = (s: string, n = 60): string => (s.length > n ? s.slice(0, n) : s)
 const isScalar = (v: unknown): v is SigmaValue =>
-    v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'
+    v === null || typeof v === 'string' || Number.isFinite(v) || typeof v === 'boolean'
 
 export function parseSigma(text: string): SigmaParse {
     const fail = (error: string, unsupported: string[] = []): SigmaParse => ({ ok: false, error, unsupported })
@@ -132,9 +132,9 @@ function fieldMap(where: string, map: Record<string, unknown>, flag: (u: string)
     const entries = Object.entries(map)
     if (entries.length === 0) throw new RuleError(`${where} must not be an empty map`)
     return entries.map(([key, raw]) => {
-        const at = `${where}.${clip(key)}`
         const [field = '', ...mods] = key.split('|')
-        if (field === '') throw new RuleError(`${at} needs a field name`)
+        if (field === '') throw new RuleError(`${where}.${clip(key)} needs a field name`)
+        const at = `${where}.${clip(field)}`
         const modifiers: Modifier[] = []
         for (const m of mods) {
             if (m === '') throw new RuleError(`${at} has an empty modifier`)
@@ -220,9 +220,11 @@ function condition(text: string, names: readonly string[], flag: (u: string) => 
         return { op: 'sel', name: t }
     }
     const target = (t: string | undefined): string[] => {
-        if (t === 'them') {
-            if (names.length === 0) throw bad('"them" matches no selection')
-            return [...names]
+        if (t === 'them' || t === '*') {
+            // Sigma: names starting with `_` are helpers, left out of `them`
+            const all = names.filter((n) => !n.startsWith('_'))
+            if (all.length === 0) throw bad(`"${t}" matches no selection`)
+            return all
         }
         if (t !== undefined && t.endsWith('*') && NAME.test(t.slice(0, -1))) {
             const prefix = t.slice(0, -1)

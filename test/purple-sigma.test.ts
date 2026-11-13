@@ -103,6 +103,46 @@ describe('parseSigma', () => {
         expect(r.condition).toEqual({ op: 'of', quant: 'all', names: ['a', 'b'] })
     })
 
+    it('leaves names starting with _ out of them', () => {
+        const sels = '  _helper:\n    x: 0\n  a:\n    x: 1\n  b:\n    x: 2\n'
+        expect(ok(rule(`${sels}  condition: 1 of them and not _helper\n`)).condition).toEqual({
+            op: 'and',
+            args: [
+                { op: 'of', quant: 'one', names: ['a', 'b'] },
+                { op: 'not', arg: { op: 'sel', name: '_helper' } }
+            ]
+        })
+        expect(ok(rule(`${sels}  condition: all of them\n`)).condition).toEqual({
+            op: 'of',
+            quant: 'all',
+            names: ['a', 'b']
+        })
+        expect(bad(rule('  _only:\n    x: 1\n  condition: all of them\n')).error).toBe(
+            'condition: "them" matches no selection'
+        )
+    })
+
+    it('treats a bare * like them', () => {
+        const sels = '  _helper:\n    x: 0\n  a:\n    x: 1\n  b:\n    x: 2\n'
+        expect(ok(rule(`${sels}  condition: 1 of *\n`)).condition).toEqual({
+            op: 'of',
+            quant: 'one',
+            names: ['a', 'b']
+        })
+        expect(ok(rule(`${sels}  condition: all of *\n`)).condition).toEqual({
+            op: 'of',
+            quant: 'all',
+            names: ['a', 'b']
+        })
+        expect(bad(rule('  _only:\n    x: 1\n  condition: 1 of *\n')).error).toBe('condition: "*" matches no selection')
+        // an explicit _ prefix still reaches _ names
+        expect(ok(rule(`${sels}  condition: 1 of _h*\n`)).condition).toEqual({
+            op: 'of',
+            quant: 'one',
+            names: ['_helper']
+        })
+    })
+
     it('accepts all of / 1 of a single name', () => {
         expect(ok(rule('  a:\n    x: 1\n  condition: all of a\n')).condition).toEqual({
             op: 'of',
@@ -186,8 +226,7 @@ describe('parseSigma', () => {
     })
 
     it('reports deep nesting without throwing', () => {
-        const r = parseSigma('a: ' + '['.repeat(8000) + ']'.repeat(8000))
-        expect(r.ok).toBe(false)
+        expect(bad('a: ' + '['.repeat(8000) + ']'.repeat(8000)).error).toMatch(/^invalid YAML: /)
     })
 
     it('marks two documents as unsupported', () => {
@@ -245,6 +284,20 @@ describe('parseSigma', () => {
         )
     })
 
+    it('rejects an unsafe re pattern that is not the first value', () => {
+        expect(bad(rule("  a:\n    x|re: ['^a$', '(a+)+$']\n  condition: a\n")).error).toContain(
+            're pattern "(a+)+$": '
+        )
+    })
+
+    it('rejects non-finite numbers as values', () => {
+        for (const v of ['.nan', '.inf', '-.inf', '[1, .nan]']) {
+            expect(bad(rule(`  a:\n    x: ${v}\n  condition: a\n`)).error, v).toBe(
+                'detection.a.x must be a scalar or a non-empty list of scalars'
+            )
+        }
+    })
+
     it('rejects a non-string re value', () => {
         expect(bad(rule('  a:\n    x|re: 5\n  condition: a\n')).error).toMatch(/^re pattern "5": /)
     })
@@ -257,7 +310,9 @@ describe('parseSigma', () => {
 
     it('rejects re combined with contains, startswith or endswith', () => {
         for (const m of ['contains', 'startswith', 'endswith']) {
-            expect(bad(rule(`  a:\n    x|re|${m}: abc\n  condition: a\n`)).error).toMatch(/re/)
+            expect(bad(rule(`  a:\n    x|re|${m}: abc\n  condition: a\n`)).error).toBe(
+                `detection.a.x: re cannot be combined with ${m}`
+            )
         }
     })
 
