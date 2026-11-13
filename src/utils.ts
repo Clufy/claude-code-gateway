@@ -265,3 +265,16 @@ export function cleanJsonSchema(schema: any): any {
 
     return cleaned
 }
+
+const isObject = (v: unknown): v is Record<string, any> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * Messages and content blocks that are objects. A `null` (or any non-object) entry would throw in a provider's
+ * converter and surface as a 500, so it is skipped. A non-array is returned unchanged for the caller to reject.
+ */
+export function objectMessages<T>(messages: T): T {
+    if (!Array.isArray(messages)) return messages
+    return messages
+        .filter(isObject)
+        .map((m) => (Array.isArray(m.content) ? { ...m, content: m.content.filter(isObject) } : m)) as T
+}

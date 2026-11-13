@@ -1,3 +1,5 @@
+import { objectMessages } from './utils'
+
 export function estimateTokens(text: string): number {
     return Math.max(0, Math.ceil(text.length / 4))
 }
@@ -15,7 +17,7 @@ export function countTokensForRequest(body: any): { input_tokens: number } {
         }
     }
 
-    for (const message of body.messages ?? []) {
+    for (const message of objectMessages(body.messages) ?? []) {
         if (typeof message.content === 'string') {
             parts.push(message.content)
         } else if (Array.isArray(message.content)) {

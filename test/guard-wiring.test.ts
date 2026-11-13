@@ -8,6 +8,8 @@ import * as guardModule from '../src/guard'
 import { createGuard, type Guard } from '../src/guard'
 import { finalizeMessagesResponse } from '../src/request-log'
 import { newStats } from '../src/stats'
+import { impl as GeminiImpl } from '../src/providers/gemini'
+import { ChatCompletionsProvider, ResponsesProvider } from '../src/providers/openai'
 
 const ACME = {
     scope: { domains: ['*.acme-test.com'], cidrs: ['203.0.113.0/24'] },
@@ -476,9 +478,52 @@ describe('robustness (Review Focus 3)', () => {
     })
 
     it('odd message and block shapes', async () => {
-        // null entries are left out: the Workers AI provider itself rejects them before the guard matters.
-        const messages = [7, 'x', { role: 'user', content: [3, { type: 'text', text: 9 }, toolResult([1, 'two'])] }]
+        // non-object messages and blocks (null included) are skipped by the provider and by the guard
+        const messages = [
+            7,
+            'x',
+            null,
+            { role: 'user', content: [3, null, { type: 'text', text: 9 }, toolResult([1, 'two'])] }
+        ]
         await expectOneRequestLine(await post(makeEnv(), { messages }), 200)
+    })
+
+    it('a null message entry is skipped, not a 500 (Workers AI)', async () => {
+        const res = await post(makeEnv(), { messages: [null, { role: 'user', content: 'hi' }] })
+        await expectOneRequestLine(res, 200)
+        logSpy.mockClear()
+        const streamed = await post(makeEnv(), { stream: true, messages: [null, { role: 'user', content: [null] }] })
+        await expectOneRequestLine(streamed, 200)
+    })
+
+    it.each([
+        ['chat completions', () => new ChatCompletionsProvider()],
+        ['responses', () => new ResponsesProvider()],
+        ['gemini', () => new GeminiImpl()]
+    ])('the %s provider skips null and non-object messages and blocks', async (_name, make) => {
+        const body = {
+            model: 'm',
+            max_tokens: 10,
+            messages: [
+                null,
+                7,
+                { role: 'user', content: [null, { type: 'text', text: 'hi' }] },
+                { role: 'user', content: 'yo' }
+            ]
+        }
+        const req = new Request('https://proxy.test/v1/messages', { method: 'POST', body: JSON.stringify(body) })
+        const out = await make().convertToProviderRequest(req, 'https://api.example.com/v1', 'k')
+        const text = await out.text()
+        expect(text).toContain('hi')
+        expect(text).toContain('yo')
+    })
+
+    it('a null message entry through an external provider is not a 500', async () => {
+        stub = stubFetch(() =>
+            Response.json({ id: 'x', model: 'm', choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] })
+        )
+        const res = await external({ messages: [null, { role: 'user', content: 'hi' }] })
+        await expectOneRequestLine(res, 200)
     })
 
     it('a streamed tool_use with truncated partial_json passes through and is still checked as text', async () => {

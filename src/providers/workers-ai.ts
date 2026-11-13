@@ -2,6 +2,7 @@ import { countTokensForRequest, estimateTokens } from '../tokens'
 import { HermesFilter, repairJson } from '../hermes'
 import type { HermesCall } from '../hermes'
 import { newStats } from '../stats'
+import { objectMessages } from '../utils'
 import type { BackendStats } from '../stats'
 
 const encoder = new TextEncoder()
@@ -339,7 +340,7 @@ export class WorkersAIProvider {
             return this.error(400, 'invalid_request_error', 'invalid JSON body')
         }
         const model = body?.model
-        const messages = body?.messages
+        const messages = objectMessages(body?.messages)
         const id = `msg_${crypto.randomUUID()}`
 
         if (typeof model !== 'string' || model.length === 0) {

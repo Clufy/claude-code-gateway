@@ -147,6 +147,7 @@ export class ChatCompletionsProvider implements provider.Provider {
 
     async convertToProviderRequest(request: Request, baseUrl: string, apiKey: string): Promise<Request> {
         const claudeRequest = (await request.json()) as types.ClaudeRequest
+        claudeRequest.messages = utils.objectMessages(claudeRequest.messages)
         this.inputTokensEstimate = tokens.countTokensForRequest(claudeRequest).input_tokens
         const openaiRequest = this.convertToOpenAIRequestBody(claudeRequest)
         const finalUrl = utils.buildUrl(baseUrl, 'chat/completions')
@@ -465,6 +466,7 @@ export class ResponsesProvider implements provider.Provider {
 
     async convertToProviderRequest(request: Request, baseUrl: string, apiKey: string): Promise<Request> {
         const claudeRequest = (await request.json()) as types.ClaudeRequest
+        claudeRequest.messages = utils.objectMessages(claudeRequest.messages)
         this.inputTokensEstimate = tokens.countTokensForRequest(claudeRequest).input_tokens
         const openaiRequest = this.convertToResponsesRequestBody(claudeRequest)
         const finalUrl = utils.buildUrl(baseUrl, 'responses')

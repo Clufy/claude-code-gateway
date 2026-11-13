@@ -11,6 +11,7 @@ export class impl implements provider.Provider {
 
     async convertToProviderRequest(request: Request, baseUrl: string, apiKey: string): Promise<Request> {
         const claudeRequest = (await request.json()) as types.ClaudeRequest
+        claudeRequest.messages = utils.objectMessages(claudeRequest.messages)
         this.inputTokensEstimate = tokens.countTokensForRequest(claudeRequest).input_tokens
         const geminiRequest = this.convertToGeminiRequestBody(claudeRequest)
 
