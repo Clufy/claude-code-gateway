@@ -1,6 +1,6 @@
 import { generateRequestId } from './request-id'
 import { anthropicError, jsonResponse } from './errors'
-import { checkProxyAuth, extractProviderKey } from './auth'
+import { checkProxyAuth, extractProviderKey, verifyProxyKey } from './auth'
 import { readLimitedBody } from './body-limit'
 import { resolveProviderUrl } from './provider-url'
 import { BackendType, ConfigError, loadConfig, ProxyConfig } from './config'
@@ -180,16 +180,9 @@ async function handleRequest(
             return anthropicError(500, 'api_error', 'proxy not configured: /mcp requires PROXY_KEY', requestId)
         }
         const token = request.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] ?? null
-        const auth = await checkProxyAuth(token?.trim() ?? null, config)
-        if (auth === 'not_configured') {
-            return anthropicError(
-                500,
-                'api_error',
-                'proxy not configured: set PROXY_KEY or ALLOW_ANONYMOUS=true',
-                requestId
-            )
+        if (!(await verifyProxyKey(token?.trim() ?? null, config.proxyKey))) {
+            return jsonResponse({ error: 'invalid authorization' }, 401, requestId)
         }
-        if (auth === 'unauthorized') return jsonResponse({ error: 'invalid authorization' }, 401, requestId)
         return handleMcp(request, config, requestId)
     }
 

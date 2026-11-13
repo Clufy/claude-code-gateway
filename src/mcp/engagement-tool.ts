@@ -1,15 +1,11 @@
 import { z } from 'zod'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import type { Engagement } from '../engagement'
 import { checkScope, inWindow } from '../engagement'
 import { decideHosts } from '../guard/decide'
-import { logged, type ToolRegistrar } from './tool-kit'
+import { fail, logged, ok, type ToolRegistrar } from './tool-kit'
 
 const MAX_TARGET = 2048
 const SAFE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
 
-const ok = (payload: unknown): CallToolResult => ({ content: [{ type: 'text', text: JSON.stringify(payload) }] })
-const fail = (message: string): CallToolResult => ({ content: [{ type: 'text', text: message }], isError: true })
 const iso = (ms: number) => new Date(ms).toISOString()
 
 export const registerEngagementTool: ToolRegistrar = (server, ctx) => {
@@ -40,7 +36,7 @@ export const registerEngagementTool: ToolRegistrar = (server, ctx) => {
                     })
                 }
                 if (name === undefined) return fail(`name is required for ${action}`)
-                const e: Engagement | undefined = engagements.get(name)
+                const e = engagements.get(name)
                 if (!e) return fail(SAFE_NAME.test(name) ? `unknown engagement: ${name}` : 'unknown engagement')
                 if (action === 'get') {
                     return ok({

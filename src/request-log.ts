@@ -61,21 +61,11 @@ const MAX_OPEN_TOOL_BLOCKS = 16 // P4-R30: further starts are ignored until one 
 const MAX_TOOL_NAMES = 16
 const MAX_TOOL_NAME_LEN = 64
 
-/** Unique tool_use names in first-seen order. Independent of the guard and its block cap. */
-function nameCollector() {
-    const names: string[] = []
-    return {
-        names,
-        add(name: unknown): void {
-            try {
-                if (typeof name !== 'string' || name === '' || names.length >= MAX_TOOL_NAMES) return
-                const n = name.slice(0, MAX_TOOL_NAME_LEN)
-                if (!names.includes(n)) names.push(n)
-            } catch {
-                // never break the response
-            }
-        }
-    }
+/** Adds a tool_use name: unique, first-seen order, capped. Independent of the guard and its block cap. */
+function addToolName(names: string[], name: unknown): void {
+    if (typeof name !== 'string' || name === '' || names.length >= MAX_TOOL_NAMES) return
+    const n = name.slice(0, MAX_TOOL_NAME_LEN)
+    if (!names.includes(n)) names.push(n)
 }
 
 /** Feeds a finished tool_use input to the guard; a guard failure is lost silently. */
@@ -175,11 +165,11 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
         let outputTokens: number | undefined
         let streamError: string | undefined
         const onGuardEvent = toolTracker(input.guard)
-        const collected = nameCollector()
+        const tools: string[] = []
         out = tapSse(response, {
             onEvent(event, data) {
                 if (event === 'content_block_start' && data?.content_block?.type === 'tool_use') {
-                    collected.add(data.content_block.name)
+                    addToolName(tools, data.content_block.name)
                 }
                 onGuardEvent(event, data)
                 if (event === 'error') streamError ??= data?.error?.type ?? 'error'
@@ -197,7 +187,7 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
                         streamed: true,
                         inputTokens,
                         outputTokens,
-                        ...(collected.names.length ? { tools: collected.names } : {}),
+                        ...(tools.length ? { tools } : {}),
                         ...(streamError ? { streamError } : {}),
                         ...(reason === 'cancel' ? { cancelled: true } : {})
                     })
@@ -207,7 +197,7 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
         })
     } else {
         let usage: { inputTokens?: number; outputTokens?: number; tools?: string[] } = {}
-        const collected = nameCollector()
+        const tools: string[] = []
         if (response.ok) {
             try {
                 const json: any = await response.clone().json()
@@ -215,12 +205,12 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
                 if (Array.isArray(json?.content)) {
                     for (const b of json.content) {
                         if (b?.type === 'tool_use') {
-                            collected.add(b.name)
+                            addToolName(tools, b.name)
                             guardToolUse(input.guard, b.name, b.input)
                         }
                     }
                 }
-                if (collected.names.length) usage.tools = collected.names
+                if (tools.length) usage.tools = tools
             } catch {
                 // not JSON: log without usage
             }

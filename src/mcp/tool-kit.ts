@@ -10,6 +10,9 @@ export interface McpContext {
 
 export type ToolRegistrar = (server: McpServer, ctx: McpContext) => void
 
+export const ok = (payload: unknown): CallToolResult => ({ content: [{ type: 'text', text: JSON.stringify(payload) }] })
+export const fail = (message: string): CallToolResult => ({ content: [{ type: 'text', text: message }], isError: true })
+
 // Writes the one `mcp` log line per tools/call: no arguments, no results.
 export async function logged(
     ctx: McpContext,

@@ -1,4 +1,5 @@
 import type { ObservabilityConfig } from './config'
+import { isObj as isRecord } from './engagement'
 
 export interface LogFilter {
     key: string
@@ -17,10 +18,6 @@ export type QueryResult = { ok: true; rows: LogRow[]; count: number } | { ok: fa
 const TIMEOUT_MS = 10000
 const MAX_ERROR_MESSAGE = 200
 const UNEXPECTED = 'logs query returned an unexpected response'
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-    return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
 
 /** Client-side re-check of a filter against a parsed log line. `$`-prefixed keys are server-side only. */
 export function matches(source: Record<string, unknown>, f: LogFilter): boolean {
