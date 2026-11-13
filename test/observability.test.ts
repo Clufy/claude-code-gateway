@@ -130,6 +130,55 @@ describe('queryEvents', () => {
         })
     }
 
+    it('scrubs the token from server error messages', async () => {
+        stub = stubFetch(() => json({ errors: [{ message: 'bad token t0k here' }] }, 500))
+        const r = await queryEvents(cfg, 'request', 0, 1, [], 50)
+        expect(r).toEqual({ ok: false, error: 'logs query failed: HTTP 500: bad token [redacted] here' })
+    })
+
+    it('treats AbortError as a timeout', async () => {
+        stub = stubFetch(() => {
+            throw new DOMException('x', 'AbortError')
+        })
+        const r = await queryEvents(cfg, 'request', 0, 1, [], 50)
+        expect(r).toEqual({ ok: false, error: 'logs query timed out after 10 s' })
+    })
+
+    const hostile: Array<[string, () => Response, number | null]> = [
+        ['result null', () => json({ result: null }), null],
+        ['events string', () => json({ result: { events: 'x' } }), null],
+        [
+            'bad rows',
+            () =>
+                json({
+                    result: {
+                        events: {
+                            events: [
+                                null,
+                                5,
+                                { timestamp: 'x', source: {} },
+                                { timestamp: 1, source: [] },
+                                { timestamp: 1, source: '[1]' }
+                            ]
+                        }
+                    }
+                }),
+            0
+        ],
+        ['non-JSON 200', () => new Response('<html>', { status: 200 }), null]
+    ]
+    for (const [name, handler, rows] of hostile) {
+        it(`hostile 200 body: ${name}`, async () => {
+            stub = stubFetch(handler)
+            const r = await queryEvents(cfg, 'request', 0, 1, [], 50)
+            if (rows === null) {
+                expect(r).toEqual({ ok: false, error: 'logs query returned an unexpected response' })
+            } else {
+                expect(r).toEqual({ ok: true, rows: [], count: rows })
+            }
+        })
+    }
+
     it('truncates error messages to 200 chars', async () => {
         stub = stubFetch(() => json({ errors: [{ message: 'x'.repeat(500) }] }, 400))
         const r = await queryEvents(cfg, 'request', 0, 1, [], 50)
@@ -160,6 +209,9 @@ describe('matches', () => {
         expect(matches({ k: 'high' }, f('in', ['medium', 'high']))).toBe(true)
         expect(matches({ k: 'low' }, f('in', ['medium', 'high']))).toBe(false)
         expect(matches({}, f('in', ['a']))).toBe(false)
+    })
+    it('ignores inherited keys', () => {
+        expect(matches({}, f('eq', 'x', 'toString'))).toBe(false)
     })
     it('skips $ keys', () => {
         expect(matches({}, f('eq', 'svc', '$metadata.service'))).toBe(true)
