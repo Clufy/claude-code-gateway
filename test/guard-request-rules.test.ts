@@ -362,6 +362,44 @@ describe('fix round 3', () => {
     })
 })
 
+describe('remaining redaction shapes (P4-R27, final wave B3)', () => {
+    const key = 'sk_live_' + alnum(30)
+    it.each([
+        ['password => hunter2SuperSecretValue9', 'hunter2SuperSecretValue9'],
+        ['mysql -pHunter2Secret9', 'Hunter2Secret9'],
+        ['mysql -u root -p Hunter2Secret9 appdb', 'Hunter2Secret9'],
+        ['--token Hunter2Secret9', 'Hunter2Secret9'],
+        ['tool --api-key=Hunter2Secret9 --verbose', 'Hunter2Secret9'],
+        ['<password>Hunter2Secret9</password>', 'Hunter2Secret9'],
+        ['<apiKey>Hunter2Secret9</apiKey>', 'Hunter2Secret9'],
+        ['password: correct horse battery staple', 'horse battery staple'],
+        ['DATABASE_URL=postgres://app:Pr0dDbPassw0rd!@db.internal:5432/app', 'Pr0dDbPassw0rd'],
+        ['SMTP_PASS=MailPassw0rd9', 'MailPassw0rd9'],
+        ['redis://:pw0rdSecret@host', 'pw0rdSecret'],
+        ['Authorization: Bearer abc123def456', 'abc123def456']
+    ])('%s leaves no secret next to a firing key', (line, secret) => {
+        for (const text of [`${key}\n${line}\n`, `${line}\n${key}\n`]) {
+            const ex = secretEgress(tr(text))
+            expect(ex).toContain('sk_l…[redacted]')
+            expect(ex).not.toContain(secret)
+            expect(excerptAt(text, 0, text.length)).not.toContain(secret)
+        }
+        expect(redact(line)).not.toContain(secret)
+    })
+    it('keeps the host of a URL with userinfo and the text after a bearer token', () => {
+        expect(redact('postgres://app:Pr0dDbPassw0rd!@db.internal:5432/app')).toBe(
+            'postgres://app:[redacted]@db.internal:5432/app'
+        )
+        expect(redact('curl -H "Authorization: Bearer abc123def456" https://x')).toBe(
+            'curl -H "Authorization: Bearer [redacted]" https://x'
+        )
+    })
+    it('does not change detection: the new shapes alone do not flag', () => {
+        expect(secretEgress(tr('mysql -pHunter2Secret9'))).toBeNull()
+        expect(secretEgress(tr('Authorization: Bearer abc123def456'))).toBeNull()
+    })
+})
+
 describe('exfil thresholds (fix round, P4-R22)', () => {
     it.each([
         '![](https://img.shields.io/badge/x-y-blue?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=)',

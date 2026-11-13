@@ -23,7 +23,26 @@ export const SECRET_PATTERNS: readonly { name: string; re: RegExp; anchors?: rea
  * the value. Detection keeps the strict generic pattern above.
  */
 const REDACT_KEYWORD =
-    /(?:password|passwd|pwd|secret|api[_-]?key|token|access[_-]?key)[\w-]{0,30}["']?\s{0,3}[:=]\s{0,3}(?:"([^"\n]{1,200})|'([^'\n]{1,200})|([^\s"'()\]},;]{1,200}))/gi
+    /(?:pass(?:word|wd|phrase)?|pwd|secret|api[_-]?key|token|access[_-]?key)[\w-]{0,30}["']?\s{0,3}(?:=>|[:=])\s{0,3}(?:"([^"\n]{1,200})|'([^'\n]{1,200})|([^\r\n]{1,200}))/gi
+
+/**
+ * More redaction-only shapes (P4-R27): `--password x` style flags, `mysql -p<val>`, `<password>…</password>`
+ * elements, URL userinfo passwords and bearer tokens. The value is the last group(s) and ends each match, so
+ * its span is [end − value length, end). `anchors` gate each regex as in SECRET_PATTERNS (case-sensitive).
+ */
+const REDACT_EXTRA: readonly { re: RegExp; anchors: readonly string[] }[] = [
+    {
+        re: /--(?:password|passwd|token|secret|api-key)(?:=|\s{1,3})(?:"([^"\n]{1,200})|'([^'\n]{1,200})|([^\s"']{1,200}))/gi,
+        anchors: ['--']
+    },
+    {
+        re: /\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n]{0,200}?\s-p\s{0,3}(?:"([^"\n]{1,200})|'([^'\n]{1,200})|([^\s"']{1,200}))/g,
+        anchors: ['mysql', 'mariadb']
+    },
+    { re: /<(?:password|passwd|secret|token|api_?key)(?:\s[^<>]{0,100})?>([^<]{1,200})/gi, anchors: ['<'] },
+    { re: /[a-z][a-z0-9+.-]{0,20}:\/\/[^\s/@:]{0,200}:([^\s/@]{1,200})(?=@)/gi, anchors: ['://'] },
+    { re: /\b(?:[Bb]earer|BEARER)\s{1,10}([^\s"',;]{1,300})/g, anchors: ['earer', 'EARER'] }
+]
 
 const RUNNERS = [
     'node',
@@ -144,6 +163,14 @@ function matchSpans(text: string, firstOnly: boolean, permissive: boolean): Secr
             }
             out.push({ start, end })
             if (firstOnly) break
+        }
+    }
+    if (!permissive) return out
+    for (const { re, anchors } of REDACT_EXTRA) {
+        if (!anchors.some((a) => text.includes(a))) continue
+        for (const m of text.matchAll(re)) {
+            const end = m.index + m[0].length
+            out.push({ start: end - (m[1] ?? m[2] ?? m[3]).length, end, bare: true })
         }
     }
     return out

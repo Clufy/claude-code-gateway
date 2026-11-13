@@ -22,6 +22,20 @@ export function isLoopback(target: string): boolean {
     return ip.family === 4 ? ip.value >> 24n === 127n : ip.value === 1n
 }
 
+/**
+ * How an invalid candidate is shown in hosts and reasons: a URL loses any userinfo (through the last `@`) and a
+ * non-numeric `:port`, which may be a password cut at `#` or `/` (`https://admin:S3cr#t@h` gives `https://admin:S3cr`).
+ */
+function shownInvalid(raw: string): string {
+    const sep = raw.indexOf('://')
+    if (sep === -1) return raw
+    let auth = raw.slice(sep + 3)
+    auth = auth.slice(auth.lastIndexOf('@') + 1)
+    const colon = auth.indexOf(':', auth.startsWith('[') ? Math.max(auth.indexOf(']'), 0) : 0)
+    if (colon !== -1 && !/^[0-9]{0,5}$/.test(auth.slice(colon + 1))) auth = `${auth.slice(0, colon)}:[redacted]`
+    return `${raw.slice(0, sep + 3)}${auth}`
+}
+
 /** D8: allow with no candidates; otherwise deny when any reason exists. Sentinels are never scope-checked. */
 export function decideHosts(e: Engagement, raw: string[], now: number): HostDecision {
     if (raw.length === 0) return { decision: 'allow', hosts: [], reasons: [] }
@@ -35,11 +49,11 @@ export function decideHosts(e: Engagement, raw: string[], now: number): HostDeci
     let nonLoopback = false
     for (const r of candidates) {
         const res = checkScope(e, r, now)
-        const shown = res.verdict === 'invalid_target' ? r : res.target
+        const shown = res.verdict === 'invalid_target' ? shownInvalid(r) : res.target
         if (!hosts.includes(shown)) hosts.push(shown)
         if (res.verdict === 'invalid_target') {
             nonLoopback = true
-            reasons.push(`${r} is not a checkable target; write the literal host`)
+            reasons.push(`${shown} is not a checkable target; write the literal host`)
         } else if (!isLoopback(res.target)) {
             nonLoopback = true
             if (res.verdict === 'out_of_scope') reasons.push(`${res.target} is out of scope for engagement ${e.name}`)
