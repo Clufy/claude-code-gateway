@@ -184,20 +184,20 @@ saved Claude Code settings send); path-convention routes take it in `x-proxy-key
 2, routes that use server-held keys are internal routes, so they need no new header. Upstream auth
 headers are always set by the provider converter, never forwarded from the client.
 
-| Name                                      | Kind   | Phase | Purpose                                                                                                                             |
-| ----------------------------------------- | ------ | ----- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `PROXY_KEY`                               | secret | 1     | Required unless `ALLOW_ANONYMOUS=true`.                                                                                             |
-| `ALLOW_ANONYMOUS`                         | var    | 1     | Explicit opt-out of auth (old behavior).                                                                                            |
-| `ALLOWED_HOSTS`                           | var    | 1     | Exact hostnames, comma-separated. Default = built-in list; `*` = old behavior. No wildcards (user routes only to Workers AI today). |
-| `ALLOW_HTTP`                              | var    | 1     | Permit `http://` providers (local testing only).                                                                                    |
-| `MAX_BODY_BYTES`                          | var    | 1     | Default 32 MiB (Claude Code sends large images/documents).                                                                          |
-| `UPSTREAM_TTFB_MS`                        | var    | 1     | Streaming: time to first upstream byte, default 120 s.                                                                              |
-| `UPSTREAM_TOTAL_MS`                       | var    | 1     | Non-streaming: whole-response limit, default 600 s.                                                                                 |
-| `MODEL_ROUTES`                            | var    | 2     | JSON route table (§5.2); no secrets in it, only `keySecret` names.                                                                  |
-| `OPENAI_API_KEY`, `GEMINI_API_KEY`, …     | secret | 2     | Server-held provider keys referenced by routes.                                                                                     |
-| `ENGAGEMENTS`                             | secret | 3     | JSON engagement table (§5.3). Secret because it names clients.                                                                      |
-| `GUARD_RULES`                             | var    | 4     | Optional JSON to disable/override built-in rules or add custom ones.                                                                |
-| `CF_ACCOUNT_ID`, `CF_OBSERVABILITY_TOKEN` | secret | 5     | For MCP tools that query Workers Logs.                                                                                              |
+| Name                                              | Kind   | Phase | Purpose                                                                                                                             |
+| ------------------------------------------------- | ------ | ----- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `PROXY_KEY`                                       | secret | 1     | Required unless `ALLOW_ANONYMOUS=true`.                                                                                             |
+| `ALLOW_ANONYMOUS`                                 | var    | 1     | Explicit opt-out of auth (old behavior).                                                                                            |
+| `ALLOWED_HOSTS`                                   | var    | 1     | Exact hostnames, comma-separated. Default = built-in list; `*` = old behavior. No wildcards (user routes only to Workers AI today). |
+| `ALLOW_HTTP`                                      | var    | 1     | Permit `http://` providers (local testing only).                                                                                    |
+| `MAX_BODY_BYTES`                                  | var    | 1     | Default 32 MiB (Claude Code sends large images/documents).                                                                          |
+| `UPSTREAM_TTFB_MS`                                | var    | 1     | Streaming: time to first upstream byte, default 120 s.                                                                              |
+| `UPSTREAM_TOTAL_MS`                               | var    | 1     | Non-streaming: whole-response limit, default 600 s.                                                                                 |
+| `MODEL_ROUTES`                                    | var    | 2     | JSON route table (§5.2); no secrets in it, only `keySecret` names.                                                                  |
+| `OPENAI_API_KEY`, `GEMINI_API_KEY`, …             | secret | 2     | Server-held provider keys referenced by routes.                                                                                     |
+| `ENGAGEMENTS`                                     | secret | 3     | JSON engagement table (§5.3). Secret because it names clients.                                                                      |
+| `GUARD_RULES`                                     | var    | 4     | Optional JSON to disable/override built-in rules or add custom ones.                                                                |
+| `CF_API_TOKEN` (secret) and `CF_ACCOUNT_ID` (var) | both   | 5     | For MCP tools that query Workers Logs. User decision 2026-11-13: replaces `CF_OBSERVABILITY_TOKEN`.                                 |
 
 Client-side (hook) environment, read from Claude Code's environment, not the Worker:
 

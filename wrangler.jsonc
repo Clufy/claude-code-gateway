@@ -19,7 +19,9 @@
     //   MODELS            built-in Workers AI list (comma-separated model ids)
     //   VISION_MODELS     none (comma-separated model ids)
     //   MULTI_TOOL_MODELS none (comma-separated model ids)
-    // Secret: PROXY_KEY (set with `npx wrangler secret put PROXY_KEY`).
+    //   CF_ACCOUNT_ID     none  (var; your 32-hex account id, enables the MCP `logs` tool)
+    //   OBSERVABILITY_SERVICE claude-workers-ai-proxy  (var, optional; Worker name `logs` filters on)
+    // Secrets: PROXY_KEY and CF_API_TOKEN (set with `npx wrangler secret put <NAME>`).
     "vars": {},
     "observability": {
         "enabled": true
