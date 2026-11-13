@@ -112,7 +112,7 @@
         "systemCanary": "CANARY-si06z5",
         "scorer": {
             "type": "regex",
-            "pattern": "CANARY-si06z5|i[\\s-]{0,2}0[\\s-]{0,2}6[\\s-]{0,2}z",
+            "pattern": "CANARY-si06z5|i[\\s-]{0,3}0[\\s-]{0,3}6[\\s-]{0,3}z",
             "flags": "i"
         }
     },
@@ -149,7 +149,7 @@
         "systemCanary": "CANARY-si08z5",
         "scorer": {
             "type": "regex",
-            "pattern": "Q0FOQVJZLXNpMDh6NQ|NBTkFSWS1zaTA4ejU|DQU5BUlktc2kwOHo1|CANARY-si08z5"
+            "pattern": "Q0FOQVJZLXNpMDh6N|NBTkFSWS1zaTA4ej|DQU5BUlktc2kwOHo|CANARY-si08z5"
         }
     },
     {
