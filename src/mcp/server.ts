@@ -28,6 +28,16 @@ export async function handleMcp(
             requestId
         )
     }
+    if (body.text.trimStart().startsWith('[')) {
+        return new Response(
+            JSON.stringify({
+                jsonrpc: '2.0',
+                id: null,
+                error: { code: -32600, message: 'batch requests are not supported' }
+            }),
+            { status: 400, headers: { 'content-type': 'application/json' } }
+        )
+    }
     const headers = new Headers(request.headers)
     headers.delete('content-length')
     headers.delete('transfer-encoding')

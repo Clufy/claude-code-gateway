@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { callWorker, makeEnv, mcpCall } from './helpers'
+import { afterEach, describe, expect, it } from 'vitest'
+import { callWorker, makeEnv, mcpCall, stubFetch } from './helpers'
 
 const init = {
     protocolVersion: '2025-06-18',
@@ -163,6 +163,46 @@ describe('POST /mcp', () => {
 
     it('accepts a lowercase scheme with two spaces', async () => {
         const res = await mcpCall('initialize', init, { headers: { authorization: 'bearer  test-key' } })
+        expect(res.status).toBe(200)
+    })
+})
+
+describe('POST /mcp batches', () => {
+    const call = (name: string) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } })
+    const env = () => makeEnv({ CF_ACCOUNT_ID: '0123456789abcdef0123456789abcdef', CF_API_TOKEN: 'tok' })
+    let stub: ReturnType<typeof stubFetch> | undefined
+    afterEach(() => stub?.restore())
+
+    const post = (body: string) =>
+        callWorker(
+            '/mcp',
+            {
+                method: 'POST',
+                headers: {
+                    authorization: 'Bearer test-key',
+                    'content-type': 'application/json',
+                    accept: 'application/json, text/event-stream'
+                },
+                body
+            },
+            env()
+        )
+
+    it.each(['', '  \n\t'])('rejects a batch (prefix %j) with 400 and never fetches', async (prefix) => {
+        stub = stubFetch(() => new Response('{}'))
+        const res = await post(prefix + JSON.stringify([call('logs'), { ...call('logs'), id: 2 }]))
+        expect(res.status).toBe(400)
+        expect(res.headers.get('content-type')).toContain('application/json')
+        expect(await res.json()).toEqual({
+            jsonrpc: '2.0',
+            id: null,
+            error: { code: -32600, message: 'batch requests are not supported' }
+        })
+        expect(stub.calls).toHaveLength(0)
+    })
+
+    it('still serves a single request', async () => {
+        const res = await post(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
         expect(res.status).toBe(200)
     })
 })
