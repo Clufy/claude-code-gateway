@@ -376,3 +376,173 @@ describe('tapSse', () => {
         expect(await out.text()).toBe(body)
     })
 })
+
+describe('tools on the request line (D13)', () => {
+    const sse = (events: [string, unknown][]) =>
+        events.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join('')
+    const start = (index: number, name: string) =>
+        [
+            'content_block_start',
+            {
+                type: 'content_block_start',
+                index,
+                content_block: { type: 'tool_use', id: `t${index}`, name, input: {} }
+            }
+        ] as [string, unknown]
+    const stop = (index: number) => ['content_block_stop', { type: 'content_block_stop', index }] as [string, unknown]
+
+    async function streamTools(
+        events: [string, unknown][],
+        extra: Partial<Parameters<typeof finalizeMessagesResponse>[1]> = {}
+    ) {
+        const res = await finalizeMessagesResponse(
+            new Response(sse(events), { headers: { 'content-type': 'text/event-stream' } }),
+            {
+                request: new Request('https://proxy.test/v1/messages', { method: 'POST' }),
+                requestId: 'r',
+                start: Date.now(),
+                backend: 'b',
+                fallbackUsed: false,
+                stats: newStats(),
+                ...extra
+            }
+        )
+        await res.text()
+        const l = requestLines()
+        expect(l).toHaveLength(1)
+        return l[0]
+    }
+
+    it('streamed: unique names in first-seen order', async () => {
+        const line = await streamTools([
+            start(0, 'Bash'),
+            stop(0),
+            start(1, 'Read'),
+            stop(1),
+            start(2, 'Bash'),
+            stop(2)
+        ])
+        expect(line.tools).toEqual(['Bash', 'Read'])
+    })
+
+    it('streamed: 20 distinct names keep 16', async () => {
+        const evs = Array.from({ length: 20 }, (_, i) => [start(i, `T${i}`), stop(i)]).flat()
+        const line = await streamTools(evs)
+        expect(line.tools).toEqual(Array.from({ length: 16 }, (_, i) => `T${i}`))
+    })
+
+    it('cuts a 100-char name to 64', async () => {
+        const line = await streamTools([start(0, 'x'.repeat(100)), stop(0)])
+        expect(line.tools).toEqual(['x'.repeat(64)])
+    })
+
+    it('collects with no guard and past 16 open blocks', async () => {
+        const evs = Array.from({ length: 17 }, (_, i) => start(i, `T${i}`))
+        const line = await streamTools(evs)
+        expect(line.tools).toHaveLength(16)
+        expect(line.tools[0]).toBe('T0')
+    })
+
+    it('collects when the guard is disabled via GUARD_RULES', async () => {
+        const env = makeEnv({
+            GUARD_RULES: '{"disable":["cmd.risky","inject.instruction","engagement.out_of_window"]}',
+            AI: fakeAI([
+                {
+                    choices: [
+                        {
+                            index: 0,
+                            delta: {
+                                tool_calls: [
+                                    { index: 0, id: 'c1', function: { name: 'Bash', arguments: '{"command":"ls"}' } }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }
+            ])
+        })
+        const res = await post(env, { stream: true })
+        await res.text()
+        expect(requestLines()[0].tools).toEqual(['Bash'])
+    })
+
+    it('non-streamed response with tool_use blocks gets tools', async () => {
+        const env = makeEnv({
+            AI: fakeAI([
+                {
+                    choices: [
+                        {
+                            index: 0,
+                            delta: {
+                                tool_calls: [
+                                    { index: 0, id: 'c1', function: { name: 'Bash', arguments: '{"command":"ls"}' } }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }
+            ])
+        })
+        const res = await post(env)
+        await res.text()
+        expect(requestLines()[0].tools).toEqual(['Bash'])
+    })
+
+    it('non-streamed body: dedupe, caps and name cut', async () => {
+        const content = [
+            ...Array.from({ length: 20 }, (_, i) => ({ type: 'tool_use', id: `a${i}`, name: `T${i}`, input: {} })),
+            { type: 'tool_use', id: 'z', name: 'T0', input: {} }
+        ]
+        content[1].name = 'y'.repeat(100)
+        const res = await finalizeMessagesResponse(
+            new Response(JSON.stringify({ content }), { headers: { 'content-type': 'application/json' } }),
+            {
+                request: new Request('https://proxy.test/v1/messages', { method: 'POST' }),
+                requestId: 'r',
+                start: Date.now(),
+                backend: 'b',
+                fallbackUsed: false,
+                stats: newStats()
+            }
+        )
+        await res.text()
+        const tools = requestLines()[0].tools
+        expect(tools).toHaveLength(16)
+        expect(tools[1]).toBe('y'.repeat(64))
+    })
+
+    it('text-only response has no tools key', async () => {
+        const res = await post(makeEnv({ AI: fakeAI(USAGE_CHUNKS) }))
+        await res.text()
+        expect('tools' in requestLines()[0]).toBe(false)
+        const s = await post(makeEnv({ AI: fakeAI(USAGE_CHUNKS) }), { stream: true })
+        await s.text()
+        expect('tools' in requestLines()[1]).toBe(false)
+    })
+
+    it('x-proxy-debug streamed still logs tools', async () => {
+        const res = await post(
+            makeEnv({
+                AI: fakeAI([
+                    {
+                        choices: [
+                            {
+                                index: 0,
+                                delta: {
+                                    tool_calls: [{ index: 0, id: 'c1', function: { name: 'Read', arguments: '{}' } }]
+                                }
+                            }
+                        ]
+                    },
+                    { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }
+                ])
+            }),
+            { stream: true },
+            { 'x-proxy-debug': '1' }
+        )
+        await res.text()
+        expect(requestLines()[0].tools).toEqual(['Read'])
+    })
+})

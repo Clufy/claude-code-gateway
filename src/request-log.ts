@@ -24,6 +24,7 @@ export interface RequestLog {
     cancelled?: boolean // the client cancelled the stream before it ended
     engagement?: string // x-engagement, when one was named
     mode?: ProxyMode // resolved mode, logged with the engagement
+    tools?: string[] // unique tool_use names in the response, first-seen order (≤16, each ≤64 chars)
 }
 
 export function logRequest(record: RequestLog): void {
@@ -56,6 +57,26 @@ export interface FinalizeInput {
 
 const MAX_TOOL_JSON = 1024 * 1024 // per streamed tool_use block
 const MAX_OPEN_TOOL_BLOCKS = 16 // P4-R30: further starts are ignored until one closes
+
+const MAX_TOOL_NAMES = 16
+const MAX_TOOL_NAME_LEN = 64
+
+/** Unique tool_use names in first-seen order. Independent of the guard and its block cap. */
+function nameCollector() {
+    const names: string[] = []
+    return {
+        names,
+        add(name: unknown): void {
+            try {
+                if (typeof name !== 'string' || name === '' || names.length >= MAX_TOOL_NAMES) return
+                const n = name.slice(0, MAX_TOOL_NAME_LEN)
+                if (!names.includes(n)) names.push(n)
+            } catch {
+                // never break the response
+            }
+        }
+    }
+}
 
 /** Feeds a finished tool_use input to the guard; a guard failure is lost silently. */
 function guardToolUse(guard: Guard | undefined, name: unknown, input: unknown): void {
@@ -154,8 +175,12 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
         let outputTokens: number | undefined
         let streamError: string | undefined
         const onGuardEvent = toolTracker(input.guard)
+        const collected = nameCollector()
         out = tapSse(response, {
             onEvent(event, data) {
+                if (event === 'content_block_start' && data?.content_block?.type === 'tool_use') {
+                    collected.add(data.content_block.name)
+                }
                 onGuardEvent(event, data)
                 if (event === 'error') streamError ??= data?.error?.type ?? 'error'
                 else if (event === 'message_start') inputTokens = data?.message?.usage?.input_tokens ?? inputTokens
@@ -172,6 +197,7 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
                         streamed: true,
                         inputTokens,
                         outputTokens,
+                        ...(collected.names.length ? { tools: collected.names } : {}),
                         ...(streamError ? { streamError } : {}),
                         ...(reason === 'cancel' ? { cancelled: true } : {})
                     })
@@ -180,16 +206,21 @@ export async function finalizeMessagesResponse(response: Response, input: Finali
             }
         })
     } else {
-        let usage: { inputTokens?: number; outputTokens?: number } = {}
+        let usage: { inputTokens?: number; outputTokens?: number; tools?: string[] } = {}
+        const collected = nameCollector()
         if (response.ok) {
             try {
                 const json: any = await response.clone().json()
                 usage = { inputTokens: json?.usage?.input_tokens, outputTokens: json?.usage?.output_tokens }
-                if (input.guard && Array.isArray(json?.content)) {
+                if (Array.isArray(json?.content)) {
                     for (const b of json.content) {
-                        if (b?.type === 'tool_use') guardToolUse(input.guard, b.name, b.input)
+                        if (b?.type === 'tool_use') {
+                            collected.add(b.name)
+                            guardToolUse(input.guard, b.name, b.input)
+                        }
                     }
                 }
+                if (collected.names.length) usage.tools = collected.names
             } catch {
                 // not JSON: log without usage
             }
