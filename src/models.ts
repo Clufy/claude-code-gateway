@@ -13,15 +13,7 @@ interface ClaudeModelListing {
     capabilities: Record<string, { name: string; supported: boolean }>
 }
 
-const DEFAULT_MODELS = ['@cf/zai-org/glm-5.3', '@cf/moonshotai/kimi-k2.6', '@cf/deepseek-ai/deepseek-v4-pro-0813']
-
-// Real context windows from developers.cloudflare.com/workers-ai/models;
-// conservative default so Claude Code compacts before an unknown model overflows.
-const CONTEXT_TOKENS: Record<string, number> = {
-    '@cf/zai-org/glm-5.3': 1048576,
-    '@cf/moonshotai/kimi-k2.6': 262144,
-    '@cf/deepseek-ai/deepseek-v4-pro-0813': 1048576
-}
+// Fallback when no route states a window, so Claude Code compacts before an unknown model overflows.
 const DEFAULT_CONTEXT_TOKENS = 24000
 
 function commaSet(value?: string): Set<string> {
@@ -34,25 +26,31 @@ function commaSet(value?: string): Set<string> {
 }
 
 // An id a route matches (exact or glob) is served by that route, so the route describes it (P2-R24).
+// Settings it leaves unset come from one hop: the route whose exact key is its backing model.
 function toModel(id: string, env: Env, cfg: ProxyConfig): ClaudeModelListing {
     const visionModels = commaSet((env as { VISION_MODELS?: string }).VISION_MODELS)
     const multiToolModels = commaSet((env as { MULTI_TOOL_MODELS?: string }).MULTI_TOOL_MODELS)
-    const route = findRouteEntry(id, cfg.routes)?.route
-    const backing = route?.model ?? id
+    const own = findRouteEntry(id, cfg.routes)?.route
+    const backing = own?.model ?? id
+    const hop = cfg.routes.find((e) => e.pattern === backing && !e.pattern.includes('*') && e.route !== own)?.route
 
-    const has = (set: Set<string>) => set.has(id) || set.has(backing)
+    const legacy = (set: Set<string>) => set.has(id) || set.has(backing)
 
     return {
         id,
         type: 'model',
         display_name: id,
         created_at: 0,
-        max_input_tokens: route?.contextTokens ?? CONTEXT_TOKENS[backing] ?? DEFAULT_CONTEXT_TOKENS,
+        max_input_tokens: own?.contextTokens ?? hop?.contextTokens ?? DEFAULT_CONTEXT_TOKENS,
         max_tokens: null,
         capabilities: {
             tools: { name: 'tool_use', supported: true },
-            vision: { name: 'vision', supported: has(visionModels) },
-            multi_tool_use: { name: 'multi_tool_use', supported: has(multiToolModels) }
+            vision: { name: 'vision', supported: own?.vision ?? hop?.vision ?? legacy(visionModels) },
+            multi_tool_use: {
+                name: 'multi_tool_use',
+                supported: own?.multiTool ?? hop?.multiTool ?? legacy(multiToolModels)
+            },
+            thinking: { name: 'thinking', supported: own?.reasoning ?? hop?.reasoning ?? false }
         }
     }
 }
@@ -64,7 +62,7 @@ function configuredModelIds(env: Env): string[] {
             ?.split(',')
             .map((s) => s.trim())
             .filter(Boolean) ?? []
-    return ids.length > 0 ? ids : DEFAULT_MODELS
+    return ids
 }
 
 function listing(env: Env, cfg: ProxyConfig): ClaudeModelListing[] {

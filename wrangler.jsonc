@@ -16,13 +16,22 @@
     //   MAX_BODY_BYTES    33554432  (32 MiB)
     //   UPSTREAM_TTFB_MS  120000  (time to first byte)
     //   UPSTREAM_TOTAL_MS 600000  (per-attempt limit, non-streaming; retries can exceed it)
-    //   MODELS            built-in Workers AI list (comma-separated model ids)
+    //   MODELS            the shipped value below (comma-separated model ids)
+    //   MODEL_ROUTES      the shipped value below (JSON route table). Route keys beyond
+    //                     provider/model: contextTokens (window reported by GET /v1/models,
+    //                     default 24000), reasoning (thinking capability, default false),
+    //                     vision and multiTool (override VISION_MODELS / MULTI_TOOL_MODELS).
+    //                     An alias route inherits unset settings from the route keyed by its
+    //                     model (one hop).
     //   VISION_MODELS     none (comma-separated model ids)
     //   MULTI_TOOL_MODELS none (comma-separated model ids)
     //   CF_ACCOUNT_ID     none  (var; your 32-hex account id, enables the MCP `logs` tool)
     //   OBSERVABILITY_SERVICE claude-workers-ai-proxy  (var, optional; Worker name `logs` filters on)
     // Secrets: PROXY_KEY and CF_API_TOKEN (set with `npx wrangler secret put <NAME>`).
-    "vars": {},
+    "vars": {
+        "MODELS": "@cf/zai-org/glm-5.3,@cf/moonshotai/kimi-k2.6,@cf/deepseek-ai/deepseek-v4-pro-0813",
+        "MODEL_ROUTES": "{\"@cf/zai-org/glm-5.3\":{\"provider\":\"workers-ai\",\"model\":\"@cf/zai-org/glm-5.3\",\"contextTokens\":1048576,\"reasoning\":true},\"@cf/moonshotai/kimi-k2.6\":{\"provider\":\"workers-ai\",\"model\":\"@cf/moonshotai/kimi-k2.6\",\"contextTokens\":262144,\"reasoning\":true},\"@cf/deepseek-ai/deepseek-v4-pro-0813\":{\"provider\":\"workers-ai\",\"model\":\"@cf/deepseek-ai/deepseek-v4-pro-0813\",\"contextTokens\":1048576,\"reasoning\":true}}"
+    },
     "observability": {
         "enabled": true
     },

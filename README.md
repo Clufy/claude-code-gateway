@@ -102,8 +102,8 @@ deleted on deploy; secrets (`PROXY_KEY`) are not. Edit the `vars` block, then de
 | `MAX_BODY_BYTES`        | `33554432` (32 MiB)       | Max POST body size                                                                                      |
 | `UPSTREAM_TTFB_MS`      | `120000`                  | Time to first upstream byte; also the max silence between stream chunks on every streaming route        |
 | `UPSTREAM_TOTAL_MS`     | `600000`                  | Limit for non-streaming requests: per attempt on external providers, all retries together on Workers AI |
-| `MODEL_ROUTES`          | none                      | JSON model routing table (see below)                                                                    |
-| `MODELS`                | built-in Workers AI list  | Models returned by `GET /v1/models`                                                                     |
+| `MODEL_ROUTES`          | shipped value (see below) | JSON model routing table (see below)                                                                    |
+| `MODELS`                | shipped value (see below) | Models returned by `GET /v1/models`                                                                     |
 | `VISION_MODELS`         | none                      | Models flagged as vision-capable                                                                        |
 | `MULTI_TOOL_MODELS`     | none                      | Models flagged as supporting multiple tool calls                                                        |
 | `GUARD_RULES`           | none                      | JSON session-guard settings: disable rules, change severities, add regex rules (see Session guard)      |
@@ -138,8 +138,18 @@ Each route has these keys (unknown keys are rejected):
 | `baseUrl`       | non-`workers-ai` providers | Provider URL including any version prefix (e.g. `https://api.openai.com/v1`); the proxy appends `chat/completions` or `responses`. Checked against `ALLOWED_HOSTS` and `ALLOW_HTTP` like the path convention |
 | `keySecret`     | non-`workers-ai` providers | Name (`[A-Z][A-Z0-9_]*`) of a secret set with `wrangler secret put`; `PROXY_KEY` is rejected                                                                                                                 |
 | `fallback`      | no                         | Up to 3 model names to try after this one                                                                                                                                                                    |
-| `contextTokens` | no                         | Context window reported by `GET /v1/models`. Without it a route to a model the proxy doesn't know reports 24 000, so set it for large-context models                                                         |
+| `contextTokens` | no                         | Context window reported by `GET /v1/models`. Without it (and without a one-hop inheritance, below) the model reports 24 000, so set it for large-context models                                              |
+| `reasoning`     | no                         | `true` reports the `thinking` capability in `GET /v1/models`; default `false`                                                                                                                                |
+| `vision`        | no                         | Overrides `VISION_MODELS` for this model                                                                                                                                                                     |
+| `multiTool`     | no                         | Overrides `MULTI_TOOL_MODELS` for this model                                                                                                                                                                 |
 
+- **Shipped defaults:** `wrangler.jsonc` ships `MODELS` and `MODEL_ROUTES` with `@cf/zai-org/glm-5.3`,
+  `@cf/moonshotai/kimi-k2.6` and `@cf/deepseek-ai/deepseek-v4-pro-0813`, each an identity route that
+  carries its context window and `reasoning: true`. No model id is hard-coded in `src/`.
+- **One-hop inheritance:** a route that leaves `contextTokens`, `reasoning`, `vision` or `multiTool`
+  unset takes them from the route whose exact key (no `*`) equals its `model`. Only one hop is
+  followed, so `claude-sonnet-*` pointing at `@cf/zai-org/glm-5.3` reports that model's window, but
+  a chain of aliases does not. A route's own value always wins.
 - **Matching:** a key without `*` is an exact match and always wins. Otherwise the first
   glob key (in the order written) whose `*` wildcards match the name is used.
 - **Fallback:** only before a backend's response is accepted (before any backend content is
@@ -223,12 +233,28 @@ log nothing.
 
 ### 8. Model listing
 
-`GET /v1/models` lists the `MODELS` (or built-in Workers AI) names plus every `MODEL_ROUTES`
+`GET /v1/models` lists the `MODELS` names (the shipped list in `wrangler.jsonc`; none if unset) plus every `MODEL_ROUTES`
 key that has no `*`. A name matched only by a glob route is not listed, but
 `GET /v1/models/{id}` resolves it. A `redteam/` or `purple/` prefix on `{id}` is stripped
-first, so `GET /v1/models/redteam/claude-x` describes `claude-x`. The vision and multi-tool
-flags are `true` if either the backing model or the routed name is in `VISION_MODELS` or
-`MULTI_TOOL_MODELS`.
+first, so `GET /v1/models/redteam/claude-x` describes `claude-x`. Each entry reports `max_input_tokens` and the
+`vision`, `multi_tool_use` and `thinking` capabilities, resolved from the route (then its one-hop
+backing route, see Model routing). `vision` and `multi_tool_use` fall back to `VISION_MODELS` /
+`MULTI_TOOL_MODELS` (the backing model or the routed name); `thinking` falls back to `false`.
+
+#### Upgrading to model-agnostic config
+
+The built-in model list and context windows are gone from the code. A deploy that sets its own
+`MODEL_ROUTES` replaces the shipped value, so copy these three identity entries into it to keep
+the context windows:
+
+```jsonc
+"@cf/zai-org/glm-5.3": {"provider": "workers-ai", "model": "@cf/zai-org/glm-5.3", "contextTokens": 1048576, "reasoning": true},
+"@cf/moonshotai/kimi-k2.6": {"provider": "workers-ai", "model": "@cf/moonshotai/kimi-k2.6", "contextTokens": 262144, "reasoning": true},
+"@cf/deepseek-ai/deepseek-v4-pro-0813": {"provider": "workers-ai", "model": "@cf/deepseek-ai/deepseek-v4-pro-0813", "contextTokens": 1048576, "reasoning": true}
+```
+
+A deploy that sets its own `MODELS` and no `MODEL_ROUTES` still works, but every listed model
+reports 24 000 tokens and no `thinking`.
 
 ## Engagements and modes
 
