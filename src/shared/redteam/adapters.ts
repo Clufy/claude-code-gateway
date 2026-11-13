@@ -1,4 +1,4 @@
-import type { AdapterResult, RedteamCase, Turn } from './types.ts'
+import type { AdapterResult, RedteamCase } from './types.ts'
 
 export type AdapterOpts = {
     url: string
@@ -81,15 +81,11 @@ function parseJson(text: string): any {
     }
 }
 
-function lastTurn(c: RedteamCase): Turn {
-    return c.turns[c.turns.length - 1]
-}
-
 async function run(
     opts: AdapterOpts,
     body: string,
     extraHeaders: Record<string, string>,
-    parse: (res: Response, text: string) => Omit<AdapterResult, 'status' | 'detections'>,
+    parse: (text: string) => Omit<AdapterResult, 'status' | 'detections'>,
     raw = false
 ): Promise<AdapterResult> {
     const result: AdapterResult = { text: '', toolCalls: [], detections: [], status: 0 }
@@ -107,7 +103,7 @@ async function run(
             result.text = text.slice(0, MAX_TEXT)
             return result
         }
-        const parsed = parse(res, text)
+        const parsed = parse(text)
         result.text = parsed.text.slice(0, MAX_TEXT)
         result.toolCalls = parsed.toolCalls
     } catch (e) {
@@ -132,7 +128,7 @@ const anthropic: Adapter = (c, opts) => {
     const body: Record<string, unknown> = { model: opts.model, max_tokens: 1024, messages }
     if (c.system) body.system = c.system
     if (c.tools?.length) body.tools = c.tools
-    return run(opts, JSON.stringify(body), { 'anthropic-version': '2023-06-01' }, (_r, text) => {
+    return run(opts, JSON.stringify(body), { 'anthropic-version': '2023-06-01' }, (text) => {
         const j = parseJson(text)
         if (!Array.isArray(j?.content)) return fail('unexpected reply shape')
         const blocks: any[] = j.content
@@ -170,7 +166,7 @@ const openai: Adapter = (c, opts) => {
             function: { name: t.name, description: t.description, parameters: t.input_schema }
         }))
     }
-    return run(opts, JSON.stringify(body), {}, (_r, text) => {
+    return run(opts, JSON.stringify(body), {}, (text) => {
         const j = parseJson(text)
         const msg = Array.isArray(j?.choices) ? j.choices[0]?.message : undefined
         if (msg === null || typeof msg !== 'object') return fail('unexpected reply shape')
@@ -203,36 +199,24 @@ function walkPath(root: unknown, path: string): unknown {
 // {role, content} for all turns except the last; tool_result turns keep role 'tool_result'.
 const http: Adapter = (c, opts) => {
     const template = opts.template
-    if (!template)
-        return Promise.resolve({
-            text: '',
-            toolCalls: [],
-            detections: [],
-            status: 0,
-            error: 'http adapter needs a template'
-        })
-    const last = lastTurn(c)
-    const prompt = JSON.stringify(last.content).slice(1, -1)
+    const refuse = (error: string): Promise<AdapterResult> =>
+        Promise.resolve({ text: '', toolCalls: [], detections: [], status: 0, error })
+    if (!template) return refuse('http adapter needs a template')
+    const prompt = JSON.stringify(c.turns[c.turns.length - 1].content).slice(1, -1)
     const history = JSON.stringify(c.turns.slice(0, -1).map((t) => ({ role: t.role, content: t.content })))
     // One pass, so attacker text containing a placeholder is never re-substituted.
     const body = template.replace(/\{\{(prompt|history)\}\}/g, (_m, k: string) => (k === 'prompt' ? prompt : history))
     try {
         JSON.parse(body)
     } catch {
-        return Promise.resolve({
-            text: '',
-            toolCalls: [],
-            detections: [],
-            status: 0,
-            error: 'template did not produce valid JSON'
-        })
+        return refuse('template did not produce valid JSON')
     }
     const path = opts.replyPath
     return run(
         opts,
         body,
         {},
-        (_r, text) => {
+        (text) => {
             if (!path) return { text, toolCalls: [] }
             const v = walkPath(parseJson(text), path)
             return { text: typeof v === 'string' ? v : JSON.stringify(v), toolCalls: [] }

@@ -38,10 +38,7 @@ export function makeJudge(callModel: (system: string, user: string) => Promise<s
         } catch {
             return { attackSucceeded: null, detail: 'judge call failed' }
         }
-        const unparseable = { attackSucceeded: null, detail: 'judge output unparseable' }
-        const verdict = parseVerdict(out)
-        if (!verdict) return unparseable
-        return verdict
+        return parseVerdict(out) ?? { attackSucceeded: null, detail: 'judge output unparseable' }
     }
 }
 

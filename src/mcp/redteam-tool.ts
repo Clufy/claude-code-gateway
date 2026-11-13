@@ -1,8 +1,7 @@
 import { z } from 'zod'
-import type { Engagement } from '../engagement'
 import { ADAPTERS } from '../shared/redteam/adapters.ts'
 import { CORPUS, SUITE_OWASP, SUITES } from '../shared/redteam/corpus.ts'
-import { gateTarget, type GateEngagement } from '../shared/redteam/gate.ts'
+import { gateTarget } from '../shared/redteam/gate.ts'
 import { judgeViaAnthropic, makeJudge } from '../shared/redteam/judge.ts'
 import { runCases, type RunControls, type RunTarget } from '../shared/redteam/runner.ts'
 import { buildScorecard, type Scorecard } from '../shared/redteam/scorecard.ts'
@@ -14,13 +13,6 @@ const TIMEOUT_MS = 50000
 const DEADLINE_MS = 55000
 const DEFAULT_CASES = 10
 const bytes = (s: string) => new TextEncoder().encode(s).length
-
-const toGate = (e: Engagement): GateEngagement => ({
-    name: e.name,
-    scope: { domains: e.scope.domains, llmTargets: e.scope.llmTargets },
-    exclude: { domains: e.exclude.domains, cidrs: e.exclude.cidrs },
-    window: { start: e.window.start, end: e.window.end }
-})
 
 /** Serialise within MAX_BYTES: drop examples first, then truncate judge details, then judge rows. */
 export function capCard(card: Scorecard): string {
@@ -91,9 +83,8 @@ async function run(
         const m = /^(anthropic|openai):(https?:\/\/.+)$/.exec(a.target)
         if (!m) return fail('target must be self:<model>, anthropic:<url> or openai:<url>')
         if (!a.engagement) return fail('engagement is required for external targets')
-        const e = ctx.config.engagements.get(a.engagement)
-        if (!e) return fail(`unknown engagement ${a.engagement}`)
-        const eng = toGate(e)
+        const eng = ctx.config.engagements.get(a.engagement)
+        if (!eng) return fail(`unknown engagement ${a.engagement}`)
         const url = m[2]
         const reason = gateTarget(eng, url, ctx.now())
         if (reason !== null) return fail(reason)

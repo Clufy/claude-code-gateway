@@ -43,19 +43,11 @@ export type CaseResult = {
 
 export type RunResult = { results: CaseResult[]; stopped?: string }
 
-const TOO_MANY_ERRORS = 'too many errors'
-
 const isJudge = (c: RedteamCase): boolean => c.scorer.type === 'judge'
-
-function errMsg(e: unknown): string {
-    return e instanceof Error ? e.message : String(e)
-}
-
-type Outcome = CaseResult['outcome']
 
 function make(
     c: RedteamCase,
-    outcome: Outcome,
+    outcome: CaseResult['outcome'],
     detail: string,
     judgeStatus: JudgeStatus,
     extra: { detections?: string[]; reply?: string; toolCalls?: AdapterResult['toolCalls'] } = {}
@@ -88,7 +80,10 @@ async function runOneInner(c: RedteamCase, target: RunTarget, deps: RunDeps, dea
     try {
         r = await target.adapter(c, { ...target.opts, timeoutMs, checkHop: target.gate ?? (() => null) })
     } catch (e) {
-        return { adapterError: true, result: make(c, 'error', `adapter threw: ${errMsg(e)}`, 'error') }
+        return {
+            adapterError: true,
+            result: make(c, 'error', `adapter threw: ${e instanceof Error ? e.message : String(e)}`, 'error')
+        }
     }
     const extra = { detections: r.detections, reply: r.text, toolCalls: r.toolCalls }
     // P6-R4: an errored reply is never scored or judged.
@@ -202,7 +197,7 @@ export async function runCases(
             set(i, result)
             // The streak counts adapter errors (target health) only, in completion order.
             consecutiveErrors = adapterError ? consecutiveErrors + 1 : 0
-            if (consecutiveErrors >= stopOnErrors && stopped === undefined) stopped = TOO_MANY_ERRORS
+            if (consecutiveErrors >= stopOnErrors && stopped === undefined) stopped = 'too many errors'
         }
     }
 
