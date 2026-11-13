@@ -13,22 +13,40 @@ export type Position = 'none' | 'contains' | 'startswith' | 'endswith'
 
 const REGEX_META = /[\\^$.*+?()[\]{}|]/
 
+/** One run between unescaped stars: its regex source and its fixed length in UTF-16 code units. */
+interface Segment {
+    src: string
+    len: number
+}
+
+/** Split on unescaped `*`. `?` -> one char; `\*`, `\?`, `\\` are literals; every other metachar is escaped. */
+function segmentsOf(value: string): Segment[] {
+    const segs: Segment[] = [{ src: '', len: 0 }]
+    for (let i = 0; i < value.length; i++) {
+        const seg = segs[segs.length - 1]!
+        const c = value[i]!
+        const next = value[i + 1]
+        if (c === '\\' && (next === '*' || next === '?' || next === '\\')) {
+            seg.src += `\\${next}`
+            seg.len++
+            i++
+        } else if (c === '*') segs.push({ src: '', len: 0 })
+        else {
+            seg.src += c === '?' ? '[\\s\\S]' : REGEX_META.test(c) ? `\\${c}` : c
+            seg.len++
+        }
+    }
+    return segs
+}
+
 /**
  * The one place a Sigma string value becomes a RegExp (flag `i`, never toLowerCase).
  * `*` -> any run, `?` -> one char; `\*`, `\?`, `\\` are literals; every other metachar is escaped.
  */
 export function sigmaValueSource(value: string, position: Position): string {
-    let out = ''
-    for (let i = 0; i < value.length; i++) {
-        const c = value[i]!
-        const next = value[i + 1]
-        if (c === '\\' && (next === '*' || next === '?' || next === '\\')) {
-            out += `\\${next}`
-            i++
-        } else if (c === '*') out += '[\\s\\S]*'
-        else if (c === '?') out += '[\\s\\S]'
-        else out += REGEX_META.test(c) ? `\\${c}` : c
-    }
+    const out = segmentsOf(value)
+        .map((s) => s.src)
+        .join('[\\s\\S]*')
     if (position === 'none') return `^${out}$`
     if (position === 'startswith') return `^${out}`
     if (position === 'endswith') return `${out}$`
@@ -39,10 +57,48 @@ export function sigmaValueRegex(value: string, position: Position): RegExp {
     return new RegExp(sigmaValueSource(value, position), 'i')
 }
 
-// Keyed on the FieldMatch objects a parse creates, so entries live and die with the rule.
-const compiled = new WeakMap<FieldMatch, (RegExp | null)[]>()
+/**
+ * Glob match with no backtracking across stars: every segment has a fixed length, so taking the leftmost
+ * occurrence of each in turn is correct and costs O(n·m). Flag `i` without `u` keeps lengths in code units.
+ */
+function globMatcher(segs: Segment[], position: Position): (text: string) => boolean {
+    const last = segs.length - 1
+    const anchorStart = position === 'none' || position === 'startswith'
+    const anchorEnd = position === 'none' || position === 'endswith'
+    const steps = segs.map((s, i) => {
+        const sticky = (i === 0 && anchorStart) || (i === last && anchorEnd)
+        return { len: s.len, re: s.len === 0 ? null : new RegExp(s.src, sticky ? 'iy' : 'ig') }
+    })
+    return (text) => {
+        let pos = 0
+        for (let i = 0; i <= last; i++) {
+            const { len, re } = steps[i]!
+            const at = i === last && anchorEnd ? text.length - len : pos
+            if (at < pos) return false
+            if (re === null) continue
+            re.lastIndex = at
+            const m = re.exec(text)
+            if (m === null) return false
+            pos = m.index + len
+        }
+        return true
+    }
+}
 
-function regexesFor(fm: FieldMatch): (RegExp | null)[] {
+/** A Sigma string value as a predicate: values with an unescaped `*` use the linear glob matcher, others one regex. */
+export function sigmaValueMatcher(value: string, position: Position): (text: string) => boolean {
+    const segs = segmentsOf(value)
+    if (segs.length > 1) return globMatcher(segs, position)
+    const re = sigmaValueRegex(value, position)
+    return (text) => re.test(text)
+}
+
+type Matcher = ((text: string) => boolean) | null
+
+// Keyed on the FieldMatch objects a parse creates, so entries live and die with the rule.
+const compiled = new WeakMap<FieldMatch, Matcher[]>()
+
+function matchersFor(fm: FieldMatch): Matcher[] {
     let list = compiled.get(fm)
     if (list === undefined) {
         const position: Position = fm.modifiers.includes('contains')
@@ -52,10 +108,13 @@ function regexesFor(fm: FieldMatch): (RegExp | null)[] {
               : fm.modifiers.includes('endswith')
                 ? 'endswith'
                 : 'none'
-        const re = fm.modifiers.includes('re')
-        list = fm.values.map((v) =>
-            v === null ? null : re ? new RegExp(String(v)) : sigmaValueRegex(String(v), position)
-        )
+        const isRe = fm.modifiers.includes('re')
+        list = fm.values.map((v): Matcher => {
+            if (v === null) return null
+            if (!isRe) return sigmaValueMatcher(String(v), position)
+            const re = new RegExp(String(v))
+            return (text) => re.test(text)
+        })
         compiled.set(fm, list)
     }
     return list
@@ -75,15 +134,15 @@ function lookup(event: Record<string, unknown>, field: string): unknown {
     return cur
 }
 
-function matchScalar(ev: unknown, sv: SigmaValue, re: RegExp | null): boolean {
-    if (sv === null || re === null) return ev === null || ev === undefined
+function matchScalar(ev: unknown, sv: SigmaValue, match: Matcher): boolean {
+    if (sv === null || match === null) return ev === null || ev === undefined
     if (typeof ev !== 'string' && typeof ev !== 'number' && typeof ev !== 'boolean') return false
-    return re.test(String(ev))
+    return match(String(ev))
 }
 
 function matchField(fm: FieldMatch, event: Record<string, unknown>): boolean {
     const ev = lookup(event, fm.field)
-    const res = regexesFor(fm)
+    const res = matchersFor(fm)
     const one = (i: number): boolean => {
         const sv = fm.values[i]!
         if (Array.isArray(ev)) return ev.some((e) => matchScalar(e, sv, res[i]!))

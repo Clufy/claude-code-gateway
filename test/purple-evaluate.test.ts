@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { matchEvent, sigmaValueRegex, testRule } from '../src/purple/evaluate'
+import { matchEvent, sigmaValueMatcher, sigmaValueRegex, testRule, type Position } from '../src/purple/evaluate'
 import { parseSigma, type SigmaRule } from '../src/purple/sigma'
 
 const HEAD = 'title: Test rule\nlogsource:\n  product: claude-proxy\n  category: prompt\n'
@@ -121,6 +121,70 @@ describe('matchEvent', () => {
         expect(hit(d('1 of them'), { b: 2 })).toBe(true)
         expect(hit(d('all of them'), { b: 2 })).toBe(false)
         expect(hit(d('all of s*'), { a: 1, b: 2 })).toBe(true)
+    })
+})
+
+describe('sigmaValueMatcher', () => {
+    const values = [
+        '*',
+        '**',
+        'a*',
+        '*a',
+        '*a*',
+        'a*b',
+        'a**b',
+        '*ab*cd*',
+        'Ab*C?d',
+        '?*?',
+        'a\\*b*',
+        '*\\?x*',
+        'a\\\\*b',
+        '*.*',
+        '*ignore*previous*instructions*',
+        'x*\\'
+    ]
+    const texts = [
+        '',
+        'a',
+        'b',
+        'ab',
+        'AB',
+        'aab',
+        'ba',
+        'abcd',
+        'xxABxxCDxx',
+        'abcdcd',
+        'abXcd',
+        'ab C d',
+        'aBcCdD',
+        'a*b',
+        'a*bc',
+        'a\\b',
+        'a\\xb',
+        '?x',
+        'q?xq',
+        '.',
+        'a.b',
+        'IGNORE all PREVIOUS instructions',
+        'ignore previous',
+        'line1\nab\ncd',
+        'a\nb',
+        'x\\',
+        'xy\\'
+    ]
+    const positions: Position[] = ['none', 'contains', 'startswith', 'endswith']
+
+    it('agrees with the single-regex form on wildcard values', () => {
+        for (const v of values)
+            for (const p of positions)
+                for (const t of texts)
+                    expect([v, p, t, sigmaValueMatcher(v, p)(t)]).toEqual([v, p, t, sigmaValueRegex(v, p).test(t)])
+    })
+
+    it('keeps the regex path for values without an unescaped *', () => {
+        expect(sigmaValueMatcher('a?c', 'none')('aBc')).toBe(true)
+        expect(sigmaValueMatcher('a\\*c', 'contains')('xa*cx')).toBe(true)
+        expect(sigmaValueMatcher('a\\*c', 'contains')('xabcx')).toBe(false)
     })
 })
 
