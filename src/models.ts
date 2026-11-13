@@ -26,13 +26,19 @@ function commaSet(value?: string): Set<string> {
 }
 
 // An id a route matches (exact or glob) is served by that route, so the route describes it (P2-R24).
-// Settings it leaves unset come from one hop: the route whose exact key is its backing model.
+// Settings it leaves unset come from one hop: the route on the same provider whose exact key is its backing model (P8-D1a).
 function toModel(id: string, env: Env, cfg: ProxyConfig): ClaudeModelListing {
     const visionModels = commaSet((env as { VISION_MODELS?: string }).VISION_MODELS)
     const multiToolModels = commaSet((env as { MULTI_TOOL_MODELS?: string }).MULTI_TOOL_MODELS)
     const own = findRouteEntry(id, cfg.routes)?.route
     const backing = own?.model ?? id
-    const hop = cfg.routes.find((e) => e.pattern === backing && !e.pattern.includes('*') && e.route !== own)?.route
+    const hop = cfg.routes.find(
+        (e) =>
+            e.pattern === backing &&
+            !e.pattern.includes('*') &&
+            e.route !== own &&
+            (own === undefined || e.route.provider === own.provider)
+    )?.route
 
     const legacy = (set: Set<string>) => set.has(id) || set.has(backing)
 

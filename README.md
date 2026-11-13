@@ -64,13 +64,15 @@ convention or as a `MODEL_ROUTES` provider (with `baseUrl`, e.g. `https://api.an
 and `keySecret`):
 
 - **Request:** the Messages body is sent as is to `{provider_url}/messages`, with `model` set to
-  the target model. In assistant turns, `thinking` and `redacted_thinking` blocks without a string
-  `signature` are dropped: Workers AI produces unsigned thinking, which Anthropic rejects after a
-  model switch or a fallback. Signed blocks are kept.
+  the target model. In assistant turns, `thinking` blocks without a signature (missing or empty)
+  are dropped: Workers AI produces unsigned thinking, which Anthropic rejects after a model switch
+  or a fallback. Signed blocks and every `redacted_thinking` block (which never has a signature)
+  are kept. An assistant turn left empty by the strip is removed from `messages`.
 - **Request headers** are built fresh: `x-api-key` (the provider key, with any `Bearer` prefix
   removed), `anthropic-version: 2023-06-01`, `content-type`, and the client's `anthropic-beta` if
   sent. No other inbound header is forwarded: not the proxy key, `Authorization`, `x-engagement`,
-  `x-proxy-*` or cookies.
+  `x-proxy-*` or cookies. Anyone holding the proxy key can turn on any `anthropic-beta` header or
+  body feature (server tools, `mcp_servers`), and all of it is billed to the route's `keySecret`.
 - **Response:** the body, streaming SSE included, is relayed unchanged; upstream errors are
   scrubbed of the key. Only the `content-type` and `retry-after` headers are kept. Anthropic's
   `request-id`, `anthropic-organization-id`, `anthropic-ratelimit-*` and `set-cookie` are dropped,
@@ -118,8 +120,9 @@ deleted on deploy; secrets (`PROXY_KEY`) are not. Edit the `vars` block, then de
 
 ```jsonc
 "vars": {
-    "MODELS": "@cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/meta/llama-3.1-8b-instruct-fast",
-    "ALLOWED_HOSTS": "api.openai.com,generativelanguage.googleapis.com"
+    "MODELS": "…",       // shipped defaults: keep the existing MODELS and MODEL_ROUTES values
+    "MODEL_ROUTES": "…", // (see "Upgrading to model-agnostic config"), or the shipped models are lost
+    "ALLOWED_HOSTS": "api.openai.com,generativelanguage.googleapis.com" // the key you add
 }
 ```
 
@@ -178,7 +181,7 @@ Each route has these keys (unknown keys are rejected):
   `@cf/moonshotai/kimi-k2.6` and `@cf/deepseek-ai/deepseek-v4-pro-0813`, each an identity route that
   carries its context window and `reasoning: true`. No model id is hard-coded in `src/`.
 - **One-hop inheritance:** a route that leaves `contextTokens`, `reasoning`, `vision` or `multiTool`
-  unset takes them from the route whose exact key (no `*`) equals its `model`. Only one hop is
+  unset takes them from the backing model's exact route on the same provider (the route whose key, with no `*`, equals its `model`). Only one hop is
   followed, so `claude-sonnet-*` pointing at `@cf/zai-org/glm-5.3` reports that model's window, but
   a chain of aliases does not. A route's own value always wins.
 - **Matching:** a key without `*` is an exact match and always wins. Otherwise the first
@@ -718,7 +721,11 @@ claude mcp add --transport http proxy https://<your-worker>.workers.dev/mcp --he
 3.  Set your account id in `wrangler.jsonc`, then deploy:
 
     ```jsonc
-    "vars": { "CF_ACCOUNT_ID": "0123456789abcdef0123456789abcdef" }
+    "vars": {
+        "MODELS": "…", // shipped defaults, keep them (see "Upgrading to model-agnostic config")
+        "MODEL_ROUTES": "…", // shipped defaults, keep them
+        "CF_ACCOUNT_ID": "0123456789abcdef0123456789abcdef" // the key you add
+    }
     ```
 
 4.  Optional: set `OBSERVABILITY_SERVICE` if you renamed the Worker (default

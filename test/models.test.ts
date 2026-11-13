@@ -76,6 +76,24 @@ describe('models', () => {
         expect(got.capabilities.thinking.supported).toBe(true)
     })
 
+    it('does not hop to a route on another provider (P8-D1a)', async () => {
+        const env = shippedEnv(
+            {
+                'claude-sonnet-4-5': { provider: 'workers-ai', model: GLM, contextTokens: 1048576, reasoning: true },
+                'claude-direct': {
+                    provider: 'anthropic',
+                    model: 'claude-sonnet-4-5',
+                    baseUrl: 'https://api.anthropic.com/v1',
+                    keySecret: 'ANTHROPIC_KEY'
+                }
+            },
+            { ANTHROPIC_KEY: 'k' }
+        )
+        const got = await getOne('claude-direct', env)
+        expect(got.max_input_tokens).toBe(24000)
+        expect(got.capabilities.thinking.supported).toBe(false)
+    })
+
     it('own key beats hop', async () => {
         const env = shippedEnv({
             'claude-sonnet-*': { provider: 'workers-ai', model: GLM, contextTokens: 5000, reasoning: false }

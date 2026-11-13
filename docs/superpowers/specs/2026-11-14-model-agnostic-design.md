@@ -101,7 +101,7 @@ The README states that replacing `MODEL_ROUTES` replaces the shipped profiles, s
 `ROUTE_KEYS` gains `vision`, `multiTool` and `reasoning`. For a listed id, each of the four profile settings (`contextTokens`, `vision`, `multiTool`, `reasoning`) resolves in this order:
 
 1. The matching route's own key, when present.
-2. **One hop to the backing model:** the key on the route whose exact (non-glob) pattern equals the matching route's `model`. For example, `claude-sonnet-*` → `@cf/zai-org/glm-5.3` picks up the shipped identity route's 1,048,576 and `reasoning: true`. Only one hop is taken; chains are not followed.
+2. **One hop to the backing model:** the key on the route whose exact (non-glob) pattern equals the matching route's `model` and whose `provider` is the same as the matching route's (P8-D1a). For example, `claude-sonnet-*` → `@cf/zai-org/glm-5.3` picks up the shipped identity route's 1,048,576 and `reasoning: true`. Only one hop is taken; chains are not followed.
 3. For `vision` and `multiTool` only: the legacy `VISION_MODELS` / `MULTI_TOOL_MODELS` lists, matched on the listed id or the backing model, exactly as today.
 4. Otherwise `DEFAULT_CONTEXT_TOKENS` (24 000) for `contextTokens`, and `false` for the booleans.
 
@@ -117,7 +117,7 @@ The shipped identity routes set only `contextTokens` and `reasoning`, so the leg
 
 - **Request.** The Anthropic Messages body is sent unchanged, with two exceptions:
     - `model` becomes the target model.
-    - In assistant turns, `thinking` and `redacted_thinking` blocks that lack a string `signature` are dropped. Workers AI produces unsigned thinking blocks. A session that switches to, or falls back onto, an `anthropic` route would otherwise be rejected (ruling P8-D2). Signed blocks from a real Anthropic turn are kept.
+    - In assistant turns, unsigned `thinking` blocks (no or empty signature) are dropped; `redacted_thinking` is always kept (P8-D2a). An assistant turn emptied by the strip is dropped whole. Workers AI produces unsigned thinking blocks. A session that switches to, or falls back onto, an `anthropic` route would otherwise be rejected (ruling P8-D2). Signed blocks from a real Anthropic turn are kept.
 
     The rest of the request: It goes to `${baseUrl}/messages` with these headers:
     - `x-api-key: <key>`;
@@ -165,7 +165,8 @@ The README "Purple loop" section and the TESTING checks recommend setting `DRAFT
 ## Calls made after the builder check (the owner asked for autonomous execution)
 
 - **P8-D1:** Aliases inherit profile keys one hop from the backing model's exact route. Deploys with their own `MODEL_ROUTES` must copy the identity entries, and this is documented.
-- **P8-D2:** The `anthropic` provider drops unsigned `thinking` and `redacted_thinking` blocks from assistant turns.
+- **P8-D2:** The `anthropic` provider drops unsigned `thinking` blocks (no or empty signature) from assistant turns; `redacted_thinking` is always kept (P8-D2a), and a turn emptied by the strip is dropped.
+- **P8-D1a:** The one-hop target must be on the same provider as the matching route.
 - **P8-D3:** `judgeModel: ""` turns the judge off.
 - **P8-D4:** The `anthropic` response headers are allowlisted to `content-type` and `retry-after`, and the proxy's `request-id` wins.
 

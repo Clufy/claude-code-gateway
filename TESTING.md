@@ -423,7 +423,7 @@ curl -sS -i -X POST "$LOCAL/v1/messages" \
 **Expected:** `200` with a native Anthropic message (`"model":"claude-sonnet-4-5..."`). Response headers: `content-type`, a `request-id` that matches the `requestId` in the `wrangler dev` log line (not Anthropic's `req_...` id), and none of `anthropic-organization-id`, `anthropic-ratelimit-*` or `set-cookie`. The log line shows `backend: "anthropic:claude-sonnet-4-5"`.
 
 - [ ] **Routed, streaming.** Repeat with `"stream":true` and `-N`. **Expected:** Anthropic's own SSE events (`message_start` … `message_stop`), relayed unchanged.
-- [ ] **Unsigned thinking is dropped.** Send an assistant turn holding `{"type":"thinking","thinking":"x"}` before a final user turn. **Expected:** `200`, not Anthropic's `400` about a missing `signature`.
+- [ ] **Unsigned thinking is dropped.** Send two assistant turns, each followed by a user turn: one holding `{"type":"thinking","thinking":"x"}` plus a `text` block, and one holding only `{"type":"thinking","thinking":"x"}`. **Expected:** `200`, not Anthropic's `400` about a missing `signature` or an empty message. The first turn keeps its text; the thinking-only turn is dropped from the request. A `redacted_thinking` block is never dropped.
 - [ ] **Wrong key is scrubbed.** Set `ANTHROPIC_KEY` to a dummy value such as `sk-ant-dummy-123`, restart, and repeat the first call. **Expected:** `401` with `authentication_error`; the body never contains `sk-ant-dummy-123`.
 - [ ] **Path convention.**
 
