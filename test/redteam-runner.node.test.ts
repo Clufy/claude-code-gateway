@@ -56,6 +56,34 @@ describe('gateTarget', () => {
         expect(gateTarget(eng, 'https://llm.acme-test.com/', 999)).toBe('engagement acme window is closed')
         expect(gateTarget(eng, 'https://llm.acme-test.com/', 2001)).toBe('engagement acme window is closed')
     })
+    it('wildcards need a dot boundary', () => {
+        const e: GateEngagement = { ...eng, scope: { domains: ['*.x.com'], llmTargets: [] }, exclude: { domains: [] } }
+        expect(gateTarget(e, 'https://evilx.com/', 1500)).not.toBeNull()
+        expect(gateTarget(e, 'https://x.com/', 1500)).not.toBeNull()
+        expect(gateTarget(e, 'https://a.x.com/', 1500)).toBeNull()
+        expect(gateTarget(e, 'https://a.x.com:8443/p', 1500)).toBeNull()
+    })
+    it('window start and end are inclusive', () => {
+        expect(gateTarget(eng, 'https://llm.acme-test.com/', 1000)).toBeNull()
+        expect(gateTarget(eng, 'https://llm.acme-test.com/', 2000)).toBeNull()
+    })
+    it('refuses userinfo', () => {
+        expect(gateTarget(eng, 'https://user:pw@llm.acme-test.com/', 1500)).toBe('invalid target URL')
+        expect(gateTarget(eng, 'https://user@llm.acme-test.com/', 1500)).toBe('invalid target URL')
+    })
+    it('IP literals only match an exact llmTargets entry, never a wildcard', () => {
+        const wild: GateEngagement = { ...eng, scope: { domains: ['*.0.2.1', '*.1'], llmTargets: [] } }
+        expect(gateTarget(wild, 'https://203.0.2.1/', 1500)).not.toBeNull()
+        expect(gateTarget(wild, 'https://[::1]/', 1500)).not.toBeNull()
+        const exact: GateEngagement = { ...eng, scope: { domains: [], llmTargets: ['203.0.113.7', '[2001:db8::1]'] } }
+        expect(gateTarget(exact, 'https://203.0.113.7/', 1500)).toBeNull()
+        expect(gateTarget(exact, 'https://[2001:db8::1]:8443/', 1500)).toBeNull()
+    })
+    it('allows [::1] over http when listed, refuses it otherwise', () => {
+        const e: GateEngagement = { ...eng, scope: { domains: [], llmTargets: ['[::1]'] } }
+        expect(gateTarget(e, 'http://[::1]:8787/', 1500)).toBeNull()
+        expect(gateTarget(eng, 'http://[::1]:8787/', 1500)).not.toBeNull()
+    })
     it('refuses invalid URLs and other schemes', () => {
         expect(gateTarget(eng, 'not a url', 1500)).toBe('invalid target URL')
         expect(gateTarget(eng, 'ftp://llm.acme-test.com/', 1500)).not.toBeNull()
@@ -323,7 +351,7 @@ describe('runCases', () => {
         expect(r.results.map((x) => x.outcome)).toEqual(['error', 'error', 'error'])
         expect(r.results[0].detail).toContain('http 500')
         expect(judged).toBe(0)
-        expect(r.results[2].judge).toBeUndefined()
+        expect(r.results[2].judge?.status).toBe('error')
     })
 
     it('an invalid pattern on a non-judge case is an error with the scorer detail', async () => {
@@ -362,8 +390,174 @@ describe('runCases', () => {
             deps({ judge: async () => verdicts[i++] })
         )
         expect(r.results.map((x) => x.outcome)).toEqual(['attacked', 'passed', 'error'])
-        expect(r.results[0].judge).toEqual(verdicts[0])
+        expect(r.results.map((x) => x.judge?.status)).toEqual(['attacked', 'passed', 'unknown'])
+        expect(r.results[0].judge).toEqual({ status: 'attacked', detail: 'leaked' })
         expect(r.results[2].detail).toBe('judge output unparseable')
+    })
+
+    it('P6-R6: judge status for no judge, throw and adapter error', async () => {
+        const jc = (n: number) => mkCase(n, { scorer: { type: 'judge', criterion: 'c' } })
+        const none = await runCases(
+            [jc(1)],
+            target(() => ok()),
+            ctl(),
+            deps()
+        )
+        expect(none.results[0].judge).toEqual({ status: 'skipped', detail: 'no judge model' })
+        const thrown = await runCases(
+            [jc(1)],
+            target(() => ok()),
+            ctl(),
+            deps({
+                judge: async () => {
+                    throw new Error('x')
+                }
+            })
+        )
+        expect(thrown.results[0].judge).toEqual({ status: 'unknown', detail: 'judge call failed' })
+        const adapterErr = await runCases(
+            [jc(1)],
+            target(() => fail()),
+            ctl(),
+            deps({ judge: async () => ({ attackSucceeded: true, detail: 'x' }) })
+        )
+        expect(adapterErr.results[0].judge?.status).toBe('error')
+    })
+
+    it('P6-R6: stopped and deadline-skipped judge cases get judge status skipped', async () => {
+        const jc = mkCase(2, { scorer: { type: 'judge', criterion: 'c' } })
+        const stopped = await runCases(
+            [mkCase(1), jc],
+            target(() => ok()),
+            ctl(),
+            deps({
+                recheck: (() => {
+                    let n = 0
+                    return () => (n++ ? 'closed' : null)
+                })()
+            })
+        )
+        expect(stopped.results[1].judge).toEqual({ status: 'skipped', detail: 'stopped: closed' })
+        const d = deps()
+        const late = await runCases(
+            [mkCase(1), jc],
+            target(() => {
+                d.clock.t += 10
+                return ok()
+            }),
+            ctl({ deadlineMs: 5 }),
+            d
+        )
+        expect(late.results[1].judge).toEqual({ status: 'skipped', detail: 'deadline' })
+    })
+
+    it('the error streak ignores judge failures and nulls', async () => {
+        const cs = Array.from({ length: 6 }, (_, i) => mkCase(i + 1, { scorer: { type: 'judge', criterion: 'c' } }))
+        let n = 0
+        const r = await runCases(
+            cs,
+            target(() => ok()),
+            ctl({ stopOnErrors: 2 }),
+            deps({
+                judge: async () => {
+                    if (n++ % 2) throw new Error('x')
+                    return { attackSucceeded: null, detail: 'judge output unparseable' }
+                }
+            })
+        )
+        expect(r.stopped).toBeUndefined()
+        expect(r.results.every((x) => x.judge?.status === 'unknown')).toBe(true)
+    })
+
+    it('hardening 1: adapter returning undefined or judge returning junk gives internal error', async () => {
+        const r = await runCases(
+            [mkCase(1)],
+            target(() => undefined as unknown as AdapterResult),
+            ctl(),
+            deps()
+        )
+        expect(r.results[0]).toMatchObject({ outcome: 'error', detail: 'internal error' })
+        const r2 = await runCases(
+            [mkCase(1, { scorer: { type: 'judge', criterion: 'c' } })],
+            target(() => ok()),
+            ctl(),
+            deps({ judge: async () => null as never })
+        )
+        expect(r2.results[0]).toMatchObject({ outcome: 'error', detail: 'internal error' })
+    })
+
+    it('hardening 2: a throwing recheck fails closed; throwing sleep or now never rejects', async () => {
+        const r = await runCases(
+            cases(3),
+            target(() => ok()),
+            ctl(),
+            deps({
+                recheck: () => {
+                    throw new Error('x')
+                }
+            })
+        )
+        expect(r.stopped).toBe('recheck failed')
+        expect(r.results.every((x) => x.outcome === 'skipped')).toBe(true)
+        const s = await runCases(
+            cases(3),
+            target(() => ok()),
+            ctl({ delayMs: 5 }),
+            deps({
+                sleep: async () => {
+                    throw new Error('x')
+                }
+            })
+        )
+        expect(s.stopped).toBe('internal error')
+        expect(s.results.map((x) => x.outcome)).toEqual(['passed', 'skipped', 'skipped'])
+        const n = await runCases(
+            cases(2),
+            target(() => ok()),
+            ctl({ deadlineMs: 5 }),
+            deps({
+                now: () => {
+                    throw new Error('x')
+                }
+            })
+        )
+        expect(n.stopped).toBe('internal error')
+    })
+
+    it('hardening 3: non-finite controls fall back to defaults', async () => {
+        let sent = 0
+        const r = await runCases(
+            cases(7),
+            target(() => {
+                sent++
+                return fail()
+            }),
+            { concurrency: NaN, delayMs: NaN, maxCases: NaN, stopOnErrors: NaN },
+            deps()
+        )
+        expect(sent).toBeGreaterThanOrEqual(5)
+        expect(sent).toBeLessThanOrEqual(6)
+        expect(r.stopped).toBe('too many errors')
+        expect(r.results).toHaveLength(7)
+    })
+
+    it('deadline with concurrency 2 skips the unstarted cases', async () => {
+        const d = deps()
+        let sent = 0
+        const r = await runCases(
+            cases(6),
+            target(async () => {
+                sent++
+                d.clock.t += 600
+                return ok()
+            }),
+            ctl({ concurrency: 2, deadlineMs: 1000 }),
+            d
+        )
+        expect(sent).toBeGreaterThanOrEqual(2)
+        expect(sent).toBeLessThan(6)
+        expect(r.results.filter((x) => x.outcome === 'skipped' && x.detail === 'deadline')).toHaveLength(6 - sent)
+        expect(r.results.filter((x) => x.outcome === 'passed')).toHaveLength(sent)
     })
 
     it('a throwing adapter or judge becomes an error outcome', async () => {
@@ -440,8 +634,9 @@ describe('buildScorecard', () => {
         expect(card.suites[0].attackSuccessRate).toBeNull()
     })
 
-    it('computes detectionRecall only for self targets, excluding errors', () => {
+    it('computes detectionRecall only for self targets, excluding errors and skipped', () => {
         const results = [
+            res(as(5), 'skipped', { detections: [] }),
             res(as(1), 'attacked', { detections: ['inject.instruction'] }),
             res(as(2), 'passed', { detections: [] }),
             res(as(3), 'passed', { detections: ['inject.instruction', 'x'] }),
@@ -452,21 +647,31 @@ describe('buildScorecard', () => {
         expect(buildScorecard(meta({ isSelf: true }), [res(as(1), 'error')]).detectionRecall).toBeNull()
     })
 
-    it('reports judge outcomes separately from passed/attacked', () => {
+    it('P6-R6: every judge case is in the judge section and in no suite count', () => {
+        const spl = 'system-prompt-leakage'
         const results = [
             res(di(1), 'passed'),
-            res(judgeCase(2), 'attacked', { judge: { attackSucceeded: true, detail: 'leak' } }),
-            res(judgeCase(3), 'passed', { judge: { attackSucceeded: false, detail: 'ok' } })
+            res(judgeCase(2), 'attacked', { judge: { status: 'attacked', detail: 'leak' } }),
+            res(judgeCase(3), 'passed', { judge: { status: 'passed', detail: 'ok' } }),
+            res(judgeCase(4), 'error', { judge: { status: 'unknown', detail: 'judge output unparseable' } }),
+            res(judgeCase(5), 'error', { judge: { status: 'unknown', detail: 'judge call failed' } }),
+            res(judgeCase(6), 'skipped', { judge: { status: 'skipped', detail: 'no judge model' } }),
+            res(judgeCase(7), 'error', { judge: { status: 'error', detail: 'http 500' } })
         ]
         const card = buildScorecard(meta(), results)
-        const s = card.suites.find((x) => x.suite === 'system-prompt-leakage')!
-        expect(s).toMatchObject({ total: 2, passed: 0, attacked: 0 })
+        const s = card.suites.find((x) => x.suite === spl)!
+        expect(s).toMatchObject({ total: 6, judgeCases: 6, passed: 0, attacked: 0, errors: 0, skipped: 0 })
         expect(s.attackSuccessRate).toBeNull()
         expect(s.examples).toEqual([])
-        expect(card.judge).toEqual([
-            { id: 'case-2', attackSucceeded: true, detail: 'leak' },
-            { id: 'case-3', attackSucceeded: false, detail: 'ok' }
+        expect(card.judge.map((j) => [j.id, j.suite, j.status])).toEqual([
+            ['case-2', spl, 'attacked'],
+            ['case-3', spl, 'passed'],
+            ['case-4', spl, 'unknown'],
+            ['case-5', spl, 'unknown'],
+            ['case-6', spl, 'skipped'],
+            ['case-7', spl, 'error']
         ])
+        expect(card.judge[0].detail).toBe('leak')
     })
 
     it('carries stopped and meta', () => {
@@ -484,6 +689,17 @@ describe('renderScorecardMarkdown', () => {
         expect(md.match(/^\| Suite \|/gm)).toHaveLength(1)
         const header = md.split('\n').find((l) => l.startsWith('| Suite |'))!
         expect(header).toBe('| Suite | m1 | m2 |')
-        expect(md).toContain('| direct-injection (LLM01) | 50% (1/2) | error |')
+        expect(md).toContain('| direct-injection (LLM01) | 50% (1/2) | - (0/0) +1 err |')
+    })
+
+    it('shows +N err next to a score and escapes pipes in labels', () => {
+        const a = buildScorecard(meta({ model: 'a|b' }), [
+            res(mkCase(1), 'attacked'),
+            res(mkCase(2), 'passed'),
+            res(mkCase(3), 'error')
+        ])
+        const md = renderScorecardMarkdown([a])
+        expect(md).toContain('| Suite | a\\|b |')
+        expect(md).toContain('| direct-injection (LLM01) | 50% (1/2) +1 err |')
     })
 })

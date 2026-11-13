@@ -21,6 +21,10 @@ function matches(host: string, pattern: string): boolean {
     return host === p
 }
 
+function isIpLiteral(host: string): boolean {
+    return host.startsWith('[') || /^\d+(\.\d+){3}$/.test(host)
+}
+
 /** Lexical authorization check for an external target. Returns null when allowed, else a reason. */
 export function gateTarget(e: GateEngagement, url: string, now: number): string | null {
     let u: URL
@@ -29,6 +33,7 @@ export function gateTarget(e: GateEngagement, url: string, now: number): string 
     } catch {
         return 'invalid target URL'
     }
+    if (u.username !== '' || u.password !== '') return 'invalid target URL'
     const host = normHost(u.hostname)
     if (host === '') return 'invalid target URL'
     if (u.protocol === 'http:') {
@@ -39,7 +44,8 @@ export function gateTarget(e: GateEngagement, url: string, now: number): string 
     if (!(e.window.start <= now && now <= e.window.end)) return `engagement ${e.name} window is closed`
     if (e.exclude.domains.some((d) => matches(host, d))) return `target ${host} is excluded from engagement ${e.name}`
     const inScope =
-        e.scope.llmTargets.some((t) => normHost(t.trim()) === host) || e.scope.domains.some((d) => matches(host, d))
+        e.scope.llmTargets.some((t) => normHost(t.trim()) === host) ||
+        (!isIpLiteral(host) && e.scope.domains.some((d) => matches(host, d)))
     if (!inScope) return `target ${host} is not in engagement ${e.name} scope`
     return null
 }
