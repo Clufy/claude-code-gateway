@@ -11,6 +11,7 @@ import { keepaliveTiming, withKeepalive } from './keepalive'
 import { applyMode, type ModeOk } from './modes'
 import { isObj } from './engagement'
 import { handleGuardCheck } from './guard/check'
+import { handleMcp } from './mcp/server'
 import { createGuard } from './guard'
 import { newStats } from './stats'
 import * as models from './models'
@@ -167,6 +168,26 @@ async function handleRequest(
         const auth = await requireProxyKey(request, config, requestId)
         if (auth) return auth
         return handleGuardCheck(request, config, requestId)
+    }
+
+    if (url.pathname === '/mcp') {
+        if (request.method !== 'POST') {
+            return new Response(null, { status: 405, headers: { allow: 'POST' } })
+        }
+        const limited = await enforceRateLimit(request, env, requestId)
+        if (limited) return limited
+        const token = request.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] ?? null
+        const auth = await checkProxyAuth(token?.trim() ?? null, config)
+        if (auth === 'not_configured') {
+            return anthropicError(
+                500,
+                'api_error',
+                'proxy not configured: set PROXY_KEY or ALLOW_ANONYMOUS=true',
+                requestId
+            )
+        }
+        if (auth === 'unauthorized') return jsonResponse({ error: 'invalid authorization' }, 401, requestId)
+        return handleMcp(request, config, requestId)
     }
 
     const externalMatch = url.pathname.match(/^\/([^/]+)\/(.+)\/v1\/messages$/)

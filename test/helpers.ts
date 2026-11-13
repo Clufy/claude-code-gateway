@@ -58,3 +58,21 @@ export function stubFetch(handler: (req: Request) => Response | Promise<Response
     })
     return { calls, restore: () => spy.mockRestore() }
 }
+
+export function mcpCall(
+    method: string,
+    params?: unknown,
+    opts: { env?: Env; headers?: Record<string, string>; id?: number | null } = {}
+): Promise<Response> {
+    const message: Record<string, unknown> = { jsonrpc: '2.0', method }
+    if (params !== undefined) message.params = params
+    if (opts.id !== null) message.id = opts.id ?? 1
+    const headers = {
+        authorization: 'Bearer test-key',
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        'mcp-protocol-version': '2025-06-18',
+        ...opts.headers
+    }
+    return callWorker('/mcp', { method: 'POST', headers, body: JSON.stringify(message) }, opts.env)
+}
