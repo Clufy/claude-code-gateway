@@ -6,7 +6,7 @@ import { createGuard } from '../src/guard'
 import { parseGuardRules } from '../src/guard/config'
 import { injectInstruction } from '../src/guard/request-rules'
 import { testRule } from '../src/purple/evaluate'
-import { promoteRule, type GuardEntry } from '../src/purple/promote'
+import { promoteRule, type GuardEntry, type Promotion } from '../src/purple/promote'
 import { parseSigma } from '../src/purple/sigma'
 import { CORPUS } from '../src/shared/redteam/corpus.ts'
 
@@ -25,6 +25,13 @@ const ruleFiles = readdirSync(DIR, { withFileTypes: true })
     .map((e) => e.name)
     .sort()
 const rules = ruleFiles.map((name) => ({ name, text: readFileSync(`${DIR}/${name}`, 'utf8') }))
+// Built at module scope so any single test can run alone under -t.
+const promotions = rules.map(({ name, text }) => {
+    const parsed = parseSigma(text)
+    const promotion: Promotion = parsed.ok ? promoteRule(parsed.rule, events) : { ok: false, reason: parsed.error }
+    return { name, promotion }
+})
+const entries: GuardEntry[] = promotions.flatMap(({ promotion: p }) => (p.ok ? [p.entry] : []))
 
 const toolResultBody = (text: string) => ({
     messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: text }] }]
@@ -68,13 +75,8 @@ describe('purple dogfood: agent-session indirect injections', () => {
         expect(CASES.filter((i) => !union.has(i)).map((i) => cases[i]!.id)).toEqual([])
     })
 
-    const entries: GuardEntry[] = []
-    it.each(rules)('$name promotes to a GUARD_RULES entry', ({ text }) => {
-        const parsed = parseSigma(text)
-        if (!parsed.ok) throw new Error(parsed.error)
-        const p = promoteRule(parsed.rule, events)
-        expect(p.ok, JSON.stringify(p)).toBe(true)
-        if (p.ok) entries.push(p.entry)
+    it.each(promotions)('$name promotes to a GUARD_RULES entry', ({ promotion }) => {
+        expect(promotion.ok, JSON.stringify(promotion)).toBe(true)
     })
 
     const snippet = () => JSON.stringify({ custom: entries })

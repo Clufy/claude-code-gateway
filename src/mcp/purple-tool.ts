@@ -56,7 +56,8 @@ async function test(ctx: McpContext, a: Args) {
     const logs = a.logs!
     if (a.expect) return fail('expect needs supplied events')
     const parsed = parseSigma(a.rule)
-    const service = parsed.ok ? parsed.rule.logsource.service : undefined
+    if (!parsed.ok) return ok(testRule(a.rule, [])) // the parse failure, with its unsupported list
+    const service = parsed.rule.logsource.service
     if (service !== 'detection' && service !== 'request') {
         return fail('logs source needs logsource service detection or request')
     }
@@ -85,7 +86,7 @@ async function test(ctx: McpContext, a: Args) {
 }
 
 function promote(a: Args) {
-    if (!a.rule || !a.events || !a.expect) return fail('promote_rule needs rule, events and expect')
+    if (!a.rule || !a.events?.length || !a.expect?.length) return fail('promote_rule needs rule, events and expect')
     const tested = testRule(a.rule, a.events, a.expect)
     if (tested.passed !== true) return fail('promote needs a passing test_rule: ' + JSON.stringify(tested))
     const parsed = parseSigma(a.rule)

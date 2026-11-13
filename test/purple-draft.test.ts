@@ -32,6 +32,21 @@ describe('extractYaml', () => {
     it('falls back to the first plain fence', () => {
         expect(extractYaml('x\n```\na: 1\n```\n```\nb: 2\n```')).toBe('a: 1')
     })
+    it('P7-M5: takes the rest of an unterminated yaml fence, trimmed', () => {
+        expect(extractYaml('Here is the rule:\n```YML\ntitle: x\nlevel: high\n  ')).toBe('title: x\nlevel: high')
+    })
+    it('P7-M5: takes the rest of an unterminated plain fence, trimmed', () => {
+        expect(extractYaml('Rule:\n```\ntitle: x\n')).toBe('title: x')
+    })
+    it('P7-M5: a closed fence still wins, yaml before plain', () => {
+        expect(extractYaml('```\na: 1\n```\n```yaml\nb: 2\n```')).toBe('b: 2')
+        expect(extractYaml('```yaml\na: 1\n```\n```yaml\nb: 2')).toBe('a: 1')
+    })
+    it('P7-M5: caps an unterminated fence to MAX_RULE_BYTES', () => {
+        expect(new TextEncoder().encode(extractYaml('```yaml\n' + 'a'.repeat(MAX_RULE_BYTES + 100))).length).toBe(
+            MAX_RULE_BYTES
+        )
+    })
     it('falls back to the trimmed reply', () => {
         expect(extractYaml('  \na: 1\n ')).toBe('a: 1')
     })

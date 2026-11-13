@@ -196,6 +196,19 @@ describe('purple tool', () => {
         expect(r.text).not.toContain('secret.github')
     })
 
+    it('P7-M1: test_rule with logs reports a parse failure, not a logsource error', async () => {
+        const r = await call({ action: 'test_rule', rule: BAD_RULE, logs: {} }, undefined, OBS)
+        expect(r.isError).toBe(false)
+        expect(r.data).toEqual({
+            passed: false,
+            matched: [],
+            missedExpected: [],
+            unexpectedMatches: [],
+            unsupported: ['modifier:base64'],
+            error: 'unsupported Sigma features'
+        })
+    })
+
     it('test_rule with logs enforces its guards', async () => {
         const unconfigured = await call({ action: 'test_rule', rule: DETECTION_RULE, logs: {} })
         expect(unconfigured.text).toBe(
@@ -234,6 +247,18 @@ describe('purple tool', () => {
 
     it('promote_rule needs rule, events and expect', async () => {
         const r = await call({ action: 'promote_rule', rule: PROMPT_RULE, events: [] })
+        expect(r.text).toBe('promote_rule needs rule, events and expect')
+    })
+
+    it('P7-M2: promote_rule treats an empty expect as missing (no vacuous proof)', async () => {
+        const r = await call({ action: 'promote_rule', rule: PROMPT_RULE, events: [{ text: 'bar' }], expect: [] })
+        expect(r.isError).toBe(true)
+        expect(r.text).toBe('promote_rule needs rule, events and expect')
+    })
+
+    it('P7-M2: promote_rule treats empty events as missing', async () => {
+        const r = await call({ action: 'promote_rule', rule: PROMPT_RULE, events: [], expect: [0] })
+        expect(r.isError).toBe(true)
         expect(r.text).toBe('promote_rule needs rule, events and expect')
     })
 

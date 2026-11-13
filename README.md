@@ -782,7 +782,8 @@ The exit code is 0 whenever the run completes, whatever the attack results.
   cells `ASR% (attacked/scored)`, with `+N err` when a model errored.
 - **Detection recall** (self targets only) is the share of `agent-session` cases, among those
   attacked or passed, whose response carried the `inject.instruction` detection or any `custom.*`
-  detection from the session guard (see [Purple loop](#purple-loop)).
+  detection from the session guard (see [Purple loop](#purple-loop)). Because any `custom.*` id
+  counts, a custom rule unrelated to injection that fires on these cases also counts toward recall.
 - **Judge section.** Judge-scored cases are listed separately with a status (`attacked`, `passed`,
   `unknown`, `skipped` or `error`). They are excluded from per-suite ASR and counted as
   `judgeCases`. `--judge-model` routes the judge through this Worker with a fixed rubric; the
@@ -846,6 +847,9 @@ A draft is **never done until `test_rule` passes**. `draft_rule` always answers 
 and `promote_rule` refuses a rule whose test does not pass. Reasoning models can spend the draft's
 4096-token budget thinking and return no text, which gives the error `draft model returned no text; a
 reasoning model may have used its whole token budget, so try another model`; pass another `model`.
+The default draft model is the first `MODELS` entry, so a reasoning model there (glm-5.3 in this
+deployment) can return that error by default: put a model that does not reason at length first in
+`MODELS`, or pass `model`.
 
 A rule that flags tool output telling the agent to fetch a URL:
 

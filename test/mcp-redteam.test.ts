@@ -3,6 +3,7 @@ import { loadConfig } from '../src/config'
 import { capCard, race } from '../src/mcp/redteam-tool'
 import { ADAPTERS } from '../src/shared/redteam/adapters.ts'
 import { CORPUS } from '../src/shared/redteam/corpus.ts'
+import { JUDGE_TIMEOUT_MS } from '../src/shared/redteam/judge.ts'
 import { handleMcp } from '../src/mcp/server'
 import type { Scorecard } from '../src/shared/redteam/scorecard.ts'
 import { makeEnv, mcpCall, stubFetch } from './helpers'
@@ -283,6 +284,42 @@ describe('redteam tool', () => {
             expect(c.headers.get('x-api-key')).toBeNull()
             expect(c.headers.get('authorization')).toBeNull()
         }
+    })
+
+    it('P7-M8: each judge call times out at min(JUDGE_TIMEOUT_MS, time left before the run deadline)', async () => {
+        const spy = vi.spyOn(AbortSignal, 'timeout')
+        const runWith = async (jumpAfterTarget: number) => {
+            const judged: (number | undefined)[] = []
+            let jump = 0
+            const selfFetch: SelfFetch = async (req) => {
+                // judgeViaAnthropic creates its signal synchronously right before this call
+                const last = spy.mock.lastCall?.[0]
+                const body: any = await req.json()
+                if (body.model === 'judge-m') {
+                    judged.push(last)
+                    return anthropicReply('{"attack_succeeded": false, "reason": "ok"}')
+                }
+                jump = jumpAfterTarget
+                return anthropicReply('fine')
+            }
+            const r = await call(
+                {
+                    action: 'run',
+                    suite: 'system-prompt-leakage',
+                    target: 'self:m',
+                    maxCases: 10,
+                    judgeModel: 'judge-m'
+                },
+                selfFetch,
+                () => OPEN + jump
+            )
+            expect(r.isError).toBe(false)
+            return judged
+        }
+        // 55 s left: the 30 s judge cap applies
+        expect(await runWith(0)).toEqual([JUDGE_TIMEOUT_MS, JUDGE_TIMEOUT_MS])
+        // 15 s left after the first target reply: the run deadline applies
+        expect(await runWith(40_000)).toEqual([15_000, 15_000])
     })
 
     it('skips judge cases without judgeModel', async () => {

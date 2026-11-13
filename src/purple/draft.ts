@@ -56,8 +56,13 @@ function capBytes(text: string): string {
     return cut.endsWith('\ufffd') ? cut.slice(0, -1) : cut
 }
 
+/** Yaml fence, then plain fence, then the whole reply. A fence that never closes runs to the end. */
 export function extractYaml(reply: string): string {
-    const m = /```ya?ml[^\S\n]*\n([\s\S]*?)```/i.exec(reply) ?? /```[^\n]*\n([\s\S]*?)```/.exec(reply)
+    const m =
+        /```ya?ml[^\S\n]*\n([\s\S]*?)```/i.exec(reply) ??
+        /```ya?ml[^\S\n]*\n([\s\S]*)$/i.exec(reply) ??
+        /```[^\n]*\n([\s\S]*?)```/.exec(reply) ??
+        /```[^\n]*\n([\s\S]*)$/.exec(reply)
     return capBytes((m ? m[1] : reply).trim())
 }
 
