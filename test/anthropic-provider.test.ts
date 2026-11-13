@@ -130,6 +130,7 @@ describe('anthropic provider via MODEL_ROUTES', () => {
         const sent = (await stub.calls[0].clone().json()) as any
         expect(sent.messages[1].content).toEqual([
             { type: 'thinking', thinking: 'signed', signature: 's' },
+            { type: 'redacted_thinking', data: 'x' },
             { type: 'text', text: 'a' }
         ])
         expect(sent.messages[0]).toEqual({ role: 'user', content: 'hi' })
@@ -298,7 +299,7 @@ describe('stripUnsignedThinking', () => {
         ])
     })
 
-    it('drops redacted_thinking without a signature, and one with a non-string signature', () => {
+    it('keeps redacted_thinking, which never carries a signature (P8-D2a)', () => {
         const messages = [
             {
                 role: 'assistant',
@@ -309,7 +310,38 @@ describe('stripUnsignedThinking', () => {
                 ]
             }
         ]
+        expect(stripUnsignedThinking(messages)).toEqual(messages)
+    })
+
+    it('drops a thinking block with an empty or non-string signature', () => {
+        const messages = [
+            {
+                role: 'assistant',
+                content: [
+                    { type: 'thinking', thinking: 't', signature: '' },
+                    { type: 'thinking', thinking: 'u', signature: 42 },
+                    { type: 'text', text: 'a' }
+                ]
+            }
+        ]
         expect(stripUnsignedThinking(messages)).toEqual([{ role: 'assistant', content: [{ type: 'text', text: 'a' }] }])
+    })
+
+    it('drops an assistant turn that the strip empties (I2)', () => {
+        const messages = [
+            { role: 'user', content: 'a' },
+            { role: 'assistant', content: [{ type: 'thinking', thinking: 't' }] },
+            { role: 'user', content: 'b' }
+        ]
+        expect(stripUnsignedThinking(messages)).toEqual([
+            { role: 'user', content: 'a' },
+            { role: 'user', content: 'b' }
+        ])
+    })
+
+    it('keeps an assistant turn whose content was already empty', () => {
+        const messages = [{ role: 'assistant', content: [] }]
+        expect(stripUnsignedThinking(messages)).toEqual(messages)
     })
 
     it('leaves a user message with a thinking-like block untouched', () => {

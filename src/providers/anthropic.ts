@@ -9,23 +9,21 @@ const RESPONSE_HEADERS = ['content-type', 'retry-after']
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
 
 /**
- * P8-D2: drops thinking and redacted_thinking blocks without a string signature from assistant
- * turns. Workers AI emits unsigned thinking, which Anthropic rejects after a switch or fallback.
- * Returns a new array; anything that is not a messages array is returned as is.
+ * P8-D2a: drops `thinking` blocks without a non-empty string signature from assistant turns.
+ * Workers AI emits unsigned thinking, which Anthropic rejects after a switch or fallback.
+ * `redacted_thinking` never carries a signature and is always kept. An assistant turn the strip
+ * empties is dropped whole, since Anthropic rejects empty messages. Returns a new array;
+ * anything that is not a messages array is returned as is.
  */
 export function stripUnsignedThinking(messages: unknown): unknown {
     if (!Array.isArray(messages)) return messages
-    return messages.map((m) => {
-        if (!isObj(m) || m.role !== 'assistant' || !Array.isArray(m.content)) return m
+    return messages.flatMap((m) => {
+        if (!isObj(m) || m.role !== 'assistant' || !Array.isArray(m.content)) return [m]
         const content = m.content.filter(
-            (b) =>
-                !(
-                    isObj(b) &&
-                    (b.type === 'thinking' || b.type === 'redacted_thinking') &&
-                    typeof b.signature !== 'string'
-                )
+            (b) => !(isObj(b) && b.type === 'thinking' && (typeof b.signature !== 'string' || b.signature === ''))
         )
-        return { ...m, content }
+        if (content.length === 0 && m.content.length > 0) return []
+        return [{ ...m, content }]
     })
 }
 
