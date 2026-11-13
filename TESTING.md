@@ -349,7 +349,7 @@ npm run redteam -- --target self:all --suite agent-session
 - [ ] **Path-prefix and CIDR gate.** With an engagement whose `llmTargets` holds `https://<host>/tenant-a/v1`: `--target openai:https://<host>/tenant-a/v10` and `--target openai:https://<host>/tenant-b/v1` exit 2 with `target <host> is not in engagement <engagement> scope`. With an IP-literal target inside `exclude.cidrs`: exit 2 with `target <ip> is excluded from engagement <engagement>`. No request is sent in either case.
 - [ ] **Scorer and scorecard.** In the `agent-session` scorecard, an `attacked` example whose reply was empty reads `tool <name>(<args>)`; a case counts as attacked whichever tool (`Bash` or `WebFetch`) reached its canary host. The header line shows `corpus <sha>`, with `-dirty` if `redteam/corpus` has local edits.
 - [ ] **Header scrubbing.** Against an external target that echoes request headers, run with `--header-env "X-Test=TARGET_KEY"`. **Expected:** the `.json` and `.md` files never contain the `TARGET_KEY` value; an echoed copy in an example shows as `[redacted]`.
-- [ ] **MCP tool.** Call `redteam` with `{"action":"suites"}`, then `{"action":"run","suite":"agent-session","target":"self:<model>","maxCases":3}` (same curl shape as section 14). **Expected:** 7 suites of 10 cases; then a scorecard JSON with `meta.corpusSha` `bundled`. For an in-scope external target, add `"model":"<model>"`: the request body carries it, and no auth headers are sent (authenticated targets need the CLI).
+- [ ] **MCP tool.** Call `redteam` with `{"action":"suites"}`, then `{"action":"run","suite":"agent-session","target":"self:<model>","maxCases":3}` (same curl shape as section 14). Role model: with `JUDGE_MODEL=<model>` in `.dev.vars`, a `run` without `judgeModel` scores judge cases with that model (statuses other than `skipped`); `"judgeModel":""` gives all judge cases `skipped`. **Expected:** 7 suites of 10 cases; then a scorecard JSON with `meta.corpusSha` `bundled`. For an in-scope external target, add `"model":"<model>"`: the request body carries it, and no auth headers are sent (authenticated targets need the CLI).
 
 ## 16. Purple loop
 
@@ -372,6 +372,8 @@ curl -sS "${H[@]}" -X POST "$LOCAL/mcp" \
 ```
 
 **Expected:** a JSON text with `yaml`, `valid`, `unsupported`, `status: "draft"`, `next: "not done: run test_rule with events and expect until passed is true"` and the `model` used (the first `/v1/models` entry). With `"model":"no-such-model"` the result is still a `draft`, with `valid: false` and `error: "draft model call failed"`. A reasoning model that uses its whole token budget thinking gives `error: "draft model returned no text; ..."` instead; try another model. The `wrangler dev` output shows one `event: "mcp"` line with `tool: "purple"`, `action: "draft_rule"` and no finding text.
+
+- [ ] **Role model.** With `DRAFT_MODEL=<model>` in `.dev.vars` (restart `wrangler dev`), repeat `draft_rule` without `model`. **Expected:** the result's `model` is `<model>`, even if it is not in `MODELS`; an explicit `model` argument still wins.
 
 - [ ] **`test_rule` with events.**
 

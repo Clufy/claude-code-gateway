@@ -100,6 +100,44 @@ describe('purple tool', () => {
         expect(urls).toEqual(['/v1/models', '/v1/messages'])
     })
 
+    describe('DRAFT_MODEL role model', () => {
+        const watch = () => {
+            const seen: { path: string; model?: string }[] = []
+            const selfFetch: SelfFetch = async (req) => {
+                const path = new URL(req.url).pathname
+                if (path === '/v1/models') {
+                    seen.push({ path })
+                    return Response.json({ data: [{ id: 'first' }] })
+                }
+                const body: any = await req.json()
+                seen.push({ path, model: body.model })
+                return reply(fenced)
+            }
+            return { seen, selfFetch }
+        }
+        const args = { action: 'draft_rule', finding: 'foo', logsource: 'prompt' }
+
+        it('uses DRAFT_MODEL without listing models', async () => {
+            const { seen, selfFetch } = watch()
+            const r = await call(args, selfFetch, { DRAFT_MODEL: 'm-draft' })
+            expect(r.data.model).toBe('m-draft')
+            expect(seen).toEqual([{ path: '/v1/messages', model: 'm-draft' }])
+        })
+
+        it('an explicit model beats DRAFT_MODEL', async () => {
+            const { seen, selfFetch } = watch()
+            const r = await call({ ...args, model: 'm-arg' }, selfFetch, { DRAFT_MODEL: 'm-draft' })
+            expect(r.data.model).toBe('m-arg')
+            expect(seen.map((s) => s.model)).toEqual(['m-arg'])
+        })
+
+        it('uses DRAFT_MODEL even when it is not in /v1/models', async () => {
+            const { selfFetch } = watch()
+            const r = await call(args, selfFetch, { DRAFT_MODEL: 'absent' })
+            expect(r.data.model).toBe('absent')
+        })
+    })
+
     it.each([
         ['empty list', async () => Response.json({ data: [] })],
         ['non-2xx', async () => new Response('no', { status: 500 })],

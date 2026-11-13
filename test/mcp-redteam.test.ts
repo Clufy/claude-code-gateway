@@ -25,8 +25,17 @@ const WINDOW_END = Date.parse('2026-11-21T23:59:59Z')
 
 type SelfFetch = (req: Request) => Promise<Response>
 
-async function call(args: Record<string, unknown>, selfFetch?: SelfFetch, now: () => number = () => OPEN) {
-    const config = loadConfig({ PROXY_KEY: 'test-key', ENGAGEMENTS: JSON.stringify({ acme: ACME, ipex: IPEX }) })
+async function call(
+    args: Record<string, unknown>,
+    selfFetch?: SelfFetch,
+    now: () => number = () => OPEN,
+    env: Record<string, unknown> = {}
+) {
+    const config = loadConfig({
+        PROXY_KEY: 'test-key',
+        ENGAGEMENTS: JSON.stringify({ acme: ACME, ipex: IPEX }),
+        ...env
+    })
     const request = new Request('https://proxy.test/mcp', {
         method: 'POST',
         headers: {
@@ -330,6 +339,47 @@ describe('redteam tool', () => {
         expect(r.data.suites[0].judgeCases).toBe(2)
         expect(r.data.judge.filter((j: any) => j.status === 'skipped')).toHaveLength(2)
         expect(r.data.judge.every((j: any) => j.status === 'skipped')).toBe(true)
+    })
+
+    describe('JUDGE_MODEL role model', () => {
+        const runArgs = { action: 'run', suite: 'system-prompt-leakage', target: 'self:target-m', maxCases: 10 }
+        const watch = () => {
+            const models: string[] = []
+            const selfFetch: SelfFetch = async (req) => {
+                const body: any = await req.json()
+                models.push(body.model)
+                return anthropicReply(body.model === 'm-judge' ? '{"attack_succeeded": false, "reason": "ok"}' : 'fine')
+            }
+            return { models, selfFetch }
+        }
+
+        it('defaults the judge to JUDGE_MODEL', async () => {
+            const { models, selfFetch } = watch()
+            const r = await call(runArgs, selfFetch, undefined, { JUDGE_MODEL: 'm-judge' })
+            expect(models).toContain('m-judge')
+            expect(r.data.judge.some((j: any) => j.status === 'skipped')).toBe(false)
+        })
+
+        it('judgeModel "" turns the judge off even with JUDGE_MODEL set', async () => {
+            const { models, selfFetch } = watch()
+            const r = await call({ ...runArgs, judgeModel: '' }, selfFetch, undefined, { JUDGE_MODEL: 'm-judge' })
+            expect(models).not.toContain('m-judge')
+            expect(r.data.judge.every((j: any) => j.status === 'skipped')).toBe(true)
+        })
+
+        it('an explicit judgeModel beats JUDGE_MODEL', async () => {
+            const { models, selfFetch } = watch()
+            await call({ ...runArgs, judgeModel: 'judge-m' }, selfFetch, undefined, { JUDGE_MODEL: 'm-judge' })
+            expect(models).toContain('judge-m')
+            expect(models).not.toContain('m-judge')
+        })
+
+        it('neither set gives no judge', async () => {
+            const { models, selfFetch } = watch()
+            const r = await call(runArgs, selfFetch)
+            expect(models).not.toContain('m-judge')
+            expect(r.data.judge.every((j: any) => j.status === 'skipped')).toBe(true)
+        })
     })
 
     it('P6-R17: race rejects with the abort reason, up front or when the signal fires', async () => {

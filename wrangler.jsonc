@@ -23,6 +23,8 @@
     //                     vision and multiTool (override VISION_MODELS / MULTI_TOOL_MODELS).
     //                     An alias route inherits unset settings from the route keyed by its
     //                     model (one hop).
+    //   DRAFT_MODEL       none  (default model for MCP purple draft_rule; else the first /v1/models entry)
+    //   JUDGE_MODEL       none  (default judge for MCP redteam; judgeModel "" turns it off)
     //   VISION_MODELS     none (comma-separated model ids)
     //   MULTI_TOOL_MODELS none (comma-separated model ids)
     //   CF_ACCOUNT_ID     none  (var; your 32-hex account id, enables the MCP `logs` tool)

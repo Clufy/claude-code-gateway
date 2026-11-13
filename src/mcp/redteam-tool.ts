@@ -115,11 +115,10 @@ async function run(
     const startedAt = ctx.now()
     // The judge's timeout is clamped to its 30 s cap and the time left before the run deadline.
     const remaining = () => startedAt + DEADLINE_MS - ctx.now()
-    const judge = a.judgeModel
+    const judgeModel = a.judgeModel ?? ctx.config.judgeModel
+    const judge = judgeModel
         ? makeJudge(
-              judgeViaAnthropic(selfFetch, SELF_ORIGIN, key, a.judgeModel, () =>
-                  Math.min(JUDGE_TIMEOUT_MS, remaining())
-              )
+              judgeViaAnthropic(selfFetch, SELF_ORIGIN, key, judgeModel, () => Math.min(JUDGE_TIMEOUT_MS, remaining()))
           )
         : undefined
     const res = await runCases(cases, target, controls, {
@@ -174,7 +173,12 @@ export const registerRedteamTool: ToolRegistrar = (server, ctx) => {
                     .describe(
                         'Model name for external targets; run only. External targets get no credentials, so authenticated targets need the CLI'
                     ),
-                judgeModel: z.string().optional().describe('Routed model that scores judge cases; run only')
+                judgeModel: z
+                    .string()
+                    .optional()
+                    .describe(
+                        'Routed model that scores judge cases; defaults to JUDGE_MODEL, "" for no judge; run only'
+                    )
             }
         },
         (args) =>

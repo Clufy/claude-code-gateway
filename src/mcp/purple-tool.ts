@@ -42,7 +42,7 @@ async function draft(ctx: McpContext, a: Args) {
     if (!a.finding || !a.logsource) return fail('draft_rule needs finding and logsource')
     const selfFetch: typeof fetch = (input, init) => race(ctx.selfFetch(new Request(input, init)), init?.signal)
     const key = ctx.config.proxyKey ?? ''
-    const model = a.model || (await firstModel(selfFetch, key))
+    const model = a.model || ctx.config.draftModel || (await firstModel(selfFetch, key))
     if (!model) return fail(NO_MODELS)
     const call = judgeViaAnthropic(selfFetch, SELF_ORIGIN, key, model, () => DRAFT_TIMEOUT_MS, DRAFT_MAX_TOKENS)
     return ok({ ...(await draftRule(a.finding, a.logsource, call)), model })

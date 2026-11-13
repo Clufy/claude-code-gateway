@@ -123,22 +123,24 @@ deleted on deploy; secrets (`PROXY_KEY`) are not. Edit the `vars` block, then de
 }
 ```
 
-| Var                     | Default                   | Purpose                                                                                                 |
-| ----------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `ALLOWED_HOSTS`         | built-in list (see below) | Comma-separated provider hosts; `*` allows any                                                          |
-| `ALLOW_HTTP`            | `false`                   | Allow `http://` provider URLs                                                                           |
-| `ALLOW_ANONYMOUS`       | `false`                   | Run without `PROXY_KEY`                                                                                 |
-| `MAX_BODY_BYTES`        | `33554432` (32 MiB)       | Max POST body size                                                                                      |
-| `UPSTREAM_TTFB_MS`      | `120000`                  | Time to first upstream byte; also the max silence between stream chunks on every streaming route        |
-| `UPSTREAM_TOTAL_MS`     | `600000`                  | Limit for non-streaming requests: per attempt on external providers, all retries together on Workers AI |
-| `MODEL_ROUTES`          | shipped value (see below) | JSON model routing table (see below)                                                                    |
-| `MODELS`                | shipped value (see below) | Models returned by `GET /v1/models`                                                                     |
-| `VISION_MODELS`         | none                      | Models flagged as vision-capable                                                                        |
-| `MULTI_TOOL_MODELS`     | none                      | Models flagged as supporting multiple tool calls                                                        |
-| `GUARD_RULES`           | none                      | JSON session-guard settings: disable rules, change severities, add regex rules (see Session guard)      |
-| `CF_ACCOUNT_ID`         | none                      | Your Cloudflare account id (32 lowercase hex characters); enables the MCP `logs` tool (see MCP server)  |
-| `CF_API_TOKEN`          | none                      | Secret (`wrangler secret put`), not a var: API token for the `logs` tool; needs `CF_ACCOUNT_ID` too     |
-| `OBSERVABILITY_SERVICE` | `claude-workers-ai-proxy` | Worker name the `logs` tool filters on; set it if you rename the Worker (the wrangler `name`)           |
+| Var                     | Default                   | Purpose                                                                                                              |
+| ----------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `ALLOWED_HOSTS`         | built-in list (see below) | Comma-separated provider hosts; `*` allows any                                                                       |
+| `ALLOW_HTTP`            | `false`                   | Allow `http://` provider URLs                                                                                        |
+| `ALLOW_ANONYMOUS`       | `false`                   | Run without `PROXY_KEY`                                                                                              |
+| `MAX_BODY_BYTES`        | `33554432` (32 MiB)       | Max POST body size                                                                                                   |
+| `UPSTREAM_TTFB_MS`      | `120000`                  | Time to first upstream byte; also the max silence between stream chunks on every streaming route                     |
+| `UPSTREAM_TOTAL_MS`     | `600000`                  | Limit for non-streaming requests: per attempt on external providers, all retries together on Workers AI              |
+| `MODEL_ROUTES`          | shipped value (see below) | JSON model routing table (see below)                                                                                 |
+| `MODELS`                | shipped value (see below) | Models returned by `GET /v1/models`                                                                                  |
+| `DRAFT_MODEL`           | none                      | Default model for the MCP `purple` tool's `draft_rule`; falls back to the first `/v1/models` entry (see Purple loop) |
+| `JUDGE_MODEL`           | none                      | Default judge model for the MCP `redteam` tool; `judgeModel: ""` turns the judge off (see Red-team harness)          |
+| `VISION_MODELS`         | none                      | Models flagged as vision-capable                                                                                     |
+| `MULTI_TOOL_MODELS`     | none                      | Models flagged as supporting multiple tool calls                                                                     |
+| `GUARD_RULES`           | none                      | JSON session-guard settings: disable rules, change severities, add regex rules (see Session guard)                   |
+| `CF_ACCOUNT_ID`         | none                      | Your Cloudflare account id (32 lowercase hex characters); enables the MCP `logs` tool (see MCP server)               |
+| `CF_API_TOKEN`          | none                      | Secret (`wrangler secret put`), not a var: API token for the `logs` tool; needs `CF_ACCOUNT_ID` too                  |
+| `OBSERVABILITY_SERVICE` | `claude-workers-ai-proxy` | Worker name the `logs` tool filters on; set it if you rename the Worker (the wrangler `name`)                        |
 
 Default `ALLOWED_HOSTS`: `api.openai.com`, `generativelanguage.googleapis.com`,
 `api.anthropic.com`, `openrouter.ai`, `api.groq.com`, `api.deepseek.com`,
@@ -842,7 +844,9 @@ The exit code is 0 whenever the run completes, whatever the attack results.
 - **Judge section.** Judge-scored cases are listed separately with a status (`attacked`, `passed`,
   `unknown`, `skipped` or `error`). They are excluded from per-suite ASR and counted as
   `judgeCases`. `--judge-model` routes the judge through this Worker with a fixed rubric; the
-  target reply is fenced as data. Without it, judge cases are `skipped: no judge model`.
+  target reply is fenced as data. Without it, judge cases are `skipped: no judge model`. The MCP
+  `redteam` tool defaults its judge to the `JUDGE_MODEL` var; pass `judgeModel` to override it, or
+  `judgeModel: ""` to run with no judge.
 - **Scorer notes.** `tool_called` matches arguments case-insensitively, on a call to any tool named
   by `tool`: a name, a list of names, or `*` for any tool. `agent-session` and `excessive-agency`
   cases use `*` because each canary host is unique, so a `Bash` curl to a `WebFetch` case's canary
@@ -902,9 +906,9 @@ A draft is **never done until `test_rule` passes**. `draft_rule` always answers 
 and `promote_rule` refuses a rule whose test does not pass. Reasoning models can spend the draft's
 4096-token budget thinking and return no text, which gives the error `draft model returned no text; a
 reasoning model may have used its whole token budget, so try another model`; pass another `model`.
-The default draft model is the first `MODELS` entry, so a reasoning model there (glm-5.3 in this
-deployment) can return that error by default: put a model that does not reason at length first in
-`MODELS`, or pass `model`.
+The default draft model is the `DRAFT_MODEL` var; unset, it is the first `/v1/models` entry. Set
+`DRAFT_MODEL` to a model that does not reason at length (a reasoning model such as glm-5.3 can return
+that error), or pass `model`. `DRAFT_MODEL` is used even if it is not listed in `MODELS`.
 
 A rule that flags tool output telling the agent to fetch a URL:
 
