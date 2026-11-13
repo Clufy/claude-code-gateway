@@ -122,6 +122,17 @@ describe('judgeViaAnthropic', () => {
             messages: [{ role: 'user', content: 'USR' }]
         })
     })
+    it('P6-R17: clamps the call timeout to the given remaining time', async () => {
+        // a fetch that honours the signal and otherwise never answers
+        const f = ((_u: string, init: RequestInit) =>
+            new Promise((_r, reject) =>
+                init.signal!.addEventListener('abort', () => reject(init.signal!.reason))
+            )) as unknown as typeof fetch
+        const t0 = Date.now()
+        await expect(judgeViaAnthropic(f, 'https://w.test', 'k', 'm', () => 50)('s', 'u')).rejects.toThrow()
+        expect(Date.now() - t0).toBeLessThan(5000)
+        await expect(judgeViaAnthropic(f, 'https://w.test', 'k', 'm', () => -5)('s', 'u')).rejects.toThrow()
+    })
     it('throws when content is not an array and sets a timeout signal', async () => {
         let signal: AbortSignal | null | undefined
         const f = (async (_u: string, init: RequestInit) => {

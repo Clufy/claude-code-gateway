@@ -38,6 +38,21 @@ export function capCard(card: Scorecard): string {
     return text
 }
 
+/**
+ * P6-R17: selfFetch calls the Worker directly and ignores the request signal, so race it. Rejects with the
+ * signal's reason (a TimeoutError for AbortSignal.timeout) when it aborts, including when already aborted.
+ */
+export function race<T>(p: Promise<T>, signal: AbortSignal | null | undefined): Promise<T> {
+    if (!signal) return p
+    const reason = (): unknown => signal.reason ?? new DOMException('timeout', 'TimeoutError')
+    if (signal.aborted) return Promise.reject(reason())
+    return new Promise<T>((resolve, reject) => {
+        const onAbort = (): void => reject(reason())
+        signal.addEventListener('abort', onAbort, { once: true })
+        p.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+    })
+}
+
 async function run(
     ctx: McpContext,
     a: { suite?: string; target?: string; engagement?: string; maxCases?: number; judgeModel?: string }
@@ -46,7 +61,7 @@ async function run(
     const cases = CORPUS[a.suite]
     if (!cases) return fail(`unknown suite ${a.suite}; known: ${SUITES.join(', ')}`)
 
-    const selfFetch: typeof fetch = (input, init) => ctx.selfFetch(new Request(input, init))
+    const selfFetch: typeof fetch = (input, init) => race(ctx.selfFetch(new Request(input, init)), init?.signal)
     const key = ctx.config.proxyKey ?? ''
     const isSelf = a.target.startsWith('self:')
     let target: RunTarget
@@ -99,8 +114,12 @@ async function run(
         stopOnErrors: 5,
         deadlineMs: DEADLINE_MS
     }
-    const judge = a.judgeModel ? makeJudge(judgeViaAnthropic(selfFetch, SELF_ORIGIN, key, a.judgeModel)) : undefined
     const startedAt = ctx.now()
+    // The judge's timeout is clamped to the time left before the run deadline.
+    const remaining = () => startedAt + DEADLINE_MS - ctx.now()
+    const judge = a.judgeModel
+        ? makeJudge(judgeViaAnthropic(selfFetch, SELF_ORIGIN, key, a.judgeModel, remaining))
+        : undefined
     const res = await runCases(cases, target, controls, {
         now: ctx.now,
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),

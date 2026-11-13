@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { loadConfig } from '../src/config'
-import { capCard } from '../src/mcp/redteam-tool'
+import { capCard, race } from '../src/mcp/redteam-tool'
+import { ADAPTERS } from '../src/shared/redteam/adapters.ts'
+import { CORPUS } from '../src/shared/redteam/corpus.ts'
 import { handleMcp } from '../src/mcp/server'
 import type { Scorecard } from '../src/shared/redteam/scorecard.ts'
 import { makeEnv, mcpCall, stubFetch } from './helpers'
@@ -261,6 +263,67 @@ describe('redteam tool', () => {
         expect(r.data.judge.filter((j: any) => j.status === 'skipped')).toHaveLength(2)
         expect(r.data.judge.every((j: any) => j.status === 'skipped')).toBe(true)
     })
+
+    it('P6-R17: race rejects with the abort reason, up front or when the signal fires', async () => {
+        const never = new Promise<string>(() => {})
+        const pre = new AbortController()
+        pre.abort(new Error('gone'))
+        await expect(race(never, pre.signal)).rejects.toThrow('gone')
+        const later = new AbortController()
+        const p = race(never, later.signal)
+        later.abort(new DOMException('timeout', 'TimeoutError'))
+        await expect(p).rejects.toMatchObject({ name: 'TimeoutError' })
+        await expect(race(Promise.resolve('ok'), new AbortController().signal)).resolves.toBe('ok')
+        await expect(race(Promise.resolve('ok'), undefined)).resolves.toBe('ok')
+    })
+
+    it('P6-R17: a raced fetch that never answers gives the adapter error timeout', async () => {
+        const r = await ADAPTERS.anthropic(CORPUS['direct-injection']![0]!, {
+            url: 'https://self.internal/v1/messages',
+            model: 'm',
+            headers: {},
+            fetch: (_input, init) => race(new Promise<Response>(() => {}), init?.signal),
+            timeoutMs: 50,
+            checkHop: () => null
+        })
+        expect(r.error).toBe('timeout')
+    })
+
+    it('P6-R17: a self run whose selfFetch never resolves ends at the clamped deadline', async () => {
+        const t0 = Date.now()
+        let calls = 0
+        // Calls 1-3 are the mcp log start, startedAt and the runner deadline; after them ~200 ms of the 55 s remain.
+        const now = () => (++calls <= 3 ? OPEN : OPEN + 54_800) + (Date.now() - t0)
+        const r = await call(
+            { action: 'run', suite: 'direct-injection', target: 'self:m', maxCases: 1 },
+            () => new Promise<Response>(() => {}),
+            now
+        )
+        expect(Date.now() - t0).toBeLessThan(3000)
+        expect(r.isError).toBe(false)
+        expect(r.data.suites[0]).toMatchObject({ total: 1, errors: 1, passed: 0, attacked: 0 })
+    }, 10000)
+
+    it('P6-R17: a judge selfFetch that never resolves also ends', async () => {
+        const t0 = Date.now()
+        let jump = 0
+        const now = () => OPEN + jump + (Date.now() - t0)
+        const selfFetch: SelfFetch = async (req) => {
+            const body: any = await req.json()
+            if (body.model === 'judge-m') return new Promise<Response>(() => {})
+            jump = 54_800 // the first target reply leaves ~200 ms of the 55 s deadline
+            return anthropicReply('fine')
+        }
+        const r = await call(
+            { action: 'run', suite: 'system-prompt-leakage', target: 'self:m', maxCases: 10, judgeModel: 'judge-m' },
+            selfFetch,
+            now
+        )
+        expect(Date.now() - t0).toBeLessThan(3000)
+        expect(r.isError).toBe(false)
+        expect(r.data.judge).toHaveLength(2)
+        expect(r.data.judge.some((j: any) => j.status === 'unknown' && j.detail === 'judge call failed')).toBe(true)
+    }, 10000)
 
     it('caps output at 32 KB, dropping examples first then judge detail', () => {
         const ex = { id: 'x', title: 't', reply: 'r'.repeat(300) }

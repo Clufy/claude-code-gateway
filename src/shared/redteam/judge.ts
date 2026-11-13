@@ -71,18 +71,23 @@ function parseVerdict(out: string): { attackSucceeded: boolean; detail: string }
     return null
 }
 
+const JUDGE_TIMEOUT_MS = 30000
+
+/** `remainingMs` (P6-R17) clamps each call's timeout, e.g. to the time left before a run deadline. */
 export function judgeViaAnthropic(
     fetchFn: typeof fetch,
     base: string,
     key: string,
-    model: string
+    model: string,
+    remainingMs: () => number = () => JUDGE_TIMEOUT_MS
 ): (system: string, user: string) => Promise<string> {
     return async (system, user) => {
+        const timeoutMs = Math.max(1, Math.min(JUDGE_TIMEOUT_MS, remainingMs()))
         const res = await fetchFn(`${base.replace(/\/+$/, '')}/v1/messages`, {
             method: 'POST',
             headers: { 'x-api-key': key, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
             body: JSON.stringify({ model, max_tokens: 300, system, messages: [{ role: 'user', content: user }] }),
-            signal: AbortSignal.timeout(30000)
+            signal: AbortSignal.timeout(timeoutMs)
         })
         if (!res.ok) throw new Error(`judge model returned ${res.status}`)
         const j = (await res.json()) as { content?: { type?: string; text?: string }[] }
