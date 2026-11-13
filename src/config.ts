@@ -16,6 +16,12 @@ export interface RouteEntry {
     route: Route
 }
 
+export interface ObservabilityConfig {
+    accountId: string
+    apiToken: string
+    service: string
+}
+
 export interface ProxyConfig {
     proxyKey: string | null
     allowAnonymous: boolean
@@ -27,6 +33,7 @@ export interface ProxyConfig {
     routes: RouteEntry[]
     engagements: ReadonlyMap<string, Engagement>
     guard: GuardConfig
+    observability: ObservabilityConfig | null
 }
 
 export class ConfigError extends Error {
@@ -174,6 +181,21 @@ function parseRoutes(raw: Raw, urlCfg: Pick<ProxyConfig, 'allowedHosts' | 'allow
     return entries
 }
 
+export const DEFAULT_OBSERVABILITY_SERVICE = 'claude-workers-ai-proxy'
+
+function parseObservability(raw: Raw): ObservabilityConfig | null {
+    const accountId = str(raw, 'CF_ACCOUNT_ID')?.trim()
+    const apiToken = str(raw, 'CF_API_TOKEN')?.trim()
+    if (!accountId && !apiToken) return null
+    if (!accountId) throw new ConfigError('CF_ACCOUNT_ID', 'CF_ACCOUNT_ID is required when CF_API_TOKEN is set')
+    if (!apiToken) throw new ConfigError('CF_API_TOKEN', 'CF_API_TOKEN is required when CF_ACCOUNT_ID is set')
+    if (!/^[0-9a-f]{32}$/.test(accountId)) {
+        throw new ConfigError('CF_ACCOUNT_ID', 'CF_ACCOUNT_ID must be 32 lowercase hex characters')
+    }
+    const service = str(raw, 'OBSERVABILITY_SERVICE')?.trim() || DEFAULT_OBSERVABILITY_SERVICE
+    return { accountId, apiToken, service }
+}
+
 export function loadConfig(env: unknown): ProxyConfig {
     const raw: Raw = typeof env === 'object' && env !== null ? (env as Raw) : {}
     const allowedHosts = parseHosts(raw)
@@ -188,6 +210,7 @@ export function loadConfig(env: unknown): ProxyConfig {
         upstreamTotalMs: parseInt10(raw, 'UPSTREAM_TOTAL_MS', DEFAULT_UPSTREAM_TOTAL_MS),
         routes: parseRoutes(raw, { allowedHosts, allowHttp }),
         engagements: parseEngagements(raw.ENGAGEMENTS),
-        guard: parseGuardRules(raw.GUARD_RULES)
+        guard: parseGuardRules(raw.GUARD_RULES),
+        observability: parseObservability(raw)
     }
 }

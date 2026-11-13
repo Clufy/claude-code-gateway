@@ -20,5 +20,10 @@
         "typescript": "^5.5.2",
         "vitest": "^4.1.12",
         "wrangler": "^4.21.0"
+    },
+    "dependencies": {
+        "@cfworker/json-schema": "^4.1.6",
+        "@modelcontextprotocol/sdk": "1.32.2",
+        "zod": "^4.6.7"
     }
 }
