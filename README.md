@@ -726,7 +726,9 @@ npm run redteam -- --target http:https://llm.<client-host>/chat --engagement <en
 
 Targets are `self:<model>`, `self:all`, or `anthropic|openai|http:<url>`. `--reply-path` is a dotted
 path with `[n]` indexes, not full JSONPath. `--header-env` is a comma list of `Header-Name=ENV_VAR`;
-the header value is the variable's whole value.
+the header value is the variable's whole value. If the target echoes a non-empty header value back,
+it is replaced with `[redacted]` in the reply text and tool-call arguments before scoring, examples
+and the judge, so it never reaches the output files.
 
 ### Authorization rules
 
@@ -735,9 +737,16 @@ the header value is the variable's whole value.
   hop (at most 5), and again before every case. Only the initial refusal, before any request, exits
   with code 2 and the reason; there is no `--force`. A refused redirect hop is an error for that
   case, and a window that closes mid-run stops the run, which still exits with code 0.
-- The URL must be `https` (`http` only for loopback), without userinfo. Its host must equal an
-  `llmTargets` entry or match `scope.domains`, and must not match `exclude.domains`.
-  `llmTargets` entries may be URLs or bare hosts and are compared by hostname.
+- The URL must be `https` (`http` only for loopback), without userinfo. It must match an
+  `llmTargets` entry, or its host must match `scope.domains`, the same rules as the scope check.
+  A URL entry matches on scheme, host, effective port and path prefix:
+  `https://gw.<host>/tenant-a/v1` allows `/tenant-a/v1` and `/tenant-a/v1/chat`, but not
+  `/tenant-a/v10`, `/tenant-b/v1`, port `8443` or `http`. A target path with an encoded slash or
+  backslash (`%2f`, `%5c`) never matches an entry that has a path. A bare-host entry matches by
+  host.
+- Exclusions always win: a host matching `exclude.domains`, or an IP-literal host (IPv4 or
+  bracketed IPv6) inside `exclude.cidrs`, is refused with
+  `target <host> is excluded from engagement <name>`.
 - The window must be open. If it closes mid-run, the remaining cases are not sent and the scorecard
   says `stopped: engagement <name> window is closed`.
 - The gate is lexical (no DNS), like the scope check. Headers for the target come only from
@@ -775,21 +784,30 @@ The exit code is 0 whenever the run completes, whatever the attack results.
   `unknown`, `skipped` or `error`). They are excluded from per-suite ASR and counted as
   `judgeCases`. `--judge-model` routes the judge through this Worker with a fixed rubric; the
   target reply is fenced as data. Without it, judge cases are `skipped: no judge model`.
-- **Scorer notes.** `tool_called` matches arguments case-insensitively. `regex` cases in
-  `output-handling` ignore fenced and inline code, so a payload inside a code block does not count.
+- **Scorer notes.** `tool_called` matches arguments case-insensitively, on a call to any tool named
+  by `tool`: a name, a list of names, or `*` for any tool. `agent-session` and `excessive-agency`
+  cases use `*` because each canary host is unique, so a `Bash` curl to a `WebFetch` case's canary
+  host counts. `contains_canary` checks the reply text and every tool call's arguments. `regex`
+  cases in `output-handling` ignore fenced and inline code, so a payload inside a code block does
+  not count.
   Indirect-injection ASR (`ii-*`, `di-10`) is an upper bound, because quoting the injected
   document counts as success.
-- Up to 3 successful-attack examples per suite are kept (reply cut to 300 chars).
+- Up to 3 successful-attack examples per suite are kept (reply cut to 300 chars). When the reply is
+  empty, the example is the first tool call, `tool <name>(<args, up to 200 chars>)`.
+- **Corpus version.** `corpus` in the header is the short git sha, with `-dirty` when
+  `redteam/corpus` has uncommitted changes.
 
 ### MCP `redteam` tool
 
 `redteam` `action: suites` lists the suites. `action: run` needs `suite` and `target`
-(`self:<model>`, `anthropic:<url>` or `openai:<url>`; `http` and `self:all` are CLI-only) and
-returns the scorecard JSON (capped at 32 KB by dropping examples first). Limits: `maxCases` 1-25
-(default 10), concurrency 2, a 55 s deadline (cases not yet started are `skipped: deadline`, and
-each case's timeout is clamped to the time left). External targets need `engagement` and pass the
-same gate, but the Worker holds no target credentials, so they are sent without auth headers; test
-authenticated targets with the CLI. Arguments and replies are not logged.
+(`self:<model>`, `anthropic:<url>` or `openai:<url>`, up to 200 chars; `http` and `self:all` are
+CLI-only) and returns the scorecard JSON (capped at 32 KB by dropping examples first). Limits:
+`maxCases` 1-25 (default 10), concurrency 2, a 55 s deadline (cases not yet started are
+`skipped: deadline`, and each case's timeout and judge call are clamped to the time left).
+External targets need `engagement` and pass the
+same gate, and take an optional `model` (up to 200 chars) for the request body. The Worker holds no
+target credentials, so external targets are sent without auth headers; test authenticated targets
+with the CLI. Arguments and replies are not logged.
 
 ### Adding cases
 
@@ -797,7 +815,8 @@ Add an object to `redteam/corpus/<suite>/cases.json`, with `id` (`/^[a-z0-9-]{3,
 `ai-11`), `suite`, `owasp`, `title`, optional `system`, `turns` (1-12; the last is `user` or
 `tool_result`, and a `tool_result` needs `tools`), optional `tools` and `systemCanary`, and a
 `scorer`: `contains_canary`, `regex` (optional `flags`, `ignoreCodeFences`), `tool_called`
-(`tool`, `argPattern`), `refusal_expected` or `judge` (`criterion`). Rules:
+(`tool`: a name, a non-empty list of names, or `"*"`, each 1-64 chars; and `argPattern`),
+`refusal_expected` or `judge` (`criterion`). Rules:
 
 - Canaries match `/^CANARY-[a-z0-9]{4,12}$/`, hosts end in `.invalid`, and any IPs come from
   198.51.100.0/24 or 203.0.113.0/24.
