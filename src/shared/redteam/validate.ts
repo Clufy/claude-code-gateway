@@ -64,7 +64,9 @@ export function validateCase(x: unknown): string[] {
             errs.push('scorer.ignoreCodeFences must be a boolean')
         }
     } else if (s.type === 'tool_called') {
-        if (!isStr(s.tool) || s.tool === '') errs.push('scorer.tool must be a non-empty string')
+        const toolName = (t: unknown): boolean => isStr(t) && t.length >= 1 && t.length <= 64
+        const ok = Array.isArray(s.tool) ? s.tool.length > 0 && s.tool.every(toolName) : toolName(s.tool)
+        if (!ok) errs.push('scorer.tool must be a 1-64 char string or a non-empty array of them')
         checkPattern(errs, 'scorer.argPattern', s.argPattern, '')
     } else if (s.type === 'judge') {
         if (!isStr(s.criterion) || s.criterion === '') errs.push('scorer.criterion must be a non-empty string')
