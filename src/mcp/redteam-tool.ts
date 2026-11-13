@@ -18,7 +18,7 @@ const bytes = (s: string) => new TextEncoder().encode(s).length
 const toGate = (e: Engagement): GateEngagement => ({
     name: e.name,
     scope: { domains: e.scope.domains, llmTargets: e.scope.llmTargets },
-    exclude: { domains: e.exclude.domains },
+    exclude: { domains: e.exclude.domains, cidrs: e.exclude.cidrs },
     window: { start: e.window.start, end: e.window.end }
 })
 

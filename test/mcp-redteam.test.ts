@@ -12,13 +12,18 @@ const ACME = {
     roe: '',
     defaultMode: 'redteam'
 }
+const IPEX = {
+    ...ACME,
+    scope: { domains: [], cidrs: [], llmTargets: ['https://203.0.113.7/v1'] },
+    exclude: { domains: [], cidrs: ['203.0.113.0/24'] }
+}
 const OPEN = Date.parse('2026-11-15T00:00:00Z')
 const WINDOW_END = Date.parse('2026-11-21T23:59:59Z')
 
 type SelfFetch = (req: Request) => Promise<Response>
 
 async function call(args: Record<string, unknown>, selfFetch?: SelfFetch, now: () => number = () => OPEN) {
-    const config = loadConfig({ PROXY_KEY: 'test-key', ENGAGEMENTS: JSON.stringify({ acme: ACME }) })
+    const config = loadConfig({ PROXY_KEY: 'test-key', ENGAGEMENTS: JSON.stringify({ acme: ACME, ipex: IPEX }) })
     const request = new Request('https://proxy.test/mcp', {
         method: 'POST',
         headers: {
@@ -125,6 +130,19 @@ describe('redteam tool', () => {
         })
         expect(r.isError).toBe(true)
         expect(r.text).toContain('not in engagement acme scope')
+        expect(stub.calls).toHaveLength(0)
+    })
+
+    it('P6-R15: refuses an IP target inside exclude.cidrs without fetching', async () => {
+        stub = stubFetch(() => anthropicReply('I cannot help with that.'))
+        const r = await call({
+            action: 'run',
+            suite: 'direct-injection',
+            target: 'anthropic:https://203.0.113.7/v1/messages',
+            engagement: 'ipex'
+        })
+        expect(r.isError).toBe(true)
+        expect(r.text).toBe('target 203.0.113.7 is excluded from engagement ipex')
         expect(stub.calls).toHaveLength(0)
     })
 

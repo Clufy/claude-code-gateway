@@ -1,7 +1,9 @@
+import { hostInCidrs } from './cidr.ts'
+
 export type GateEngagement = {
     name: string
     scope: { domains: string[]; llmTargets: string[] }
-    exclude: { domains: string[] }
+    exclude: { domains: string[]; cidrs: string[] }
     window: { start: number; end: number }
 }
 
@@ -25,17 +27,28 @@ function isIpLiteral(host: string): boolean {
     return host.startsWith('[') || /^\d+(\.\d+){3}$/.test(host)
 }
 
-/** P6-R13: an llmTargets entry is a URL or a bare host; compare by lowercased hostname. Unparseable entries are skipped. */
-function targetHost(entry: string): string | null {
+function effectivePort(u: URL): string {
+    return u.port || (u.protocol === 'https:' ? '443' : '80')
+}
+
+/**
+ * P6-R15, same semantics as llmTargetMatches in src/engagement.ts: a URL entry matches on protocol, normalized
+ * host, effective port and a path boundary; an encoded slash or backslash never matches an entry with a path.
+ * A bare-host entry matches by host. Unparseable entries are skipped.
+ */
+function llmTargetMatches(u: URL, host: string, entry: string): boolean {
     const t = entry.trim()
-    if (t.includes('://')) {
-        try {
-            return normHost(new URL(t).hostname) || null
-        } catch {
-            return null
-        }
-    }
-    return normHost(t) || null
+    if (!t.includes('://')) return normHost(t) !== '' && normHost(t) === host
+    const e = URL.parse(t)
+    if (e === null) return false
+    const path = e.pathname.replace(/\/$/, '')
+    const encodedSlash = /%(2f|5c)/i.test(u.pathname)
+    return (
+        e.protocol === u.protocol &&
+        normHost(e.hostname) === host &&
+        effectivePort(e) === effectivePort(u) &&
+        (path === '' || (!encodedSlash && (u.pathname === path || u.pathname.startsWith(`${path}/`))))
+    )
 }
 
 /** Lexical authorization check for an external target. Returns null when allowed, else a reason. */
@@ -55,9 +68,12 @@ export function gateTarget(e: GateEngagement, url: string, now: number): string 
         return 'invalid target URL'
     }
     if (!(e.window.start <= now && now <= e.window.end)) return `engagement ${e.name} window is closed`
-    if (e.exclude.domains.some((d) => matches(host, d))) return `target ${host} is excluded from engagement ${e.name}`
+    // Exclusions always win.
+    if (e.exclude.domains.some((d) => matches(host, d)) || hostInCidrs(host, e.exclude.cidrs)) {
+        return `target ${host} is excluded from engagement ${e.name}`
+    }
     const inScope =
-        e.scope.llmTargets.some((t) => targetHost(t) === host) ||
+        e.scope.llmTargets.some((t) => llmTargetMatches(u, host, t)) ||
         (!isIpLiteral(host) && e.scope.domains.some((d) => matches(host, d)))
     if (!inScope) return `target ${host} is not in engagement ${e.name} scope`
     return null

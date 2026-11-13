@@ -13,7 +13,7 @@ import type { AdapterResult, RedteamCase } from '../src/shared/redteam/types.ts'
 const eng: GateEngagement = {
     name: 'acme',
     scope: { domains: ['*.acme-test.com'], llmTargets: ['LLM.Acme-Test.com', 'api.other.test'] },
-    exclude: { domains: ['prod.acme-test.com', '*.secret.acme-test.com'] },
+    exclude: { domains: ['prod.acme-test.com', '*.secret.acme-test.com'], cidrs: [] },
     window: { start: 1000, end: 2000 }
 }
 
@@ -23,16 +23,89 @@ describe('gateTarget', () => {
         expect(gateTarget(eng, 'https://LLM.ACME-TEST.COM./v1', 1500)).toBeNull()
         expect(gateTarget(eng, 'https://API.other.test/x', 1500)).toBeNull()
     })
-    it('P6-R13: URL llmTargets entries compare by hostname; bare hosts still work; junk is skipped', () => {
+    it('P6-R15: URL llmTargets entries match by path prefix; bare hosts still work; junk is skipped', () => {
         const e: GateEngagement = {
             ...eng,
             scope: { domains: [], llmTargets: ['https://llm.acme.example/v1', 'not a url://', 'bare.example'] }
         }
-        expect(gateTarget(e, 'https://llm.acme.example/chat', 1500)).toBeNull()
-        expect(gateTarget(e, 'https://LLM.acme.example./chat', 1500)).toBeNull()
+        expect(gateTarget(e, 'https://llm.acme.example/v1/chat', 1500)).toBeNull()
+        expect(gateTarget(e, 'https://LLM.acme.example./v1/chat', 1500)).toBeNull()
+        expect(gateTarget(e, 'https://llm.acme.example/chat', 1500)).toBe(
+            'target llm.acme.example is not in engagement acme scope'
+        )
         expect(gateTarget(e, 'https://bare.example/x', 1500)).toBeNull()
         expect(gateTarget(e, 'https://evil.example.org/', 1500)).not.toBeNull()
         expect(gateTarget(e, 'https://not a url/', 1500)).toBe('invalid target URL')
+    })
+    describe('P6-R15: Phase 3 parity', () => {
+        const gw: GateEngagement = {
+            ...eng,
+            scope: { domains: [], llmTargets: ['https://gw.acme.com/tenant-a/v1'] },
+            exclude: { domains: [], cidrs: [] }
+        }
+        const refused = 'target gw.acme.com is not in engagement acme scope'
+        it('allows a path under the entry path', () => {
+            expect(gateTarget(gw, 'https://gw.acme.com/tenant-a/v1/chat', 1500)).toBeNull()
+            expect(gateTarget(gw, 'https://gw.acme.com/tenant-a/v1', 1500)).toBeNull()
+            expect(gateTarget(gw, 'https://GW.acme.com.:443/tenant-a/v1/', 1500)).toBeNull()
+        })
+        it('refuses a sibling path that only shares a prefix', () => {
+            expect(gateTarget(gw, 'https://gw.acme.com/tenant-a/v10', 1500)).toBe(refused)
+        })
+        it('refuses another tenant path, including via dot segments', () => {
+            expect(gateTarget(gw, 'https://gw.acme.com/tenant-b/v1', 1500)).toBe(refused)
+            expect(gateTarget(gw, 'https://gw.acme.com/tenant-a/v1/../../tenant-b/v1', 1500)).toBe(refused)
+        })
+        it('refuses another port', () => {
+            expect(gateTarget(gw, 'https://gw.acme.com:8443/tenant-a/v1/chat', 1500)).toBe(refused)
+        })
+        it('refuses another protocol', () => {
+            const loop: GateEngagement = { ...gw, scope: { domains: [], llmTargets: ['https://localhost/v1'] } }
+            expect(gateTarget(loop, 'http://localhost/v1/chat', 1500)).toBe(
+                'target localhost is not in engagement acme scope'
+            )
+            expect(gateTarget(loop, 'https://localhost/v1/chat', 1500)).toBeNull()
+            expect(gateTarget(gw, 'http://gw.acme.com/tenant-a/v1/chat', 1500)).not.toBeNull()
+        })
+        it('refuses an encoded slash or backslash in the path', () => {
+            expect(gateTarget(gw, 'https://gw.acme.com/tenant-a/v1%2f..%2f..%2ftenant-b', 1500)).toBe(refused)
+            expect(gateTarget(gw, 'https://gw.acme.com/tenant-a/v1/x%2Fy', 1500)).toBe(refused)
+            expect(gateTarget(gw, 'https://gw.acme.com/tenant-a/v1/x%5cy', 1500)).toBe(refused)
+        })
+        it('a root entry allows every path on that origin', () => {
+            const root: GateEngagement = { ...gw, scope: { domains: [], llmTargets: ['https://gw.acme.com/'] } }
+            expect(gateTarget(root, 'https://gw.acme.com/anything/x%2fy', 1500)).toBeNull()
+            expect(gateTarget(root, 'https://gw.acme.com:8443/', 1500)).toBe(refused)
+        })
+        it('refuses an IP llmTarget inside exclude.cidrs', () => {
+            const ip: GateEngagement = {
+                ...gw,
+                scope: { domains: [], llmTargets: ['203.0.113.7', 'https://198.51.100.9/v1'] },
+                exclude: { domains: [], cidrs: ['203.0.113.0/28', 'not-a-cidr', '198.51.100.9'] }
+            }
+            expect(gateTarget(ip, 'https://203.0.113.7/', 1500)).toBe(
+                'target 203.0.113.7 is excluded from engagement acme'
+            )
+            expect(gateTarget(ip, 'https://198.51.100.9/v1/chat', 1500)).toBe(
+                'target 198.51.100.9 is excluded from engagement acme'
+            )
+            const outside: GateEngagement = { ...ip, exclude: { domains: [], cidrs: ['203.0.113.16/28'] } }
+            expect(gateTarget(outside, 'https://203.0.113.7/', 1500)).toBeNull()
+        })
+        it('IPv6 exclusion works, including IPv4-mapped targets', () => {
+            const v6: GateEngagement = {
+                ...gw,
+                scope: { domains: [], llmTargets: ['[2001:db8::1]', '[2001:db9::1]', '[::ffff:203.0.113.7]'] },
+                exclude: { domains: [], cidrs: ['2001:db8::/32', '203.0.113.0/24'] }
+            }
+            expect(gateTarget(v6, 'https://[2001:DB8:0::1]/', 1500)).toBe(
+                'target [2001:db8::1] is excluded from engagement acme'
+            )
+            expect(gateTarget(v6, 'https://[2001:db9::1]/', 1500)).toBeNull()
+            expect(gateTarget(v6, 'https://[::ffff:203.0.113.7]/', 1500)).toBe(
+                'target [::ffff:cb00:7107] is excluded from engagement acme'
+            )
+        })
     })
     it('allows a wildcard subdomain but not the apex', () => {
         expect(gateTarget(eng, 'https://chat.acme-test.com/', 1500)).toBeNull()
@@ -68,7 +141,11 @@ describe('gateTarget', () => {
         expect(gateTarget(eng, 'https://llm.acme-test.com/', 2001)).toBe('engagement acme window is closed')
     })
     it('wildcards need a dot boundary', () => {
-        const e: GateEngagement = { ...eng, scope: { domains: ['*.x.com'], llmTargets: [] }, exclude: { domains: [] } }
+        const e: GateEngagement = {
+            ...eng,
+            scope: { domains: ['*.x.com'], llmTargets: [] },
+            exclude: { domains: [], cidrs: [] }
+        }
         expect(gateTarget(e, 'https://evilx.com/', 1500)).not.toBeNull()
         expect(gateTarget(e, 'https://x.com/', 1500)).not.toBeNull()
         expect(gateTarget(e, 'https://a.x.com/', 1500)).toBeNull()

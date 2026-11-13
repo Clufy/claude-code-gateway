@@ -26,12 +26,14 @@ function engagementFor(name: string) {
               ? ['other.example.org']
               : name === 'acmeurl'
                 ? [`http://127.0.0.1:${extPort}/v1`]
-                : null
+                : name === 'acmeex'
+                  ? ['127.0.0.1']
+                  : null
     if (!llmTargets) return null
     return {
         name,
         scope: { domains: [], cidrs: [], llmTargets },
-        exclude: { domains: [], cidrs: [] },
+        exclude: { domains: [], cidrs: name === 'acmeex' ? ['127.0.0.0/8'] : [] },
         window: { start: iso(Date.now() - hour), end: iso(Date.now() + hour) }
     }
 }
@@ -164,6 +166,13 @@ describe('runRedteam external', () => {
         await expect(
             runRedteam(opts({ target: `anthropic:${extUrl}`, engagement: 'other', model: 'm' }), fetch, io)
         ).rejects.toThrow('not in engagement other scope')
+        expect(extSeen).toHaveLength(0)
+    })
+    it('P6-R15: refuses an IP target inside the engagement exclude.cidrs without sending anything', async () => {
+        const { io } = makeIo()
+        await expect(
+            runRedteam(opts({ target: `anthropic:${extUrl}`, engagement: 'acmeex', model: 'm' }), fetch, io)
+        ).rejects.toThrow('target 127.0.0.1 is excluded from engagement acmeex')
         expect(extSeen).toHaveLength(0)
     })
     it('requires --engagement', async () => {

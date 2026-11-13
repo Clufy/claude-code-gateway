@@ -63,7 +63,7 @@ export async function fetchEngagement(
     return {
         name: typeof e.name === 'string' ? e.name : name,
         scope: { domains: strings(e.scope?.domains), llmTargets: strings(e.scope?.llmTargets) },
-        exclude: { domains: strings(e.exclude?.domains) },
+        exclude: { domains: strings(e.exclude?.domains), cidrs: strings(e.exclude?.cidrs) },
         window: { start, end }
     }
 }
