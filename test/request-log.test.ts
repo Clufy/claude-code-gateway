@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { callWorker, fakeAI, makeEnv, readSse, stubFetch } from './helpers'
 import { tapSse } from '../src/sse-tap'
 import { finalizeMessagesResponse } from '../src/request-log'
+import { createGuard } from '../src/guard'
+import { loadConfig } from '../src/config'
 import { newStats } from '../src/stats'
 
 const ROUTES = JSON.stringify({
@@ -437,10 +439,81 @@ describe('tools on the request line (D13)', () => {
     })
 
     it('collects with no guard and past 16 open blocks', async () => {
-        const evs = Array.from({ length: 17 }, (_, i) => start(i, `T${i}`))
+        const evs = [...Array.from({ length: 16 }, (_, i) => start(i, `N${i % 15}`)), start(16, 'Late')]
         const line = await streamTools(evs)
         expect(line.tools).toHaveLength(16)
-        expect(line.tools[0]).toBe('T0')
+        expect(line.tools[15]).toBe('Late')
+    })
+
+    it('collects a late name while the guard block map is full', async () => {
+        const guard = createGuard(loadConfig(makeEnv()), 'r')
+        const evs = [...Array.from({ length: 16 }, (_, i) => start(i, `N${i % 15}`)), start(16, 'Late')]
+        const line = await streamTools(evs, { guard })
+        expect(line.tools).toContain('Late')
+        expect(line.tools).toHaveLength(16)
+    })
+
+    it('ignores a non-string name in both paths', async () => {
+        const line = await streamTools([start(0, 5 as any), stop(0), start(1, 'Ok'), stop(1)])
+        expect(line.tools).toEqual(['Ok'])
+        const body = JSON.stringify({ content: [{ type: 'tool_use', id: 'a', name: 5, input: {} }] })
+        const res = await finalizeMessagesResponse(
+            new Response(body, { headers: { 'content-type': 'application/json' } }),
+            {
+                request: new Request('https://proxy.test/v1/messages', { method: 'POST' }),
+                requestId: 'r2',
+                start: Date.now(),
+                backend: 'b',
+                fallbackUsed: false,
+                stats: newStats()
+            }
+        )
+        expect(await res.text()).toBe(body)
+        expect('tools' in requestLines()[1]).toBe(false)
+    })
+
+    it('non-JSON 200 body: no tools key, body intact', async () => {
+        const res = await finalizeMessagesResponse(new Response('not json', { status: 200 }), {
+            request: new Request('https://proxy.test/v1/messages', { method: 'POST' }),
+            requestId: 'r',
+            start: Date.now(),
+            backend: 'b',
+            fallbackUsed: false,
+            stats: newStats()
+        })
+        expect(await res.text()).toBe('not json')
+        expect(requestLines()).toHaveLength(1)
+        expect('tools' in requestLines()[0]).toBe(false)
+    })
+
+    it('body integrity without a guard (streamed and non-streamed)', async () => {
+        const streamBody = sse([start(0, 'Bash'), stop(0)])
+        const s = await finalizeMessagesResponse(
+            new Response(streamBody, { headers: { 'content-type': 'text/event-stream' } }),
+            {
+                request: new Request('https://proxy.test/v1/messages', { method: 'POST' }),
+                requestId: 'r',
+                start: Date.now(),
+                backend: 'b',
+                fallbackUsed: false,
+                stats: newStats()
+            }
+        )
+        expect(await s.text()).toBe(streamBody)
+        const jsonBody = JSON.stringify({ content: [{ type: 'tool_use', id: 'a', name: 'Bash', input: {} }] })
+        const j = await finalizeMessagesResponse(
+            new Response(jsonBody, { headers: { 'content-type': 'application/json' } }),
+            {
+                request: new Request('https://proxy.test/v1/messages', { method: 'POST' }),
+                requestId: 'r',
+                start: Date.now(),
+                backend: 'b',
+                fallbackUsed: false,
+                stats: newStats()
+            }
+        )
+        expect(await j.text()).toBe(jsonBody)
+        expect(requestLines().map((l) => l.tools)).toEqual([['Bash'], ['Bash']])
     })
 
     it('collects when the guard is disabled via GUARD_RULES', async () => {
@@ -464,6 +537,7 @@ describe('tools on the request line (D13)', () => {
         })
         const res = await post(env, { stream: true })
         await res.text()
+        expect(requestLines()).toHaveLength(1)
         expect(requestLines()[0].tools).toEqual(['Bash'])
     })
 
