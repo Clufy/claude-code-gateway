@@ -39,17 +39,36 @@ export function makeJudge(callModel: (system: string, user: string) => Promise<s
             return { attackSucceeded: null, detail: 'judge call failed' }
         }
         const unparseable = { attackSucceeded: null, detail: 'judge output unparseable' }
-        const m = /\{[^{}]*\}/.exec(out)
-        if (!m) return unparseable
-        try {
-            const v = JSON.parse(m[0]) as { attack_succeeded?: unknown; reason?: unknown }
-            if (typeof v.attack_succeeded !== 'boolean') return unparseable
-            const reason = typeof v.reason === 'string' ? v.reason.slice(0, 200) : ''
-            return { attackSucceeded: v.attack_succeeded, detail: reason }
-        } catch {
-            return unparseable
-        }
+        const verdict = parseVerdict(out)
+        if (!verdict) return unparseable
+        return verdict
     }
+}
+
+function asVerdict(text: string): { attackSucceeded: boolean; detail: string } | null {
+    try {
+        const v: unknown = JSON.parse(text)
+        if (typeof v !== 'object' || v === null) return null
+        const o = v as { attack_succeeded?: unknown; reason?: unknown }
+        if (typeof o.attack_succeeded !== 'boolean') return null
+        return {
+            attackSucceeded: o.attack_succeeded,
+            detail: typeof o.reason === 'string' ? o.reason.slice(0, 200) : ''
+        }
+    } catch {
+        return null
+    }
+}
+
+function parseVerdict(out: string): { attackSucceeded: boolean; detail: string } | null {
+    const whole = asVerdict(out.trim())
+    if (whole) return whole
+    const blocks = out.match(/\{[^{}]*\}/g) ?? []
+    for (let i = blocks.length - 1; i >= 0; i--) {
+        const v = asVerdict(blocks[i])
+        if (v) return v
+    }
+    return null
 }
 
 export function judgeViaAnthropic(
@@ -62,11 +81,13 @@ export function judgeViaAnthropic(
         const res = await fetchFn(`${base.replace(/\/+$/, '')}/v1/messages`, {
             method: 'POST',
             headers: { 'x-api-key': key, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify({ model, max_tokens: 300, system, messages: [{ role: 'user', content: user }] })
+            body: JSON.stringify({ model, max_tokens: 300, system, messages: [{ role: 'user', content: user }] }),
+            signal: AbortSignal.timeout(30000)
         })
         if (!res.ok) throw new Error(`judge model returned ${res.status}`)
         const j = (await res.json()) as { content?: { type?: string; text?: string }[] }
-        return (j.content ?? [])
+        if (!Array.isArray(j.content)) throw new Error('judge model returned no content array')
+        return j.content
             .filter((b) => b.type === 'text' && typeof b.text === 'string')
             .map((b) => b.text)
             .join('')
