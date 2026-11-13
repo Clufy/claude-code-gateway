@@ -4,6 +4,7 @@ import { excerptAt, redact } from './redact'
 
 const MAX_EXCERPT = 200
 const MAX_RISKY_INPUT = 65536
+const OVER_64KB = 'command over 64 KB; only the first 64 KB inspected: '
 
 /** input.command when the tool is Bash or PowerShell and it is a string. */
 export function shellCommand(tool: string, input: unknown): string | null {
@@ -68,11 +69,23 @@ const RISKY: readonly RegExp[] = [
     /:\(\)\s{0,2}\{\s{0,2}:\|:&\s{0,2}\};:/
 ]
 
-/** cmd.risky: a redacted excerpt around the earliest risky match, or null. */
+/**
+ * cmd.risky: a redacted excerpt around the earliest risky match, or null. Only the first 64 KB is scanned, so a
+ * huge streamed command cannot hold the stream (P4-R37); a longer command with a clean head is still flagged with
+ * an "over 64 KB" excerpt of its start, never dropped (P4-R38).
+ */
 export function cmdRisky(tool: string, input: unknown): string | null {
-    // P4-R37: a huge streamed command must not hold the stream; a risky pattern past 64 KB is missed
-    const cmd = shellCommand(tool, input)?.slice(0, MAX_RISKY_INPUT) ?? null
-    if (cmd === null) return null
+    const full = shellCommand(tool, input)
+    if (full === null) return null
+    const cmd = full.slice(0, MAX_RISKY_INPUT)
+    const hit = riskyMatch(cmd)
+    if (hit !== null) return excerptAt(cmd, hit[0], hit[1])
+    if (full.length <= MAX_RISKY_INPUT) return null
+    // redacted over the scanned head (so a token cut at 120 chars is still masked), then cut to 120 chars
+    return OVER_64KB + excerptAt(cmd, 0, 120).slice(0, 120)
+}
+
+function riskyMatch(cmd: string): [number, number] | null {
     let best = rmRoot(cmd)
     const ps = psRemoveRoot(cmd)
     if (ps !== null && (best === null || ps[0] < best[0])) best = ps
@@ -80,7 +93,7 @@ export function cmdRisky(tool: string, input: unknown): string | null {
         const m = re.exec(cmd)
         if (m !== null && (best === null || m.index < best[0])) best = [m.index, m.index + m[0].length]
     }
-    return best === null ? null : excerptAt(cmd, best[0], best[1])
+    return best
 }
 
 /** scope.out_of_scope: the window is treated as open (the request side logs out_of_window). */

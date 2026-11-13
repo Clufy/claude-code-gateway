@@ -72,11 +72,27 @@ describe('cmdRisky', () => {
     })
 
     it('reads only the first 64 KB of a command (P4-R37)', () => {
-        expect(bash('rm -rf / ' + 'x'.repeat(1_000_000))).toContain('rm -rf /')
-        expect(bash('x'.repeat(65_520) + ' rm -rf /')).not.toBeNull()
-        expect(bash('x'.repeat(65_536) + ' rm -rf /')).toBeNull()
+        const head = bash('rm -rf / ' + 'x'.repeat(1_000_000))
+        expect(head).toContain('rm -rf /')
+        expect(head).not.toContain(OVER_64KB)
+        expect(bash('x'.repeat(65_520) + ' rm -rf /')).toContain('rm -rf /')
+    })
+
+    it('flags a command over 64 KB whose head is clean, instead of dropping it (P4-R38)', () => {
+        const tail = bash('echo ' + 'x'.repeat(1_000_000) + ' && rm -rf /')
+        expect(tail).toMatch(new RegExp(`^${OVER_64KB}echo x{10}`))
+        expect(tail!.length).toBeLessThanOrEqual(200)
+        expect(bash('ls ' + 'a '.repeat(500_000))).toMatch(new RegExp(`^${OVER_64KB}ls a a`))
+        expect(bash('ls ' + 'a '.repeat(5_000))).toBeNull()
+        expect(bash('x'.repeat(65_536))).toBeNull()
+        const tok = 'aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fG2hJ4'
+        const secret = bash(`echo ${'y'.repeat(90)} ghp_${tok} ${'x'.repeat(70_000)}`)
+        expect(secret).toContain(OVER_64KB)
+        expect(secret).not.toContain(tok.slice(0, 8))
     })
 })
+
+const OVER_64KB = 'command over 64 KB; only the first 64 KB inspected: '
 
 const acme: Engagement = {
     name: 'acme',
