@@ -74,10 +74,17 @@ describe('POST /mcp', () => {
         expect(await res.text()).toContain('proxy not configured')
     })
 
-    it('allows anonymous when configured', async () => {
+    it('requires PROXY_KEY even with ALLOW_ANONYMOUS', async () => {
         const env = makeEnv({ PROXY_KEY: undefined, ALLOW_ANONYMOUS: 'true' })
         const res = await mcpCall('initialize', init, { env, headers: { authorization: '' } })
-        expect(res.status).toBe(200)
+        expect(res.status).toBe(500)
+        expect(await res.text()).toContain('proxy not configured: /mcp requires PROXY_KEY')
+    })
+
+    it('still rejects a wrong bearer when PROXY_KEY and ALLOW_ANONYMOUS are both set', async () => {
+        const env = makeEnv({ ALLOW_ANONYMOUS: 'true' })
+        const res = await mcpCall('initialize', init, { env, headers: { authorization: 'Bearer wrong' } })
+        expect(res.status).toBe(401)
     })
 
     it('rejects a body over 65536 bytes with 413', async () => {

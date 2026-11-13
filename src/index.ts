@@ -176,6 +176,9 @@ async function handleRequest(
         }
         const limited = await enforceRateLimit(request, env, requestId)
         if (limited) return limited
+        if (config.proxyKey === null) {
+            return anthropicError(500, 'api_error', 'proxy not configured: /mcp requires PROXY_KEY', requestId)
+        }
         const token = request.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] ?? null
         const auth = await checkProxyAuth(token?.trim() ?? null, config)
         if (auth === 'not_configured') {
