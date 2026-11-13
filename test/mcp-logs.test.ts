@@ -193,4 +193,74 @@ describe('logs tool', () => {
         const line = JSON.parse(lines.find((l) => l.includes('"event":"mcp"'))!)
         expect(line).toMatchObject({ tool: 'logs', action: 'findings', ok: true })
     })
+
+    it('a 40 KB field is cut, so one row stays within the cap', async () => {
+        stub = stubFetch(() => apiBody([{ timestamp: NOW, source: { event: 'request', model: 'm'.repeat(40000) } }]))
+        const r = await call({ action: 'activity' })
+        expect(r.data.returned).toBe(1)
+        expect(r.data.truncated).toBeUndefined()
+        expect(r.data.rows[0].model).toHaveLength(300)
+        expect(new TextEncoder().encode(r.text).length).toBeLessThanOrEqual(32768)
+    })
+
+    it('slices to the default limit', async () => {
+        const events = Array.from({ length: 80 }, (_, i) => ({
+            timestamp: NOW - i,
+            source: { event: 'request', requestId: `r${i}` }
+        }))
+        stub = stubFetch(() => apiBody(events))
+        const r = await call({ action: 'activity' })
+        expect(r.data.rows).toHaveLength(50)
+        expect(r.data.returned).toBe(50)
+    })
+
+    it('rejects ISO with trailing junk', async () => {
+        stub = stubFetch(() => apiBody([]))
+        const r = await call({ action: 'activity', since: '2026-11-13T00:00:00Z foo' })
+        expect(r.isError).toBe(true)
+        expect(r.text).toBe('invalid since: use e.g. 30m, 24h, 7d or an ISO time')
+    })
+
+    it('keeps only scalar fields, cut to 300', async () => {
+        stub = stubFetch(() =>
+            apiBody([
+                {
+                    timestamp: NOW,
+                    source: { event: 'request', engagement: { a: 1 }, model: 'x'.repeat(1000), tools: ['a', 1] }
+                }
+            ])
+        )
+        const row = (await call({ action: 'activity' })).data.rows[0]
+        expect(row.engagement).toBeUndefined()
+        expect(row.model).toHaveLength(300)
+        expect(row.tools).toEqual(['a'])
+    })
+
+    it('drops rows with an invalid timestamp', async () => {
+        stub = stubFetch(() =>
+            apiBody([
+                { timestamp: 1e300, source: { event: 'request', requestId: 'bad' } },
+                { timestamp: NOW, source: { event: 'request', requestId: 'good' } }
+            ])
+        )
+        const r = await call({ action: 'activity' })
+        expect(r.data.rows.map((x: any) => x.requestId)).toEqual(['good'])
+    })
+
+    it('logs ok:false on error and clamps since end to end', async () => {
+        const lines: string[] = []
+        const orig = console.log
+        console.log = (s: unknown) => void lines.push(String(s))
+        try {
+            await call({ action: 'activity' }, {})
+        } finally {
+            console.log = orig
+        }
+        expect(JSON.parse(lines.find((l) => l.includes('"event":"mcp"'))!)).toMatchObject({ tool: 'logs', ok: false })
+
+        stub = stubFetch(() => apiBody([{ timestamp: NOW, source: { event: 'request' } }]))
+        const r = await call({ action: 'activity', since: '9999d' })
+        expect((await sent()).timeframe.from).toBe(NOW - 7 * 24 * H)
+        expect(r.text).not.toContain('tok-secret')
+    })
 })

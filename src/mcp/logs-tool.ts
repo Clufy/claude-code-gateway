@@ -12,7 +12,7 @@ const DEFAULT_LIMIT = 50
 const MAX_BYTES = 32768
 const MAX_EXCERPT = 300
 const SEVERITIES = { low: ['low', 'medium', 'high'], medium: ['medium', 'high'], high: ['high'] } as const
-const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?$/
 const FINDING_FIELDS = ['ruleId', 'severity', 'engagement', 'requestId'] as const
 const ACTIVITY_FIELDS = [
     'requestId',
@@ -46,9 +46,29 @@ export function parseSince(since: string | undefined, now: number): number | nul
     return Math.max(from, now - MAX_LOOKBACK)
 }
 
+function scalar(v: unknown): string | number | boolean | undefined {
+    if (typeof v === 'string') return v.slice(0, MAX_EXCERPT)
+    if (typeof v === 'number' && Number.isFinite(v)) return v
+    if (typeof v === 'boolean') return v
+    return undefined
+}
+
 function pick(source: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
     const out: Record<string, unknown> = {}
-    for (const f of fields) if (source[f] !== undefined) out[f] = source[f]
+    for (const f of fields) {
+        const v = source[f]
+        if (f === 'tools') {
+            if (Array.isArray(v)) {
+                out.tools = v
+                    .filter((t): t is string => typeof t === 'string')
+                    .slice(0, 16)
+                    .map((t) => t.slice(0, 64))
+            }
+            continue
+        }
+        const sv = scalar(v)
+        if (sv !== undefined) out[f] = sv
+    }
     return out
 }
 
@@ -132,7 +152,10 @@ export const registerLogsTool: ToolRegistrar = (server, ctx) => {
                 )
                 if (!result.ok) return fail(result.error)
 
-                const rows = result.rows.map((r) => mapRow(r, action))
+                const rows = result.rows
+                    .filter((r) => !Number.isNaN(new Date(r.time).getTime()))
+                    .slice(0, limit ?? DEFAULT_LIMIT)
+                    .map((r) => mapRow(r, action))
                 const build = (truncated: boolean) =>
                     JSON.stringify({
                         count: result.count,
@@ -142,7 +165,10 @@ export const registerLogsTool: ToolRegistrar = (server, ctx) => {
                     })
                 let text = build(false)
                 if (bytes(text) > MAX_BYTES) {
-                    while (rows.length > 0 && bytes((text = build(true))) > MAX_BYTES) rows.pop()
+                    do {
+                        rows.pop()
+                        text = build(true)
+                    } while (bytes(text) > MAX_BYTES && rows.length > 0)
                 }
                 return { content: [{ type: 'text', text }] }
             })
