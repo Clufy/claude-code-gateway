@@ -726,7 +726,8 @@ npm run redteam -- --target http:https://llm.<client-host>/chat --engagement <en
 
 Targets are `self:<model>`, `self:all`, or `anthropic|openai|http:<url>`. `--reply-path` is a dotted
 path with `[n]` indexes, not full JSONPath. `--header-env` is a comma list of `Header-Name=ENV_VAR`;
-the header value is the variable's whole value. If the target echoes a non-empty header value back,
+the header value is the variable's whole value. If the target echoes a header value of 8 or more
+characters back (shorter values are left alone so they cannot mangle canaries into false passes),
 it is replaced with `[redacted]` in the reply text and tool-call arguments before scoring, examples
 and the judge, so it never reaches the output files.
 

@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { fetchEngagement } from './engagement.ts'
-import { corpusSha, runRedteam, safeLabel, type RedteamIo, type RedteamOptions } from './run.ts'
+import { corpusSha, runRedteam, safeLabel, scrubbing, type RedteamIo, type RedteamOptions } from './run.ts'
 import { parseTarget } from './targets.ts'
 
 type Seen = { url: string; headers: IncomingMessage['headers']; body: any }
@@ -425,5 +425,24 @@ describe('runRedteam CLI gate and secrets', () => {
         const r2 = await runRedteam(opts({ suites: ['direct-injection'] }), fetch, self.io)
         const card = JSON.parse(self.files[r2.files.find((f) => f.endsWith('.json'))!]).cards[0]
         expect('maxCases' in card.meta.controls).toBe(false)
+    })
+})
+
+describe('scrubbing', () => {
+    const reply = {
+        text: 'CANARY-as01k3 token-abcdef123',
+        toolCalls: [{ name: 'Bash', args: 'A token-abcdef123' }],
+        detections: [],
+        status: 200
+    }
+    const adapter = async () => reply
+    it('leaves short header values alone so canaries stay intact', async () => {
+        const r = await scrubbing(adapter, ['A'])({} as any, {} as any)
+        expect(r.text).toBe('CANARY-as01k3 token-abcdef123')
+    })
+    it('redacts values of 8+ chars in text and tool args', async () => {
+        const r = await scrubbing(adapter, ['token-abcdef123', 'A'])({} as any, {} as any)
+        expect(r.text).toBe('CANARY-as01k3 [redacted]')
+        expect(r.toolCalls[0]!.args).toBe('A [redacted]')
     })
 })

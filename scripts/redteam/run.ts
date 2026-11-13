@@ -49,9 +49,12 @@ export function corpusSha(git: (args: string[]) => string = runGit): string {
     }
 }
 
-/** P6-R18: replaces every non-empty --header-env value in the reply text and tool args before scoring. */
-function scrubbing(adapter: Adapter, values: string[]): Adapter {
-    const secrets = values.filter((v) => v !== '').sort((a, b) => b.length - a.length)
+/** Values shorter than this are not scrubbed: replacing e.g. `A` would mangle canaries into false passes. */
+export const MIN_SCRUB_LENGTH = 8
+
+/** P6-R18: replaces every --header-env value (≥8 chars) in the reply text and tool args before scoring. */
+export function scrubbing(adapter: Adapter, values: string[]): Adapter {
+    const secrets = values.filter((v) => v.length >= MIN_SCRUB_LENGTH).sort((a, b) => b.length - a.length)
     if (secrets.length === 0) return adapter
     const scrub = (s: string): string => secrets.reduce((t, v) => t.split(v).join('[redacted]'), s)
     return async (c, o) => {
