@@ -94,19 +94,22 @@ deleted on deploy; secrets (`PROXY_KEY`) are not. Edit the `vars` block, then de
 }
 ```
 
-| Var                 | Default                   | Purpose                                                                                                 |
-| ------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `ALLOWED_HOSTS`     | built-in list (see below) | Comma-separated provider hosts; `*` allows any                                                          |
-| `ALLOW_HTTP`        | `false`                   | Allow `http://` provider URLs                                                                           |
-| `ALLOW_ANONYMOUS`   | `false`                   | Run without `PROXY_KEY`                                                                                 |
-| `MAX_BODY_BYTES`    | `33554432` (32 MiB)       | Max POST body size                                                                                      |
-| `UPSTREAM_TTFB_MS`  | `120000`                  | Time to first upstream byte; also the max silence between stream chunks on every streaming route        |
-| `UPSTREAM_TOTAL_MS` | `600000`                  | Limit for non-streaming requests: per attempt on external providers, all retries together on Workers AI |
-| `MODEL_ROUTES`      | none                      | JSON model routing table (see below)                                                                    |
-| `MODELS`            | built-in Workers AI list  | Models returned by `GET /v1/models`                                                                     |
-| `VISION_MODELS`     | none                      | Models flagged as vision-capable                                                                        |
-| `MULTI_TOOL_MODELS` | none                      | Models flagged as supporting multiple tool calls                                                        |
-| `GUARD_RULES`       | none                      | JSON session-guard settings: disable rules, change severities, add regex rules (see Session guard)      |
+| Var                     | Default                   | Purpose                                                                                                 |
+| ----------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `ALLOWED_HOSTS`         | built-in list (see below) | Comma-separated provider hosts; `*` allows any                                                          |
+| `ALLOW_HTTP`            | `false`                   | Allow `http://` provider URLs                                                                           |
+| `ALLOW_ANONYMOUS`       | `false`                   | Run without `PROXY_KEY`                                                                                 |
+| `MAX_BODY_BYTES`        | `33554432` (32 MiB)       | Max POST body size                                                                                      |
+| `UPSTREAM_TTFB_MS`      | `120000`                  | Time to first upstream byte; also the max silence between stream chunks on every streaming route        |
+| `UPSTREAM_TOTAL_MS`     | `600000`                  | Limit for non-streaming requests: per attempt on external providers, all retries together on Workers AI |
+| `MODEL_ROUTES`          | none                      | JSON model routing table (see below)                                                                    |
+| `MODELS`                | built-in Workers AI list  | Models returned by `GET /v1/models`                                                                     |
+| `VISION_MODELS`         | none                      | Models flagged as vision-capable                                                                        |
+| `MULTI_TOOL_MODELS`     | none                      | Models flagged as supporting multiple tool calls                                                        |
+| `GUARD_RULES`           | none                      | JSON session-guard settings: disable rules, change severities, add regex rules (see Session guard)      |
+| `CF_ACCOUNT_ID`         | none                      | Your Cloudflare account id (32 lowercase hex characters); enables the MCP `logs` tool (see MCP server)  |
+| `CF_API_TOKEN`          | none                      | Secret (`wrangler secret put`), not a var: API token for the `logs` tool; needs `CF_ACCOUNT_ID` too     |
+| `OBSERVABILITY_SERVICE` | `claude-workers-ai-proxy` | Worker name the `logs` tool filters on; set it if you rename the Worker (the wrangler `name`)           |
 
 Default `ALLOWED_HOSTS`: `api.openai.com`, `generativelanguage.googleapis.com`,
 `api.anthropic.com`, `openrouter.ai`, `api.groq.com`, `api.deepseek.com`,
@@ -188,22 +191,23 @@ Cloudflare rate-limiting binding; over-limit requests get `429 rate_limit_error`
 with a `retry-after` header. Each messages request also emits one JSON log line
 (`event: "request"`) visible in `wrangler tail` and Workers Logs:
 
-| Field                                   | Meaning                                                                                              |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `requestId`, `method`, `path`           | Request identity                                                                                     |
-| `status`, `durationMs`                  | Final status and total time                                                                          |
-| `streamed`                              | `true` for streamed responses                                                                        |
-| `model`                                 | Model name the client requested                                                                      |
-| `route`                                 | Matching `MODEL_ROUTES` key, if any                                                                  |
-| `backend`                               | Final target as `provider:model`; path-convention requests log only the provider type                |
-| `fallbackUsed`                          | `true` if a fallback target answered                                                                 |
-| `ttfbMs`                                | Time until the backend answered                                                                      |
-| `inputTokens`, `outputTokens`           | Usage reported by the backend; on Workers AI often the proxy's characters/4 estimate                 |
-| `toolCallsFromText`, `unparsedToolText` | Tool calls recovered from, or left in, plain model text                                              |
-| `keepalive`                             | `true` if keepalive committed the response before the backend answered                               |
-| `streamError`                           | Streamed response ended with an SSE `error` event (its `error.type`), or `error` if the stream broke |
-| `cancelled`                             | `true` if the client cancelled the stream before it ended                                            |
-| `engagement`, `mode`                    | `x-engagement` name and the resolved mode; present only when an engagement was named                 |
+| Field                                   | Meaning                                                                                                |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `requestId`, `method`, `path`           | Request identity                                                                                       |
+| `status`, `durationMs`                  | Final status and total time                                                                            |
+| `streamed`                              | `true` for streamed responses                                                                          |
+| `model`                                 | Model name the client requested                                                                        |
+| `route`                                 | Matching `MODEL_ROUTES` key, if any                                                                    |
+| `backend`                               | Final target as `provider:model`; path-convention requests log only the provider type                  |
+| `fallbackUsed`                          | `true` if a fallback target answered                                                                   |
+| `ttfbMs`                                | Time until the backend answered                                                                        |
+| `inputTokens`, `outputTokens`           | Usage reported by the backend; on Workers AI often the proxy's characters/4 estimate                   |
+| `toolCallsFromText`, `unparsedToolText` | Tool calls recovered from, or left in, plain model text                                                |
+| `keepalive`                             | `true` if keepalive committed the response before the backend answered                                 |
+| `streamError`                           | Streamed response ended with an SSE `error` event (its `error.type`), or `error` if the stream broke   |
+| `cancelled`                             | `true` if the client cancelled the stream before it ended                                              |
+| `engagement`, `mode`                    | `x-engagement` name and the resolved mode; present only when an engagement was named                   |
+| `tools`                                 | Unique `tool_use` names in the response, first-seen order (at most 16, 64 chars each); omitted if none |
 
 When keepalive has already committed, `status` is the backend's real status (the client
 saw `200`), `keepalive: true` is set, and `inputTokens` is the proxy's estimate.
@@ -212,6 +216,10 @@ Send `x-proxy-debug: 1` (authenticated callers only) to get the proxy's view of 
 back: streaming responses end with a `: proxy-stats <json>` SSE comment, and non-streaming
 responses carry an `x-proxy-stats` header. The stats hold `backend`, `model`,
 `fallbackUsed`, `ttfbMs`, `toolCallsFromText` and `unparsedToolText`.
+
+Each MCP `tools/call` (see MCP server) also logs one `event: "mcp"` line with `requestId`,
+`tool`, `action`, `ok` and `durationMs`. It never logs arguments or results; other MCP methods
+log nothing.
 
 ### 8. Model listing
 
@@ -604,6 +612,72 @@ npx wrangler tail --format pretty | grep '"event":"detection"'
   (`certutil\s{1,10}-urlcache`, not `\w{1,50}\.exe`).
 - A bad `GUARD_RULES` fails every request with `500 invalid config: GUARD_RULES`; the log
   line names the field and index, never the pattern.
+
+## MCP server
+
+`POST /mcp` is a stateless [MCP](https://modelcontextprotocol.io) server (Streamable HTTP, JSON
+responses, no sessions) with two tools:
+
+- `engagement`: `list` the configured engagements, `get` one (scope, exclusions, window, `roe`),
+  or `scope_check` a host, IP, CIDR or URL against one right now. `get` and `scope_check` need
+  `name`; `scope_check` also needs `target` (at most 2048 chars). `scope_check` returns the
+  verdict, whether the window is open and the same `decision` and `reasons` the scope hook gives.
+- `logs`: query this Worker's Workers Logs. `findings` returns guard detection lines and
+  `activity` returns request lines (model, route, backend, tools, timings). Arguments:
+  `since` (`30m`, `24h`, `7d` or an ISO time; default `24h`, at most 7 days back), `limit`
+  (1-100, default 50), `engagement`, and for `findings` only `rule` (exact id, or a family
+  prefix ending in a dot such as `secret.`) and `severity` (a minimum: `low`, `medium`, `high`).
+
+Register it in Claude Code (the Bearer value is your `PROXY_KEY`; `x-api-key` is not accepted on
+`/mcp`):
+
+```bash
+claude mcp add --transport http proxy https://<your-worker>.workers.dev/mcp --header "Authorization: Bearer <PROXY_KEY>"
+```
+
+- `GET`, `DELETE` and any other method on `/mcp` return `405` with `allow: POST`. This is by
+  design: a stateless server opens no standalone stream.
+- Order of checks: rate limit, then auth (`401` `{"error":"invalid authorization"}`, or `500` if
+  neither `PROXY_KEY` nor `ALLOW_ANONYMOUS` is set), then a body limit of 65536 bytes (`413`,
+  standard error JSON).
+- A tool error (missing `name`, unknown engagement, bad `since`) comes back as a normal result
+  with `isError: true` and a one-sentence message.
+
+### Setting up `logs`
+
+1.  Create a Cloudflare API token with the Workers Observability permission. The query endpoint
+    needs the Edit/Write level, not Read. The exact dashboard name of this permission is not
+    verified here; check it during TESTING.md §14.
+2.  Store it: `npx wrangler secret put CF_API_TOKEN`.
+3.  Set your account id in `wrangler.jsonc`, then deploy:
+
+    ```jsonc
+    "vars": { "CF_ACCOUNT_ID": "0123456789abcdef0123456789abcdef" }
+    ```
+
+4.  Optional: set `OBSERVABILITY_SERVICE` if you renamed the Worker (default
+    `claude-workers-ai-proxy`).
+
+Setting only one of `CF_ACCOUNT_ID` and `CF_API_TOKEN`, or an id that is not 32 lowercase hex
+characters, fails every request with `500 invalid config: <VAR>`. With neither set, `logs`
+answers `logs not configured: set CF_ACCOUNT_ID and the CF_API_TOKEN secret, or use wrangler
+tail`; `engagement` works without them.
+
+- Workers Logs keep 3 days on the Free plan and 7 on Paid; the 7-day cap on `since` matches the
+  Paid limit.
+- Output is capped: each row field is cut to 300 chars, `tools` to 16 names of 64 chars, and
+  the JSON to 32 KB (rows are dropped from the end and `truncated: true` is set). `excerpt` is
+  redacted again. `count` is the API's total and can exceed `returned`.
+- Rows come back newest first and are sliced to `limit` on the client. Rows with an invalid
+  timestamp are dropped.
+- The query has a 10 s timeout. Failures return one of `logs query timed out after 10 s`,
+  `logs query failed: HTTP <status>[: <message>]` or `logs query returned an unexpected response`.
+  The API token is scrubbed from every message and never logged.
+- **Known limit:** Cloudflare's docs do not state how custom JSON log fields (`event`,
+  `engagement`, `ruleId`, `severity`) are named as filter keys. The proxy sends the bare names to
+  the API and re-checks every filter on the parsed line, so a server that ignores a key gives
+  correct but possibly fewer rows. If `findings` returns nothing while detections exist in
+  `wrangler tail`, run the key check in TESTING.md §14.
 
 ## Point Claude Code at the Worker
 

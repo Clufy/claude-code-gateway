@@ -278,6 +278,51 @@ Register the hook (README, Scope hook) and start Claude Code with `ANTHROPIC_BAS
 - [ ] **No engagement.** Remove `x-engagement`. **Expected:** no hook line, no delay.
 - [ ] **Windows.** Repeat the in-scope and out-of-scope checks under Git Bash and under PowerShell (if both are available).
 
+## 14. MCP server
+
+Needs `PROXY_KEY` (and for the last steps a deployed Worker with `CF_ACCOUNT_ID` and `CF_API_TOKEN`). The SDK answers `406` unless the request sends `accept: application/json, text/event-stream`.
+
+- [ ] **Local curl.** Start `npx wrangler dev --port 8080` (`PROXY_KEY` in `.dev.vars`; add `ENGAGEMENTS` for the third call), then:
+
+```bash
+LOCAL=http://127.0.0.1:8080
+H=(-H "Authorization: Bearer $PROXY_KEY" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream')
+
+curl -sS "${H[@]}" -X POST "$LOCAL/mcp" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+
+curl -sS "${H[@]}" -X POST "$LOCAL/mcp" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+
+curl -sS "${H[@]}" -X POST "$LOCAL/mcp" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"engagement","arguments":{"action":"list"}}}'
+```
+
+**Expected:** `initialize` returns `serverInfo.name` `claude-worker-proxy`; `tools/list` returns exactly 2 tools, `engagement` and `logs`; the `engagement` call returns a JSON text with your engagements (or `{"engagements":[],"hint":"set the ENGAGEMENTS secret"}` with none). Each `tools/call` prints one `event: "mcp"` line with `ok: true` and no arguments.
+
+- [ ] **Auth and methods.** `curl -i -X GET "$LOCAL/mcp"` returns `405` with `allow: POST`. A `POST` with a wrong Bearer returns `401 {"error":"invalid authorization"}`; `x-api-key` instead of a Bearer also returns `401`. A body over 65536 bytes returns `413`. `logs` without `CF_API_TOKEN` returns `isError: true` with `logs not configured: ...`.
+- [ ] **Claude Code.** `claude mcp add --transport http proxy-local http://127.0.0.1:8080/mcp --header "Authorization: Bearer $PROXY_KEY"`, start Claude Code and run `/mcp`. **Expected:** `proxy-local` connected with 2 tools. Ask it to list engagements and to scope-check a host; the answers match section 13's decisions. Remove it afterwards with `claude mcp remove proxy-local`.
+- [ ] **`logs` against real logs (after a deploy).** With the token and account id set, generate a detection (section 12, request side), wait a minute, then call `logs` with `{"action":"findings","since":"1h"}` and `{"action":"activity","since":"1h"}`:
+
+```bash
+curl -sS "${H[@]}" -X POST "$BASE/mcp" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"logs","arguments":{"action":"findings","since":"1h"}}}'
+```
+
+**Expected:** the `inject.instruction` row appears under `findings` (rows have `time`, `ruleId`, `severity`, `requestId`, `excerpt`), and `activity` shows the request line with its `model`, `backend` and, if the model called a tool, `tools`. Also record the exact name of the token permission in the Cloudflare dashboard that made the call work (the README does not verify it) and fix the README if needed. An HTTP `401` or `403` in the error means the token lacks Workers Observability Edit/Write.
+
+- [ ] **If `findings` is empty while detections exist.** The custom-field filter key names are unverified. Read the real key names from the API's keys endpoint and compare them with `event`, `engagement`, `ruleId` and `severity`:
+
+```bash
+ACCOUNT_ID="0123456789abcdef0123456789abcdef"   # replace with your account id
+CF_API_TOKEN="<your-api-token>"
+NOW=$(( $(date +%s) * 1000 ))
+curl -sS -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/observability/telemetry/keys" \
+  -H "Authorization: Bearer $CF_API_TOKEN" -H 'content-type: application/json' \
+  -d '{"timeframe":{"from":'$((NOW - 3600000))',"to":'$NOW'},"filters":[{"key":"$metadata.service","operation":"eq","type":"string","value":"claude-workers-ai-proxy"}]}'
+```
+
+If the keys carry a prefix, the filter keys in `src/mcp/logs-tool.ts` need it; note the result and open a follow-up. Until then the client-side re-check keeps results correct, only possibly fewer than `limit`.
+
 ## CPU budget benchmark (`npm run bench`)
 
 `npm test` asserts no wall-clock time. The spec's CPU budgets are checked by `npm run bench` (vitest project `bench`, `test/guard-bench.bench.test.ts`):
