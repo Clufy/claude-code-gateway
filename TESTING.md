@@ -268,7 +268,7 @@ curl -sS -D - -o /dev/null -H "x-api-key: $PROXY_KEY" -X POST "$BASE/v1/messages
 
 Register the hook (README, Scope hook) and start Claude Code with `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` (with `x-engagement`) and a key set.
 
-- [ ] **Env reaches the hook.** Run a Bash call such as `echo hi`. **Expected:** one `hook.decision` line in `wrangler tail`. If none, the `settings.json` `env` block does not reach hooks; export the variables in the shell instead.
+- [ ] **Env reaches the hook.** Run a Bash call such as `echo hi`. **Expected:** one `hook.decision` line in `wrangler tail`. If none, the `settings.json` `env` block does not reach hooks, or node did not start (a hook that cannot start fails open); export the variables in the shell instead, or use an absolute path to node.
 - [ ] **In scope.** `nmap <in-scope host>`. **Expected:** the normal permission prompt (never auto-approved).
 - [ ] **Out of scope.** `nmap <host outside scope>`. **Expected:** denied with `scope-guard (<engagement>): ... is out of scope ...`.
 - [ ] **Loopback and no hosts.** `curl http://127.0.0.1:1` and `ls`. **Expected:** not denied by the hook.

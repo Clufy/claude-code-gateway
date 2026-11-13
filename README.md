@@ -377,20 +377,33 @@ Response `200`:
 }
 ```
 
-- A bad body, a missing or unknown `engagement`, a non-string `tool` or a non-object `input`
-  is `400`; a body over `MAX_BODY_BYTES` is `413`. A closed window is not an error: it is a
-  `deny` in the decision.
+- A bad body, a missing or unknown `engagement`, a `tool` that does not match
+  `^[A-Za-z0-9_.-]{1,64}$` (MCP names such as `mcp__x__scan` fit) or a non-object `input` is
+  `400`; a body over `MAX_BODY_BYTES` is `413`. A closed window is not an error: it is a `deny`
+  in the decision.
 - No hosts found: `allow`. Loopback hosts (`127.0.0.0/8`, `::1`, `localhost`, `*.localhost`)
   are always allowed; private ranges must be in scope. Any other host that is out of scope,
   excluded or not checkable denies, and so does a closed window when a non-loopback host is present.
-- Reasons, in order:
+- Reasons, in this order:
     - `tool input too large to check (over 1 MB)`
     - `too many targets to check (more than 64)`
-    - `<host> is out of scope for engagement <name>`
-    - `<host> is excluded from engagement <name>`
-    - `<raw> is not a checkable target; write the literal host`
+    - one reason per host, in the order the hosts were found:
+        - `<host> is out of scope for engagement <name>`
+        - `<host> is excluded from engagement <name>`
+        - `<raw> is not a checkable target; write the literal host`
     - `engagement <name> window is closed`
-- Each call logs one `hook.decision` line (engagement, tool, decision, up to 20 hosts, reason count).
+- Hosts and reasons are redacted like detection excerpts (`ghp_…[redacted].evil.example.org`).
+  A target that is not checkable is shown without URL userinfo, and a non-numeric port is shown
+  as `:[redacted]`, since it may be a password cut at `#`.
+- Each `200` answer logs one `hook.decision` line (engagement, tool, decision, up to 20 redacted
+  hosts of at most 200 chars each, reason count). A `4xx` answer logs none.
+- The endpoint answers within 50 ms for commands up to about 256 KB; a 1 MB command takes about
+  130 ms.
+- Where URL parsers disagree, every reading is checked: `https:/host`, `https:\\host` and a tab or
+  newline inside a WebFetch URL (WHATWG strips it: `https://a.acme.com<TAB>.evil.org` reaches
+  `a.acme.com.evil.org`), and `http://a.acme.com\@evil.org` (curl and wget reach `evil.org`).
+  Octal and hex dotted quads (`0127.0.0.1` is `87.0.0.1`) and IPv6 zone IDs (`fe80::1%eth0`)
+  are checked too.
 
 ### Scope hook
 
@@ -400,8 +413,13 @@ Code `PreToolUse` hook. During an engagement it sends each Bash, PowerShell or W
 never auto-approves: an allow is a silent exit, so Claude Code's normal permission prompt still
 applies.
 
-Add this to `settings.json` (use the absolute path to your checkout; the same line works when
-hooks run in Git Bash or in PowerShell on Windows):
+The hook needs Node 18 or later (tested on Node 24). **A hook that cannot start fails open:** if
+`node` is missing or too old, Claude Code treats the failure as a non-blocking error and runs the
+tool unchecked. Use an absolute path to `node` to avoid PATH surprises, and write both paths with
+forward slashes (`C:/Program Files/nodejs/node.exe`). The line should work whether hooks run in Git
+Bash or in PowerShell on Windows; verify it with TESTING.md §13.
+
+Add this to `settings.json`:
 
 ```json
 {
@@ -412,7 +430,7 @@ hooks run in Git Bash or in PowerShell on Windows):
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node \"<absolute path>/claude-code/hooks/scope-guard.mjs\"",
+                        "command": "\"<absolute path to node>\" \"<absolute path to checkout>/claude-code/hooks/scope-guard.mjs\"",
                         "timeout": 10
                     }
                 ]
@@ -422,10 +440,12 @@ hooks run in Git Bash or in PowerShell on Windows):
 }
 ```
 
-`timeout` is in seconds. The hook itself gives up after 3 s.
+`timeout` is in seconds. The hook itself gives up after 3 s, counted from before it reads its
+input, so a stalled stdin also ends in a deny. It never follows a redirect from the Worker.
 
 **When it acts.** Only when `ANTHROPIC_CUSTOM_HEADERS` (newline-separated `Name: Value` lines)
-has a non-empty `x-engagement` and `PROXY_SCOPE_HOOK` is not `off`. Otherwise it exits silently
+has a non-empty `x-engagement` (with repeated lines, the first non-empty value wins, so a later
+empty line cannot switch the hook off) and `PROXY_SCOPE_HOOK` is not `off`. Otherwise it exits silently
 without a network call. The endpoint is `/v1/guard/check` on `ANTHROPIC_BASE_URL` (any path in
 the base URL is ignored). The key sent as `x-api-key` is the first of: custom header
 `x-proxy-key`, custom header `x-api-key`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`.
@@ -455,10 +475,21 @@ reason is exactly `scope check unavailable; set PROXY_SCOPE_HOOK=off to bypass`.
 
 - shell indirection: variables, `$(...)`, base64;
 - scripts written to a file and then run;
-- targets read from files (`nmap -iL`, `wget -i`, `nuclei -l`);
-- obfuscated names: a backtick or caret inside a name, short or decimal IPv4 forms;
+- targets read from files (`nmap -iL`, `wget -i`, `nuclei -l`, `curl -K`);
+- obfuscation: a backtick or caret inside a name, an interior `\`, short or decimal IPv4
+  (`10.1`, `167772161`), brace expansion (`{a,b}.evil.com`);
+- inline interpreter code (`node -e`, `python -c`, …): bare hosts are found only inside quoted
+  strings, and Perl `q{}` strings or string concatenation (`'evil.' + 'com'`) hide a host;
 - names resolved inside tools;
-- single-label hosts outside the engagement domains.
+- single-label hosts outside the engagement's domains;
+- two-label names whose last label is on the file-extension list, so that `python setup.py`
+  does not deny: `ai`, `am`, `cc`, `gz`, `in`, `java`, `md`, `mk`, `ml`, `mov`, `pl`, `pm`,
+  `ps`, `pub`, `py`, `rs`, `sc`, `sh`, `so`, `tf`, `zip`. So `curl mistral.ai` is not checked,
+  though URLs with those TLDs are (`https://mistral.ai`);
+- tools outside the hook's matcher, such as MCP browser or fetch tools and WebSearch. When MCP
+  network tools are in use, add `|mcp__.*` to the matcher (`Bash|PowerShell|WebFetch|mcp__.*`);
+  the Worker checks URLs and IPs in every string of an MCP call, and bare hosts in fields named
+  `url`, `host`, `target` and the like.
 
 **Cost.** One round trip to the Worker per Bash, PowerShell or WebFetch call while an engagement
 is active, up to 3 s when the Worker is slow.
@@ -511,8 +542,17 @@ Each hit logs one line:
 - Caps: one line per rule per request segment (each text block or `tool_result`) and per rule
   per `tool_use` block, and at most 20 detection lines per request, the out-of-window line
   included. Further hits are dropped (request-side ids still reach the header).
+- Unquoted keyword values are redacted to the end of the line (up to 200 chars), and `=>` counts
+  as a separator. Also redacted: the value after `--password`, `--passwd`, `--token`, `--secret`
+  or `--api-key`, `mysql -p<value>` / `-p <value>`, the text of `<password>`, `<secret>`,
+  `<token>` or `<apiKey>` elements, a URL password (`postgres://app:[redacted]@db`), and the
+  token after `Bearer`. These shapes only change what an excerpt shows; they do not fire
+  `secret.egress` on their own.
 - A streamed `tool_use` input over 1 MB is cut at 1 MB and no longer parses, so `cmd.risky` and
   `scope.out_of_scope` skip it; only response custom rules see the cut text.
+- `cmd.risky` scans only the first 64 KB of a command. A longer command with no risky match in
+  that head is still flagged, with the excerpt
+  `command over 64 KB; only the first 64 KB inspected: <first 120 chars>`.
 
 Request-side hits are also listed in a response header, so the client sees them without logs:
 
