@@ -6,6 +6,7 @@ export interface McpContext {
     config: ProxyConfig
     requestId: string
     now: () => number
+    selfFetch: (req: Request) => Promise<Response>
 }
 
 export type ToolRegistrar = (server: McpServer, ctx: McpContext) => void

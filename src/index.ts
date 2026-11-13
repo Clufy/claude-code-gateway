@@ -17,7 +17,7 @@ import { newStats } from './stats'
 import * as models from './models'
 import * as tokens from './tokens'
 
-export default {
+const worker = {
     async fetch(request: Request, env: Env): Promise<Response> {
         const requestId = generateRequestId()
         const url = new URL(request.url)
@@ -52,6 +52,8 @@ export default {
         }
     }
 }
+
+export default worker
 
 async function handleRequest(
     request: Request,
@@ -183,7 +185,9 @@ async function handleRequest(
         if (!(await verifyProxyKey(token?.trim() ?? null, config.proxyKey))) {
             return jsonResponse({ error: 'invalid authorization' }, 401, requestId)
         }
-        return handleMcp(request, config, requestId)
+        return handleMcp(request, config, requestId, Date.now, {
+            selfFetch: (req) => worker.fetch(req, env)
+        })
     }
 
     const externalMatch = url.pathname.match(/^\/([^/]+)\/(.+)\/v1\/messages$/)

@@ -48,10 +48,10 @@ describe('parseSince', () => {
 })
 
 describe('logs tool', () => {
-    it('is listed beside engagement', async () => {
+    it('is listed beside engagement and redteam', async () => {
         const res = await mcpCall('tools/list', undefined, { env: makeEnv() })
         const json: any = await res.json()
-        expect(json.result.tools.map((t: any) => t.name).sort()).toEqual(['engagement', 'logs'])
+        expect(json.result.tools.map((t: any) => t.name).sort()).toEqual(['engagement', 'logs', 'redteam'])
         const tool = json.result.tools.find((t: any) => t.name === 'logs')
         expect(tool.inputSchema.properties.action.enum).toEqual(['findings', 'activity'])
     })

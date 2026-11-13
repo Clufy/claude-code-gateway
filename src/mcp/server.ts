@@ -6,18 +6,20 @@ import { readLimitedBody } from '../body-limit'
 import { anthropicError } from '../errors'
 import { registerEngagementTool } from './engagement-tool'
 import { registerLogsTool } from './logs-tool'
+import { registerRedteamTool } from './redteam-tool'
 import type { McpContext, ToolRegistrar } from './tool-kit'
 
 export const MCP_MAX_BODY_BYTES = 65536
 
-const TOOLS: ToolRegistrar[] = [registerEngagementTool, registerLogsTool]
+const TOOLS: ToolRegistrar[] = [registerEngagementTool, registerLogsTool, registerRedteamTool]
 
 // Assumes auth has already passed.
 export async function handleMcp(
     request: Request,
     config: ProxyConfig,
     requestId: string,
-    now: () => number = Date.now
+    now: () => number = Date.now,
+    opts?: { selfFetch?: (req: Request) => Promise<Response> }
 ): Promise<Response> {
     const body = await readLimitedBody(request, MCP_MAX_BODY_BYTES)
     if (!body.ok) {
@@ -47,7 +49,12 @@ export async function handleMcp(
         { name: 'claude-worker-proxy', version: '0.5.0' },
         { capabilities: { tools: {} }, jsonSchemaValidator: new CfWorkerJsonSchemaValidator() }
     )
-    const ctx: McpContext = { config, requestId, now }
+    const selfFetch =
+        opts?.selfFetch ??
+        (() => {
+            throw new Error('selfFetch not configured')
+        })
+    const ctx: McpContext = { config, requestId, now, selfFetch }
     for (const register of TOOLS) register(server, ctx)
 
     const transport = new WebStandardStreamableHTTPServerTransport({
