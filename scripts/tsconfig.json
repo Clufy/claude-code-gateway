@@ -11,5 +11,5 @@
         "skipLibCheck": true,
         "types": ["node"]
     },
-    "include": ["./**/*.ts", "../claude-code/**/*.ts"]
+    "include": ["./**/*.ts", "../claude-code/**/*.ts", "../src/shared/**/*.ts"]
 }
