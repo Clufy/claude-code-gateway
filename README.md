@@ -843,7 +843,9 @@ It has three actions:
 
 A draft is **never done until `test_rule` passes**. `draft_rule` always answers with
 `status: "draft"` and `next: "not done: run test_rule with events and expect until passed is true"`,
-and `promote_rule` refuses a rule whose test does not pass.
+and `promote_rule` refuses a rule whose test does not pass. Reasoning models can spend the draft's
+4096-token budget thinking and return no text, which gives the error `draft model returned no text; a
+reasoning model may have used its whole token budget, so try another model`; pass another `model`.
 
 A rule that flags tool output telling the agent to fetch a URL:
 

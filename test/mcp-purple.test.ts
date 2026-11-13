@@ -80,7 +80,7 @@ describe('purple tool', () => {
         expect(r.data).toMatchObject({ valid: true, model: 'm1', status: 'draft' })
         expect(seen).toHaveLength(1)
         const body: any = await seen[0]!.clone().json()
-        expect(body.max_tokens).toBe(1500)
+        expect(body.max_tokens).toBe(4096)
         expect(body.model).toBe('m1')
         expect(seen[0]!.headers.get('x-api-key')).toBe('test-key')
     })

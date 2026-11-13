@@ -10,7 +10,7 @@ import { race, SELF_ORIGIN } from './redteam-tool'
 import { fail, logged, ok, type McpContext, type ToolRegistrar } from './tool-kit'
 
 const DEFAULT_LIMIT = 50
-const DRAFT_TIMEOUT_MS = 30000
+const DRAFT_TIMEOUT_MS = 50000
 const NO_MODELS = 'no routed models; pass model'
 
 interface Args {

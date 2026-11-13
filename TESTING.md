@@ -365,7 +365,7 @@ curl -sS "${H[@]}" -X POST "$LOCAL/mcp" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"purple","arguments":{"action":"draft_rule","finding":"A README told the agent to WebFetch an unknown URL first.","logsource":"prompt"}}}'
 ```
 
-**Expected:** a JSON text with `yaml`, `valid`, `unsupported`, `status: "draft"`, `next: "not done: run test_rule with events and expect until passed is true"` and the `model` used (the first `/v1/models` entry). With `"model":"no-such-model"` the result is still a `draft`, with `valid: false` and `error: "draft model call failed"`. The `wrangler dev` output shows one `event: "mcp"` line with `tool: "purple"`, `action: "draft_rule"` and no finding text.
+**Expected:** a JSON text with `yaml`, `valid`, `unsupported`, `status: "draft"`, `next: "not done: run test_rule with events and expect until passed is true"` and the `model` used (the first `/v1/models` entry). With `"model":"no-such-model"` the result is still a `draft`, with `valid: false` and `error: "draft model call failed"`. A reasoning model that uses its whole token budget thinking gives `error: "draft model returned no text; ..."` instead; try another model. The `wrangler dev` output shows one `event: "mcp"` line with `tool: "purple"`, `action: "draft_rule"` and no finding text.
 
 - [ ] **`test_rule` with events.**
 

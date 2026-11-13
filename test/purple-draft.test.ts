@@ -135,4 +135,15 @@ describe('draftRule result', () => {
             next: NEXT
         })
     })
+    it.each(['', '  \n '])('reports an empty model reply clearly (%j)', async (reply) => {
+        const d = await draftRule('f', 'prompt', async () => reply)
+        expect(d).toEqual({
+            yaml: '',
+            valid: false,
+            error: 'draft model returned no text; a reasoning model may have used its whole token budget, so try another model',
+            unsupported: [],
+            status: 'draft',
+            next: NEXT
+        })
+    })
 })

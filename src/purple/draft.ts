@@ -2,7 +2,7 @@ import { MAX_RULE_BYTES, PROXY_PRODUCT, parseSigma } from './sigma'
 
 export type DraftLogsource = 'prompt' | 'tool_use' | 'detection' | 'request'
 export const MAX_FINDING_CHARS = 4096
-export const DRAFT_MAX_TOKENS = 1500
+export const DRAFT_MAX_TOKENS = 4096
 
 export const DRAFT_SYSTEM = [
     'You write one Sigma detection rule for an LLM proxy from a red-team finding.',
@@ -81,6 +81,16 @@ export async function draftRule(
             yaml: '',
             valid: false,
             error: 'draft model call failed',
+            unsupported: [],
+            status: 'draft',
+            next: NEXT
+        }
+    }
+    if (String(reply).trim() === '') {
+        return {
+            yaml: '',
+            valid: false,
+            error: 'draft model returned no text; a reasoning model may have used its whole token budget, so try another model',
             unsupported: [],
             status: 'draft',
             next: NEXT
