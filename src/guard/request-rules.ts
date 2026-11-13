@@ -49,8 +49,13 @@ export function newestTurn(messages: unknown): Segment[] {
 // holds one (an indexOf pass, far cheaper than the case-insensitive regex), which keeps clean 1 MB results fast.
 const INJECT_PATTERNS: readonly { re: RegExp; anchors?: readonly string[] }[] = [
     {
-        re: /ignore (?:all |any )?(?:the )?(?:previous|prior|above|earlier) (?:instructions|prompts|messages|rules)/i,
+        // P4-R35: "ignore the user" only before "and", punctuation or "'s request", so "the user agent" stays quiet
+        re: /ignore (?:(?:all |any )?(?:the )?(?:previous|prior|above|earlier) (?:instructions|prompts|messages|rules)|(?:the|your) (?:user(?:['’]s (?:request|instruction|message)s?|\s{1,3}and\b|\s{0,3}[.,;:!])|system prompt|instructions))/i,
         anchors: ['gnore']
+    },
+    {
+        re: /\bSYSTEM (?:NOTICE|MESSAGE|OVERRIDE|ALERT)\s{0,3}:/i,
+        anchors: ['system notice', 'system message', 'system override', 'system alert']
     },
     { re: /disregard (?:all |the )?(?:previous|prior|above) /i },
     {
