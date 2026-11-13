@@ -2,6 +2,9 @@
  * Host extractor (plan D1–D5): pulls URLs, hostnames, IPs and CIDRs out of tool inputs and shell commands. The
  * candidates are raw strings for checkScope: `scheme://authority` (userinfo dropped), a bare host, an IP or a CIDR.
  * Matching is lexical, never DNS. A hand tokenizer keeps it linear; no regex here has a nested quantifier.
+ * Where clients disagree, every reading is emitted (fail closed): WHATWG leniency (`https:/h`, `https:\\h`, tab or
+ * newline inside a WebFetch URL or a code string), `a.com\@b.com` (curl and wget reach b.com), octal or hex dotted
+ * quads (`0127.0.0.1`, read by checkScope as 87.0.0.1) and IPv6 zone IDs (`fe80::1%eth0` → `fe80::1`).
  *
  * Documented limits:
  * - Shell indirection (variables, `$(…)`, backticks, brace expansion, encodings) can hide a host. A URL whose host
@@ -48,6 +51,10 @@ const SCHEME_CHAR = /[A-Za-z0-9+.-]/
 const LETTER = /[A-Za-z]/
 const DIGIT = /[0-9]/
 const HOST_CHAR = /[A-Za-z0-9._-]/
+const SPECIAL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp']) // WHATWG: slashes and backslashes are lenient
+const URL_STRIPPED = /[\t\n\r]/g // removed by the WHATWG URL parser anywhere in the input
+const CODE_ESCAPES = /\\[tnr]/g // the same characters written as escapes inside a code string
+const QUAD_PART = /^(?:0[xX][0-9a-fA-F]{0,8}|[0-9]{1,11})$/
 
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
 const FILE_CONTENT = new Map([
@@ -141,29 +148,75 @@ function cutPath(s: string): string {
     return s.slice(0, i)
 }
 
-/** `scheme://authority` with userinfo dropped; null for no scheme or `file://` (D5). */
-function urlCandidate(t: string, sep: number, shell: boolean): string | null {
-    let s = sep
-    while (s > 0 && SCHEME_CHAR.test(t[s - 1])) s--
-    while (s < sep && !LETTER.test(t[s])) s++
-    if (s === sep) return null
-    const scheme = t.slice(s, sep)
-    if (scheme.toLowerCase() === 'file') return null
-    let auth = cutPath(t.slice(sep + 3))
-    auth = auth.slice(auth.lastIndexOf('@') + 1)
-    // drop trailing prose punctuation, but keep a `]` or `}` whose opener is in the authority (`[v6]`, `${HOST}`)
-    const bracket = auth.includes('[')
-    const brace = auth.includes('{')
-    let n = auth.length
+/**
+ * The first URL in a token: `scheme://` for any scheme, or a WHATWG special scheme followed by any run of `/` and
+ * `\` (`https:/h`, `https:\\h`, `https:///h` all reach h). Other schemes need `//`, so `C:\Users` is not a URL.
+ * `rest` starts at the authority. The scheme is '' when no letter precedes the colon (then nothing is emitted).
+ */
+function findUrl(t: string): { scheme: string; rest: string } | null {
+    for (let c = t.indexOf(':'); c !== -1; c = t.indexOf(':', c + 1)) {
+        if (t[c + 1] !== '/' && t[c + 1] !== '\\') continue
+        let s = c
+        while (s > 0 && SCHEME_CHAR.test(t[s - 1])) s--
+        while (s < c && !LETTER.test(t[s])) s++
+        const scheme = t.slice(s, c)
+        if (SPECIAL_SCHEMES.has(scheme.toLowerCase())) {
+            let a = c + 1
+            while (a < t.length && (t[a] === '/' || t[a] === '\\')) a++
+            return { scheme, rest: t.slice(a) }
+        }
+        if (t.startsWith('//', c + 1)) return { scheme, rest: t.slice(c + 3) }
+    }
+    return null
+}
+
+/** Adds `scheme://authority`; drops trailing prose punctuation. */
+function addAuthority(scheme: string, authority: string, shell: boolean, out: Set<string>): void {
+    // keep a `]` or `}` whose opener is in the authority (`[v6]`, `${HOST}`)
+    const bracket = authority.includes('[')
+    const brace = authority.includes('{')
+    let n = authority.length
     while (n > 0) {
-        const c = auth[n - 1]
+        const c = authority[n - 1]
         if (c === ']' ? bracket : c === '}' ? brace : !'.:!*'.includes(c)) break
         n--
     }
-    auth = auth.slice(0, n)
+    const auth = authority.slice(0, n)
     // in shell text an empty authority is indirection (`http://"$H"`, backticks): returned so checkScope rejects it
-    if (auth === '' && !shell) return null
-    return `${scheme}://${auth}`
+    if (auth === '' && !shell) return
+    out.add(`${scheme}://${auth}`)
+}
+
+/** `scheme://authority` with userinfo dropped; nothing for no scheme or `file://` (D5). */
+function urlCandidates(scheme: string, rest: string, shell: boolean, out: Set<string>): void {
+    if (scheme === '' || scheme.toLowerCase() === 'file') return
+    const cut = cutPath(rest)
+    addAuthority(scheme, cut.slice(cut.lastIndexOf('@') + 1), shell, out)
+    // curl, wget and urllib3 read `a.com\@b.com` as userinfo then host b.com: emit both readings (fail closed)
+    if (rest[cut.length] === '\\') {
+        const at = rest.lastIndexOf('@')
+        if (at > cut.length) addAuthority(scheme, cutPath(rest.slice(at + 1)), shell, out)
+    }
+}
+
+/**
+ * The WHATWG reading of a whole string (what WebFetch and `fetch` request): tab, CR and LF are stripped, so
+ * `https://a.com<TAB>.evil.org` is the host `a.com.evil.org`. Emits `protocol//host`; skips `file:` and no host.
+ */
+function whatwgCandidate(v: string, out: Set<string>): void {
+    if (!v.includes(':')) return
+    const u = URL.parse(v.replace(URL_STRIPPED, ''))
+    if (u === null || u.protocol === 'file:' || u.host === '') return
+    out.add(`${u.protocol}//${u.host}`)
+}
+
+/** a.b.c.d where a part is octal (leading 0) or 0x-hex: inet_aton and WHATWG read it as an IPv4 (P4-R15). */
+function isOddQuad(p: string): boolean {
+    if (p.length > 47) return false
+    const parts = p.split('.')
+    return (
+        parts.length === 4 && parts.every((x) => QUAD_PART.test(x)) && parts.some((x) => x.length > 1 && x[0] === '0')
+    )
 }
 
 /**
@@ -200,19 +253,26 @@ function bareCandidates(token: string, isHost: ((p: string) => boolean) | null, 
 function hostCandidates(h: string, isHost: ((p: string) => boolean) | null, out: Set<string>): void {
     if (h.includes('$')) return // D2: shell indirection (a `//h/C$` share name is already cut off)
     if (h.startsWith('[')) {
-        const inner = h.slice(1, Math.max(h.indexOf(']'), 1))
+        const inner = withoutZone(h.slice(1, Math.max(h.indexOf(']'), 1)))
         if (isIp(inner)) out.add(inner)
         return
     }
-    if (isIp(h)) {
-        out.add(h)
+    const ip = withoutZone(h)
+    if (isIp(ip) || isOddQuad(ip)) {
+        out.add(ip)
         return
     }
     // every `:` part, not only the first: `TCP:host:443`, `--resolve host:443:ip`, `-L 8080:ip:80`
     for (const part of h.split(':')) {
         const p = trimDots(part)
-        if (isIp(p) || (isHost !== null && isHost(p))) out.add(p)
+        if (isIp(p) || isOddQuad(p) || (isHost !== null && isHost(p))) out.add(p)
     }
+}
+
+/** `fe80::1%eth0` → `fe80::1` (an IPv6 zone ID, also `%25eth0` in a URL); other text unchanged. */
+function withoutZone(h: string): string {
+    const pct = h.indexOf('%')
+    return pct > 0 && isIp(h.slice(0, pct)) ? h.slice(0, pct) : h
 }
 
 /**
@@ -240,25 +300,29 @@ export function extractHosts(text: string, opts: ExtractOptions): string[] {
         for (const t of s.split(SUB_BREAK)) {
             if (out.size >= MAX_CANDIDATES) return
             if (t === '') continue
-            const sep = t.indexOf('://')
-            if (sep === -1) bareCandidates(t, hosts ? hostCheck : null, out)
-            else {
-                const url = urlCandidate(t, sep, opts.shell)
-                if (url !== null) out.add(url)
-            }
+            const url = findUrl(t)
+            if (url === null) bareCandidates(t, hosts ? hostCheck : null, out)
+            else urlCandidates(url.scheme, url.rest, opts.shell, out)
         }
     }
     // inline code: full extraction inside its quoted strings (fail closed), URLs and IPs elsewhere
+    const scanPiece = (piece: string, quoted: boolean) => {
+        scan(piece, quoted)
+        if (!quoted) return
+        // a quoted string is what fetch/urlopen parse; `\t` escapes become the stripped characters at run time
+        whatwgCandidate(piece, out)
+        if (piece.includes('\\')) whatwgCandidate(piece.replace(CODE_ESCAPES, ''), out)
+    }
     const scanCode = (s: string) => {
         let start = 0
         let quote = ''
         for (let i = 0; i < s.length; i++) {
             if (quote === '' ? !CODE_QUOTES.includes(s[i]) : s[i] !== quote) continue
-            scan(s.slice(start, i), quote !== '')
+            scanPiece(s.slice(start, i), quote !== '')
             quote = quote === '' ? s[i] : ''
             start = i + 1
         }
-        scan(s.slice(start), quote !== '')
+        scanPiece(s.slice(start), quote !== '')
     }
     const result = () => capped(out)
     if (!opts.shell) {
@@ -328,16 +392,17 @@ export function hostsInToolInput(tool: string, input: unknown, knownDomains?: re
     const out = new Set<string>()
     let budget = BUDGET
     let truncated = false
-    const take = (s: string, shell: boolean) => {
+    const take = (s: string, shell: boolean, whole: boolean) => {
         if (s.length > budget) truncated = true
         const t = s.slice(0, budget)
         budget -= t.length
         for (const h of extractHosts(t, { shell, knownDomains })) out.add(h)
+        if (whole) whatwgCandidate(t, out) // the whole field as WebFetch would parse it (A1)
     }
     // fail closed: an unscanned remainder could hide a host
     const result = () => (truncated ? [...capped(out), INPUT_TOO_LARGE] : capped(out))
     if (SHELL_TOOLS.has(tool)) {
-        if (typeof input.command === 'string') take(input.command, true)
+        if (typeof input.command === 'string') take(input.command, true, false)
         return result()
     }
     const skip = FILE_CONTENT.get(tool) ?? []
@@ -347,7 +412,7 @@ export function hostsInToolInput(tool: string, input: unknown, knownDomains?: re
         .reverse()
     while (stack.length > 0 && !truncated && out.size < MAX_CANDIDATES) {
         const [key, v] = stack.pop()!
-        if (typeof v === 'string') take(v, HOST_FIELD.test(key))
+        if (typeof v === 'string') take(v, HOST_FIELD.test(key), true)
         else if (Array.isArray(v)) for (let i = v.length - 1; i >= 0; i--) stack.push([key, v[i]])
         else if (isObj(v)) {
             const entries = Object.entries(v)

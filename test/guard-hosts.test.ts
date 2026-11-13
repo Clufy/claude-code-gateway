@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { loadConfig } from '../src/config'
+import { checkScope } from '../src/engagement'
+import { decideToolCall } from '../src/guard/decide'
 import { extractHosts, hostsInToolInput, INPUT_TOO_LARGE, TOO_MANY_TARGETS } from '../src/guard/hosts'
 import fixture from './fixtures/pentest-commands.json'
 
@@ -197,5 +200,104 @@ describe('hostsInToolInput', () => {
         let deep: unknown = { url: 'https://deep.example.org' }
         for (let i = 0; i < 100_000; i++) deep = { x: deep }
         expect(hostsInToolInput('mcp__x__scan', deep)).toEqual(['https://deep.example.org'])
+    })
+})
+
+// Final fix wave A: what WebFetch, Node fetch, curl and inet_aton really connect to (fail closed)
+const SCOPE = loadConfig({
+    ENGAGEMENTS: JSON.stringify({
+        acme: {
+            scope: { domains: ['*.acme-test.com'], cidrs: ['10.10.0.0/16'], llmTargets: [] },
+            window: { start: '2020-01-01T00:00:00Z', end: '2099-12-31T23:59:59Z' },
+            roe: '',
+            defaultMode: 'off'
+        }
+    })
+}).engagements.get('acme')!
+const NOW = Date.parse('2026-11-15T00:00:00Z')
+const notInScope = (hosts: string[]) => hosts.some((h) => checkScope(SCOPE, h, NOW).verdict !== 'in_scope')
+
+describe('A1: WHATWG URL normalization', () => {
+    it.each([
+        ['WebFetch', { url: 'https:/evil.example.org/x' }],
+        ['WebFetch', { url: 'https:\\\\evil.example.org' }],
+        ['WebFetch', { url: 'https:/\\evil.example.org' }],
+        ['WebFetch', { url: 'https://app.acme-test.com\t.evil.example.org/' }],
+        ['WebFetch', { url: 'https://app.acme-test.com\n.evil.example.org/' }],
+        ['WebFetch', { url: 'https://app.acme-test.com\r.evil.example.org/' }],
+        ['mcp__x__fetch', { request: { href: 'https://app.acme-test.com\t.evil.example.org/' } }],
+        ['Bash', { command: 'curl https:/evil.example.org/x' }],
+        ['Bash', { command: "curl 'https:\\\\evil.example.org'" }],
+        ['Bash', { command: "curl 'https:/\\evil.example.org'" }],
+        ['Bash', { command: `node -e "fetch('https:/evil.example.org')"` }],
+        ['Bash', { command: `node -e "fetch('https://app.acme-test.com\t.evil.example.org/')"` }],
+        ['Bash', { command: `node -e "fetch('https://app.acme-test.com\\t.evil.example.org/')"` }],
+        ['Bash', { command: `python3 -c "import urllib.request as u; u.urlopen('HTTPS:\\\\evil.example.org')"` }]
+    ])('%s %j is not in scope', (tool, input) => {
+        const hosts = hostsInToolInput(tool, input)
+        expect(notInScope(hosts)).toBe(true)
+        expect(decideToolCall(SCOPE, tool, input, NOW).decision).toBe('deny')
+    })
+    it('emits the WHATWG reading of a relaxed special-scheme URL', () => {
+        expect(hostsInToolInput('WebFetch', { url: 'https:/evil.example.org/x' })).toContain('https://evil.example.org')
+        expect(extractHosts('curl https:\\\\evil.example.org', { shell: true })).toContain('https://evil.example.org')
+        expect(extractHosts('curl https:/\\evil.example.org', { shell: true })).toContain('https://evil.example.org')
+        expect(hostsInToolInput('WebFetch', { url: 'https://app.acme-test.com\t.evil.example.org/' })).toContain(
+            'https://app.acme-test.com.evil.example.org'
+        )
+    })
+    it('keeps Windows paths, prose and in-scope URLs quiet', () => {
+        expect(extractHosts('dir C:\\Users\\x D:/data/y.txt', { shell: true })).toEqual([])
+        expect(
+            hostsInToolInput('WebFetch', { url: 'https://app.acme-test.com/x', prompt: 'Summary: the page' })
+        ).toEqual(['https://app.acme-test.com'])
+        expect(hostsInToolInput('mcp__x__open', { path: 'C:\\Users\\x', link: 'mailto:a@b.example.org' })).toEqual([])
+        expect(hostsInToolInput('WebFetch', { url: 'file:///etc/hosts' })).toEqual([])
+        expect(decideToolCall(SCOPE, 'WebFetch', { url: 'https://APP.acme-test.com:443/x' }, NOW).decision).toBe(
+            'allow'
+        )
+    })
+})
+
+describe('A2: a backslash before @ in the authority gives both readings', () => {
+    it.each([
+        'curl "http://app.acme-test.com\\@evil.example.org/"',
+        "wget 'http://app.acme-test.com\\@evil.example.org/'",
+        'curl http://app.acme-test.com\\@evil.example.org/'
+    ])('%s', (command) => {
+        const hosts = hostsInToolInput('Bash', { command })
+        expect(hosts).toContain('http://evil.example.org')
+        expect(decideToolCall(SCOPE, 'Bash', { command }, NOW).decision).toBe('deny')
+    })
+})
+
+describe('A3: leading-zero and hex dotted quads (P4-R15)', () => {
+    it.each(['nmap 0127.0.0.1', 'nmap 010.010.010.010', 'nmap 0x8.0x8.0x8.0x8', 'nmap 0127.0.0.1:80'])(
+        '%s',
+        (command) => {
+            expect(hostsInToolInput('Bash', { command })).toHaveLength(1)
+            expect(decideToolCall(SCOPE, 'Bash', { command }, NOW).decision).toBe('deny')
+        }
+    )
+    it('lets checkScope canonicalize (012.012.0.1 is 10.10.0.1)', () => {
+        expect(decideToolCall(SCOPE, 'Bash', { command: 'nmap 012.012.0.1' }, NOW)).toMatchObject({
+            decision: 'allow',
+            hosts: ['10.10.0.1']
+        })
+    })
+    it('finds them in non-shell strings too', () => {
+        expect(decideToolCall(SCOPE, 'mcp__x__scan', { note: 'scan 0x8.0x8.0x8.0x8 now' }, NOW).decision).toBe('deny')
+    })
+    it('ignores plain four-part numbers that are not addresses', () => {
+        expect(extractHosts('pip install pkg==1.2.3.400', { shell: true })).toEqual([])
+    })
+})
+
+describe('A4: IPv6 zone IDs', () => {
+    it('strips the zone before the IP check', () => {
+        expect(hostsInToolInput('Bash', { command: 'nmap -6 fe80::1%eth0' })).toEqual(['fe80::1'])
+        expect(decideToolCall(SCOPE, 'Bash', { command: 'nmap -6 fe80::1%eth0' }, NOW).decision).toBe('deny')
+        expect(hostsInToolInput('Bash', { command: 'ping6 [fe80::1%25eth0]' })).toEqual(['fe80::1'])
+        expect(extractHosts('done 100% ok', { shell: true })).toEqual([])
     })
 })
