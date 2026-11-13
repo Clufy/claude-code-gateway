@@ -7,3 +7,4 @@ dist/
 .tmp-check/
 qualify-results/
 test/fixtures/local/
+redteam-results/

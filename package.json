@@ -11,7 +11,8 @@
         "smoke": "bash scripts/self-test.sh",
         "update-psl": "node scripts/update-psl.ts",
         "qualify": "node scripts/qualify/index.ts",
-        "qualify:capture": "node scripts/qualify/capture.ts"
+        "qualify:capture": "node scripts/qualify/capture.ts",
+        "redteam": "node scripts/redteam/index.ts"
     },
     "devDependencies": {
         "@cloudflare/vitest-plugin": "^1.6.0",
