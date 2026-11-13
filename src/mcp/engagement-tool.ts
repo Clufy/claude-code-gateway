@@ -3,7 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { Engagement } from '../engagement'
 import { checkScope, inWindow } from '../engagement'
 import { decideHosts } from '../guard/decide'
-import { logged, type ToolRegistrar } from './server'
+import { logged, type ToolRegistrar } from './tool-kit'
 
 const MAX_TARGET = 2048
 const SAFE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
@@ -19,7 +19,7 @@ export const registerEngagementTool: ToolRegistrar = (server, ctx) => {
             description:
                 "Engagements configured on this proxy: list them, get one's scope, window and rules of engagement, or check whether a host, IP, CIDR or URL is in scope right now.",
             inputSchema: {
-                action: z.enum(['list', 'get', 'scope_check']).describe('What to do'),
+                action: z.enum(['list', 'get', 'scope_check']).describe('list, get or scope_check'),
                 name: z.string().optional().describe('Engagement name; used by get and scope_check'),
                 target: z.string().optional().describe('Host, IP, CIDR or URL to check; used by scope_check')
             }

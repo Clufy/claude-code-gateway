@@ -110,6 +110,16 @@ describe('engagement tool', () => {
         expect(r).toMatchObject({ isError: true, text: 'target too long (max 2048 chars)' })
     })
 
+    it('scope_check accepts a 2048-char target', async () => {
+        const r = await call({ action: 'scope_check', name: 'acme', target: 'x'.repeat(2048) })
+        expect(r.isError).toBe(false)
+    })
+
+    it('scope_check without target', async () => {
+        const r = await call({ action: 'scope_check', name: 'acme' })
+        expect(r).toMatchObject({ isError: true, text: 'target is required for scope_check' })
+    })
+
     it('scope_check after the window', async () => {
         const r = await call({ action: 'scope_check', name: 'acme', target: 'app.acme-test.com' }, { now: CLOSED })
         expect(r.data).toMatchObject({ inWindow: false, decision: 'deny' })
