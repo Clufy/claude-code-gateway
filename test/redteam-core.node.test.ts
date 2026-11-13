@@ -139,7 +139,10 @@ describe('import guard', () => {
         const src = readFileSync(f, 'utf8')
         const specs = [...src.matchAll(/(?:\bfrom|\bimport)\s*(['"])([^'"]+)\1/g)].map((m) => m[2]!)
         for (const spec of specs) {
-            expect(spec, `specifier ${spec}`).toMatch(/^\.\/.*\.(ts|json)$/)
+            // The one exception: corpus JSON lives in redteam/corpus/<suite>/cases.json (plan D10).
+            expect(spec, `specifier ${spec}`).toMatch(
+                /^\.\/.*\.(ts|json)$|^\.\.\/\.\.\/\.\.\/redteam\/corpus\/[a-z-]+\/cases\.json$/
+            )
         }
         expect(src).not.toMatch(/\bimport\s*\(/)
         for (const bad of ['process.', 'node:', 'Buffer', 'env.', 'caches.', 'globalThis.Deno']) {
