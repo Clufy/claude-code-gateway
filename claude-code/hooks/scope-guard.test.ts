@@ -56,7 +56,8 @@ const toolInput = JSON.stringify({
 
 function run(
     env: Record<string, string>,
-    stdin: string = toolInput
+    stdin: string = toolInput,
+    { closeStdin = true } = {}
 ): Promise<{ code: number | null; stdout: string; ms: number }> {
     const full: Record<string, string> = { ...env }
     if (process.env.SystemRoot) full.SystemRoot = process.env.SystemRoot
@@ -64,11 +65,17 @@ function run(
     return new Promise((resolve, reject) => {
         const child = spawn(process.execPath, [script], { env: full, stdio: ['pipe', 'pipe', 'ignore'] })
         let stdout = ''
+        // a hung hook must fail its test, not the suite
+        const killer = setTimeout(() => child.kill(), 8000)
         child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')))
         child.on('error', reject)
-        child.on('close', (code) => resolve({ code, stdout, ms: Date.now() - start }))
+        child.on('close', (code) => {
+            clearTimeout(killer)
+            resolve({ code, stdout, ms: Date.now() - start })
+        })
         child.stdin.on('error', () => {})
-        child.stdin.end(stdin)
+        if (closeStdin) child.stdin.end(stdin)
+        else child.stdin.write(stdin)
     })
 }
 
@@ -198,4 +205,78 @@ describe('scope-guard hook', () => {
         await run(engaged({ ANTHROPIC_BASE_URL: baseUrl() + '/some/prefix' }))
         expect(seen[0].url).toBe('/v1/guard/check')
     })
+})
+
+describe('scope-guard hook hardening (P4-R34)', () => {
+    it('never follows a redirect: a 307 to a server that allows is a deny', async () => {
+        let secondHits = 0
+        const second = http.createServer((_req, res) => {
+            secondHits++
+            res.setHeader('content-type', 'application/json')
+            res.end(JSON.stringify({ decision: 'allow', hosts: [], reasons: [] }))
+        })
+        await new Promise<void>((r) => second.listen(0, '127.0.0.1', r))
+        try {
+            const target = `http://127.0.0.1:${(second.address() as AddressInfo).port}/v1/guard/check`
+            reply = (_req, res) => {
+                res.statusCode = 307
+                res.setHeader('location', target)
+                res.end()
+            }
+            const r = await run(engaged())
+            expect(r.code).toBe(0)
+            expectDeny(r.stdout, UNAVAILABLE)
+            expect(seen).toHaveLength(1)
+            expect(secondHits).toBe(0)
+        } finally {
+            second.closeAllConnections()
+            await new Promise<void>((r) => second.close(() => r()))
+        }
+    })
+
+    it('stdin never closed: denies as unavailable within 6 s', async () => {
+        const r = await run(engaged(), toolInput, { closeStdin: false })
+        expect(r.code).toBe(0)
+        expectDeny(r.stdout, UNAVAILABLE)
+        expect(r.ms).toBeLessThan(6000)
+        expect(seen).toHaveLength(0)
+    }, 10_000)
+
+    it('duplicate x-engagement lines: any non-empty one engages, the first non-empty value wins', async () => {
+        const r = await run(engaged({ ANTHROPIC_CUSTOM_HEADERS: 'x-engagement: acme\nx-engagement:\nx-api-key: k' }))
+        expect(r.stdout).toBe('')
+        expect(seen).toHaveLength(1)
+        expect((seen[0].body as { engagement: string }).engagement).toBe('acme')
+        await run(engaged({ ANTHROPIC_CUSTOM_HEADERS: 'x-engagement:\nX-Engagement: beta\nx-engagement: gamma' }))
+        expect(seen).toHaveLength(2)
+        expect((seen[1].body as { engagement: string }).engagement).toBe('beta')
+    })
+
+    it('an empty x-engagement alone is silent, with no request', async () => {
+        const r = await run(engaged({ ANTHROPIC_CUSTOM_HEADERS: 'x-engagement:\nx-api-key: k' }))
+        expect(r.code).toBe(0)
+        expect(r.stdout).toBe('')
+        expect(seen).toHaveLength(0)
+    })
+
+    it.each(['Allow', 'ALLOW', ' allow'])('decision %j is a deny', async (decision) => {
+        reply = (_req, res) => {
+            res.setHeader('content-type', 'application/json')
+            res.end(JSON.stringify({ decision, hosts: [], reasons: [] }))
+        }
+        expectDeny((await run(engaged())).stdout, UNAVAILABLE)
+    })
+
+    it.each(['null', '[]', '[{"tool_name":"Bash","tool_input":{"command":"nmap a"}}]', '"x"', '7'])(
+        'stdin %s is a deny (the Worker would 400)',
+        async (stdin) => {
+            reply = (_req, res) => {
+                res.statusCode = 400
+                res.end('{"type":"error"}')
+            }
+            const r = await run(engaged(), stdin)
+            expect(r.code).toBe(0)
+            expectDeny(r.stdout, UNAVAILABLE)
+        }
+    )
 })

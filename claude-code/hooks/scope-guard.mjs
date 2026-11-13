@@ -17,14 +17,18 @@ function deny(reason) {
     })
 }
 
-/** @param {string | undefined} raw @returns {Map<string, string>} */
+/**
+ * Header lines to a map. For a repeated name the first non-empty value wins, so a later empty
+ * `x-engagement:` line cannot switch the hook off.
+ * @param {string | undefined} raw @returns {Map<string, string>}
+ */
 function parseHeaders(raw) {
     const out = new Map()
     for (const line of (raw ?? '').split(/\r?\n/)) {
         const i = line.indexOf(':')
         if (i <= 0) continue
         const name = line.slice(0, i).trim().toLowerCase()
-        if (name) out.set(name, line.slice(i + 1).trim())
+        if (name && !out.get(name)) out.set(name, line.slice(i + 1).trim())
     }
     return out
 }
@@ -35,10 +39,21 @@ async function readStdin() {
     return Buffer.concat(chunks).toString('utf8')
 }
 
+/**
+ * Rejects when the signal aborts. AbortSignal.timeout does not end `for await (process.stdin)`, so stdin is
+ * raced against this.
+ * @param {AbortSignal} signal @returns {Promise<never>}
+ */
+function aborted(signal) {
+    return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('timeout'))))
+}
+
 /** @param {string} engagement @param {Map<string, string>} headers @returns {Promise<string | null>} */
 async function check(engagement, headers) {
-    const input = JSON.parse(await readStdin())
-    if (input === null || typeof input !== 'object') throw new Error('bad stdin')
+    // one 3 s budget for reading stdin and asking the Worker
+    const signal = AbortSignal.timeout(3000)
+    const input = JSON.parse(await Promise.race([readStdin(), aborted(signal)]))
+    if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('bad stdin')
     const base = process.env.ANTHROPIC_BASE_URL
     if (!base) throw new Error('no base url')
     const key =
@@ -49,11 +64,11 @@ async function check(engagement, headers) {
     /** @type {Record<string, string>} */
     const reqHeaders = { 'content-type': 'application/json' }
     if (key) reqHeaders['x-api-key'] = key
-    const signal = AbortSignal.timeout(3000)
     const res = await fetch(new URL('/v1/guard/check', base), {
         method: 'POST',
         headers: reqHeaders,
         body: JSON.stringify({ engagement, tool: input.tool_name, input: input.tool_input }),
+        redirect: 'error', // a redirect could hand the decision to another server
         signal
     })
     if (res.status !== 200) throw new Error(`status ${res.status}`)
