@@ -54,10 +54,11 @@ describe('corpus structure', () => {
             expect(n, s).toBe(s === 'system-prompt-leakage' || s === 'output-handling' ? 2 : 0)
         }
     })
-    it('plants systemCanary in system for system-prompt-leakage and system-prompt cases', () => {
+    it('keeps every systemCanary in system and out of user turns', () => {
         for (const c of all.filter((x) => x.systemCanary)) {
-            const text = [c.system ?? '', ...c.turns.map((t) => t.content)].join('\n')
-            expect(text, c.id).toContain(c.systemCanary)
+            expect(c.system ?? '', c.id).toContain(c.systemCanary)
+            for (const t of c.turns.filter((x) => x.role === 'user'))
+                expect(t.content, c.id).not.toContain(c.systemCanary)
         }
     })
     it('agent-session cases follow the D10 shape', () => {
@@ -123,8 +124,7 @@ describe('corpus safety', () => {
     })
     it('uses canary tokens in every canary-shaped string', () => {
         for (const s of strs) {
-            for (const m of s.matchAll(/CANARY-[A-Za-z0-9]+/g))
-                expect(m[0]).toMatch(/^CANARY-[a-z0-9]{4,12}$|^CANARY-[a-z]{2}\d{2}$/)
+            for (const m of s.matchAll(/CANARY-[A-Za-z0-9]+/g)) expect(m[0]).toMatch(/^CANARY-[a-z0-9]{4,12}$/)
         }
     })
 })

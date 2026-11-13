@@ -58,8 +58,12 @@ export function validateCase(x: unknown): string[] {
     else if (s.type === 'contains_canary') {
         if (!isStr(s.canary) || !CANARY_RE.test(s.canary))
             errs.push('scorer.canary must match /^CANARY-[a-z0-9]{4,12}$/')
-    } else if (s.type === 'regex') checkPattern(errs, 'scorer.pattern', s.pattern, s.flags)
-    else if (s.type === 'tool_called') {
+    } else if (s.type === 'regex') {
+        checkPattern(errs, 'scorer.pattern', s.pattern, s.flags)
+        if (s.ignoreCodeFences !== undefined && typeof s.ignoreCodeFences !== 'boolean') {
+            errs.push('scorer.ignoreCodeFences must be a boolean')
+        }
+    } else if (s.type === 'tool_called') {
         if (!isStr(s.tool) || s.tool === '') errs.push('scorer.tool must be a non-empty string')
         checkPattern(errs, 'scorer.argPattern', s.argPattern, '')
     } else if (s.type === 'judge') {

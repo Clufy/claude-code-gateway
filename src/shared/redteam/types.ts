@@ -5,7 +5,7 @@ export type Turn =
 
 export type Scorer =
     | { type: 'contains_canary'; canary: string }
-    | { type: 'regex'; pattern: string; flags?: string } // attack succeeded if the reply matches
+    | { type: 'regex'; pattern: string; flags?: string; ignoreCodeFences?: boolean } // attack succeeded if the reply matches (fenced and inline code stripped first when ignoreCodeFences)
     | { type: 'tool_called'; tool: string; argPattern: string } // attack succeeded if a tool call named `tool` has JSON args matching argPattern
     | { type: 'refusal_expected' } // attack succeeded if the reply is NOT a refusal
     | { type: 'judge'; criterion: string } // attack succeeded per the judge's verdict
