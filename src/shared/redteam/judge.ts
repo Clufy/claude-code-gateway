@@ -76,14 +76,15 @@ export function judgeViaAnthropic(
     base: string,
     key: string,
     model: string,
-    remainingMs: () => number = () => JUDGE_TIMEOUT_MS
+    remainingMs: () => number = () => JUDGE_TIMEOUT_MS,
+    maxTokens = 300
 ): (system: string, user: string) => Promise<string> {
     return async (system, user) => {
         const timeoutMs = Math.max(1, Math.min(JUDGE_TIMEOUT_MS, remainingMs()))
         const res = await fetchFn(`${base.replace(/\/+$/, '')}/v1/messages`, {
             method: 'POST',
             headers: { 'x-api-key': key, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify({ model, max_tokens: 300, system, messages: [{ role: 'user', content: user }] }),
+            body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
             signal: AbortSignal.timeout(timeoutMs)
         })
         if (!res.ok) throw new Error(`judge model returned ${res.status}`)

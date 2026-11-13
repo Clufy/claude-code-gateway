@@ -122,6 +122,15 @@ describe('judgeViaAnthropic', () => {
             messages: [{ role: 'user', content: 'USR' }]
         })
     })
+    it('sends the given maxTokens in the request body', async () => {
+        const bodies: string[] = []
+        const f = (async (_u: string, init: RequestInit) => {
+            bodies.push(init.body as string)
+            return new Response(JSON.stringify({ content: [{ type: 'text', text: 'x' }] }), { status: 200 })
+        }) as unknown as typeof fetch
+        await judgeViaAnthropic(f, 'https://w.test', 'k', 'm', () => 1000, 1500)('s', 'u')
+        expect(JSON.parse(bodies[0]).max_tokens).toBe(1500)
+    })
     it('P6-R17: clamps the call timeout to the given remaining time', async () => {
         // a fetch that honours the signal and otherwise never answers
         const f = ((_u: string, init: RequestInit) =>
