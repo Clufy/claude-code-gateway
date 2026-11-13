@@ -170,11 +170,12 @@ describe('redirects', () => {
     })
 
     it('stops after 5 hops', async () => {
-        const { fn } = fakeFetch(
+        const { fn, seen } = fakeFetch(
             (_u, n) => new Response(null, { status: 302, headers: { location: `https://target.test/h${n}` } })
         )
         const r = await ADAPTERS.openai(baseCase, opts(fn))
         expect(r.error).toBe('too many redirects')
+        expect(seen).toHaveLength(6)
     })
 
     it('does not forward custom headers to a different origin', async () => {
@@ -232,5 +233,116 @@ describe('limits and failures', () => {
         const r = await ADAPTERS.openai(baseCase, opts(fn))
         expect(r.status).toBe(500)
         expect(r.error).toBe('http 500')
+    })
+})
+
+describe('fix round 1', () => {
+    const bad: unknown[] = [{}, null, { error: { message: 'x' } }, { content: 'str', choices: 'str' }]
+    it('malformed 200s are shape errors, not empty replies', async () => {
+        for (const v of bad) {
+            const { fn } = fakeFetch(() => json(v))
+            for (const a of [ADAPTERS.anthropic, ADAPTERS.openai]) {
+                expect((await a(baseCase, opts(fn))).error).toBe('unexpected reply shape')
+            }
+        }
+        for (const v of [{ choices: [] }, { choices: [{ message: 'x' }] }, { choices: [null] }]) {
+            const { fn } = fakeFetch(() => json(v))
+            expect((await ADAPTERS.openai(baseCase, opts(fn))).error).toBe('unexpected reply shape')
+        }
+    })
+
+    it('an oversized non-2xx body still gives http <status>', async () => {
+        const { fn } = fakeFetch(() => new Response('e'.repeat(2 * 1024 * 1024), { status: 500 }))
+        const r = await ADAPTERS.anthropic(baseCase, opts(fn))
+        expect(r.error).toBe('http 500')
+        expect(r.text.length).toBeLessThanOrEqual(32768)
+    })
+
+    it('refuses non-http(s) redirect schemes before checkHop', async () => {
+        for (const loc of ['file:///etc/passwd', 'ftp://x']) {
+            let hops = 0
+            const { fn, seen } = fakeFetch(() => new Response(null, { status: 302, headers: { location: loc } }))
+            const r = await ADAPTERS.anthropic(
+                baseCase,
+                opts(fn, {
+                    checkHop: () => {
+                        hops++
+                        return null
+                    }
+                })
+            )
+            expect(r.error).toBe('redirect blocked: unsupported scheme')
+            expect(hops).toBe(0)
+            expect(seen).toHaveLength(1)
+        }
+    })
+
+    it('resolves a relative Location against the current URL', async () => {
+        const hopsSeen: string[] = []
+        const { fn, seen } = fakeFetch((_u, n) =>
+            n === 1 ? new Response(null, { status: 302, headers: { location: '/next' } }) : json({ content: [] })
+        )
+        const r = await ADAPTERS.anthropic(
+            baseCase,
+            opts(fn, {
+                checkHop: (u) => {
+                    hopsSeen.push(u)
+                    return null
+                }
+            })
+        )
+        expect(r.error).toBeUndefined()
+        expect(hopsSeen).toEqual(['https://target.test/next'])
+        expect(seen[1].url).toBe('https://target.test/next')
+        expect((seen[1].init.headers as Record<string, string>).authorization).toBe('Bearer t')
+    })
+
+    it('drops headers on an https to http same-host downgrade', async () => {
+        const { fn, seen } = fakeFetch((_u, n) =>
+            n === 1
+                ? new Response(null, { status: 302, headers: { location: 'http://target.test/x' } })
+                : json({ content: [] })
+        )
+        await ADAPTERS.anthropic(baseCase, opts(fn))
+        expect((seen[1].init.headers as Record<string, string>).authorization).toBeUndefined()
+    })
+
+    it('a 3xx without Location is http 302', async () => {
+        const { fn } = fakeFetch(() => new Response(null, { status: 302 }))
+        expect((await ADAPTERS.anthropic(baseCase, opts(fn))).error).toBe('http 302')
+    })
+
+    it('cancels the reader on a 5 MB reply', async () => {
+        let cancelled = false
+        const chunk = new TextEncoder().encode('a'.repeat(65536))
+        let sent = 0
+        const stream = new ReadableStream<Uint8Array>({
+            pull(ctl) {
+                if (sent++ >= 80) return ctl.close()
+                ctl.enqueue(chunk)
+            },
+            cancel() {
+                cancelled = true
+            }
+        })
+        const { fn } = fakeFetch(() => new Response(stream))
+        const r = await ADAPTERS.http(baseCase, opts(fn, { template: '{"q":"{{prompt}}"}' }))
+        expect(r.text.length).toBeLessThanOrEqual(32768)
+        expect(cancelled).toBe(true)
+        expect(sent).toBeLessThan(80)
+    })
+
+    it('a never-ending stream is stopped by the signal', async () => {
+        const hang = (async (_u: any, init: RequestInit) => {
+            const signal = init.signal as AbortSignal
+            const stream = new ReadableStream<Uint8Array>({
+                start(ctl) {
+                    signal.addEventListener('abort', () => ctl.error(signal.reason))
+                }
+            })
+            return new Response(stream)
+        }) as unknown as typeof fetch
+        const r = await ADAPTERS.anthropic(baseCase, opts(hang, { timeoutMs: 50 }))
+        expect(r.error).toBe('timeout')
     })
 })

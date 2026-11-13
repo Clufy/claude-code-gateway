@@ -64,6 +64,7 @@ async function send(opts: AdapterOpts, body: string, extraHeaders: Record<string
         } catch {
             return fail('redirect blocked: invalid redirect URL')
         }
+        if (next.protocol !== 'http:' && next.protocol !== 'https:') return fail('redirect blocked: unsupported scheme')
         const refused = opts.checkHop(next.href)
         if (refused !== null) return fail(`redirect blocked: ${refused}`)
         // Credentials stay with the origin they were issued for.
@@ -99,10 +100,11 @@ async function run(
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean)
-        const text = await readBody(res, raw)
-        if (res.status < 200 || res.status >= 300) {
+        const ok = res.status >= 200 && res.status < 300
+        const text = await readBody(res, raw || !ok)
+        if (!ok) {
             result.error = `http ${res.status}`
-            result.text = raw ? text : text.slice(0, MAX_TEXT)
+            result.text = text.slice(0, MAX_TEXT)
             return result
         }
         const parsed = parse(res, text)
@@ -132,7 +134,8 @@ const anthropic: Adapter = (c, opts) => {
     if (c.tools?.length) body.tools = c.tools
     return run(opts, JSON.stringify(body), { 'anthropic-version': '2023-06-01' }, (_r, text) => {
         const j = parseJson(text)
-        const blocks: any[] = Array.isArray(j?.content) ? j.content : []
+        if (!Array.isArray(j?.content)) return fail('unexpected reply shape')
+        const blocks: any[] = j.content
         return {
             text: blocks
                 .filter((b) => b?.type === 'text' && typeof b.text === 'string')
@@ -168,7 +171,9 @@ const openai: Adapter = (c, opts) => {
         }))
     }
     return run(opts, JSON.stringify(body), {}, (_r, text) => {
-        const msg = parseJson(text)?.choices?.[0]?.message
+        const j = parseJson(text)
+        const msg = Array.isArray(j?.choices) ? j.choices[0]?.message : undefined
+        if (msg === null || typeof msg !== 'object') return fail('unexpected reply shape')
         const calls: any[] = Array.isArray(msg?.tool_calls) ? msg.tool_calls : []
         return {
             text: typeof msg?.content === 'string' ? msg.content : '',
@@ -194,6 +199,8 @@ function walkPath(root: unknown, path: string): unknown {
     return cur
 }
 
+// {{prompt}} is the last turn's content, JSON-string-escaped without quotes. {{history}} is a JSON array of
+// {role, content} for all turns except the last; tool_result turns keep role 'tool_result'.
 const http: Adapter = (c, opts) => {
     const template = opts.template
     if (!template)
