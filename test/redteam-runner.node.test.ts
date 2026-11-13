@@ -150,6 +150,31 @@ const tick = async () => {
 }
 
 describe('runCases', () => {
+    it('calls onResult per settled case and survives a throwing callback', async () => {
+        const seen: [number, string][] = []
+        const r = await runCases(
+            cases(4),
+            target(async (c) => ok(c.id)),
+            ctl({ concurrency: 1, maxCases: 4 }),
+            deps({
+                onResult: (i, res) => {
+                    seen.push([i, res.outcome])
+                    throw new Error('cb')
+                }
+            })
+        )
+        expect(seen).toEqual([0, 1, 2, 3].map((i) => [i, 'passed']))
+        expect(r.results).toHaveLength(4)
+        const stopped = await runCases(
+            cases(3),
+            target(async () => ok()),
+            ctl({ maxCases: 3 }),
+            deps({ recheck: () => 'closed', onResult: (i) => void seen.push([i, 'x']) })
+        )
+        expect(stopped.results.every((x) => x.outcome === 'skipped')).toBe(true)
+        expect(seen.filter(([, o]) => o === 'x')).toHaveLength(3)
+    })
+
     it('never exceeds the concurrency and returns results in case order', async () => {
         let inflight = 0
         let peak = 0

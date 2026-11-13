@@ -46,6 +46,21 @@ function corpusSha(): string {
     }
 }
 
+/** Drops userinfo and the query string from an external URL for display. */
+export function safeLabel(target: string): string {
+    const i = target.indexOf(':')
+    try {
+        const u = new URL(target.slice(i + 1))
+        u.username = ''
+        u.password = ''
+        u.search = ''
+        u.hash = ''
+        return `${target.slice(0, i)}:${u.toString()}`
+    } catch {
+        return target
+    }
+}
+
 function stamp(ms: number): string {
     const d = new Date(ms)
     const p = (n: number) => String(n).padStart(2, '0')
@@ -104,6 +119,9 @@ export async function runRedteam(
         maxCases: opts.maxCases ?? Infinity,
         stopOnErrors: opts.stopOnErrors
     }
+    // Infinity would serialise to null; omit the field when unlimited.
+    const metaControls = (opts.maxCases === undefined ? { ...controls, maxCases: undefined } : controls) as RunControls
+    const selfOrigin = new URL(base).origin
     const sha = corpusSha()
     const cards: Scorecard[] = []
 
@@ -120,10 +138,14 @@ export async function runRedteam(
                           fetch: fetchFn,
                           timeoutMs: TIMEOUT_MS
                       },
+                      gate: (u) =>
+                          new URL(u).origin === selfOrigin
+                              ? null
+                              : `redirect blocked: self target must stay on ${selfOrigin}`,
                       isSelf: true
                   }
                 : {
-                      label: opts.target,
+                      label: safeLabel(opts.target),
                       adapter: ADAPTERS[target.adapter],
                       opts: {
                           url: target.url,
@@ -138,15 +160,18 @@ export async function runRedteam(
                       isSelf: false
                   }
         const startedAt = io.now()
+        const total = Number.isFinite(controls.maxCases) ? Math.min(cases.length, controls.maxCases) : cases.length
+        io.progress(`${runTarget.label} starting (${total} cases)`)
+        let done = 0
         const run = await runCases(cases, runTarget, controls, {
             now: io.now,
+            onResult: (_i, r) => io.progress(`[${++done}/${total}] ${r.case.id} ${r.outcome}`),
             sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
             ...(engagement && target.kind === 'external'
                 ? { recheck: () => gateTarget(engagement!, target.url, io.now()) }
                 : {}),
             ...(judge ? { judge } : {})
         })
-        run.results.forEach((r, i) => io.progress(`[${i + 1}/${run.results.length}] ${r.case.id} ${r.outcome}`))
         cards.push(
             buildScorecard(
                 {
@@ -156,7 +181,7 @@ export async function runRedteam(
                     corpusSha: sha,
                     startedAt,
                     finishedAt: io.now(),
-                    controls,
+                    controls: metaControls,
                     isSelf: runTarget.isSelf
                 },
                 run.results,

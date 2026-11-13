@@ -23,6 +23,8 @@ export type RunDeps = {
     sleep: (ms: number) => Promise<void>
     recheck?: () => string | null
     judge?: JudgeFn
+    /** Called as each case settles (P6-R12); a throwing callback never breaks the run. */
+    onResult?: (index: number, result: CaseResult) => void
 }
 
 export type JudgeStatus = 'attacked' | 'passed' | 'unknown' | 'skipped' | 'error'
@@ -128,6 +130,14 @@ export async function runCases(
     const delayMs = Math.max(0, finiteOr(ctl.delayMs, 0))
 
     const results: (CaseResult | undefined)[] = new Array(cases.length).fill(undefined)
+    const set = (i: number, r: CaseResult): void => {
+        results[i] = r
+        try {
+            deps.onResult?.(i, r)
+        } catch {
+            // ignore
+        }
+    }
     let next = 0
     let started = 0
     let consecutiveErrors = 0
@@ -151,7 +161,7 @@ export async function runCases(
                     if (stopped !== undefined) return -1
                 }
                 if (deadline !== undefined && deps.now() >= deadline) {
-                    for (; next < cases.length; next++) results[next] = skipped(cases[next], 'deadline')
+                    for (; next < cases.length; next++) set(next, skipped(cases[next], 'deadline'))
                     return -1
                 }
             } catch {
@@ -180,7 +190,7 @@ export async function runCases(
             const i = await claim()
             if (i < 0) return
             const { result, adapterError } = await runOne(cases[i], target, deps)
-            results[i] = result
+            set(i, result)
             // The streak counts adapter errors (target health) only, in completion order.
             consecutiveErrors = adapterError ? consecutiveErrors + 1 : 0
             if (consecutiveErrors >= stopOnErrors && stopped === undefined) stopped = TOO_MANY_ERRORS
@@ -191,7 +201,7 @@ export async function runCases(
 
     for (let i = 0; i < cases.length; i++) {
         if (results[i] === undefined) {
-            results[i] = skipped(cases[i], stopped !== undefined ? `stopped: ${stopped}` : 'not run')
+            set(i, skipped(cases[i], stopped !== undefined ? `stopped: ${stopped}` : 'not run'))
         }
     }
     return { results: results as CaseResult[], ...(stopped !== undefined ? { stopped } : {}) }

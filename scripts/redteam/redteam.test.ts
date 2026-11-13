@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { fetchEngagement } from './engagement.ts'
-import { runRedteam, type RedteamIo, type RedteamOptions } from './run.ts'
+import { runRedteam, safeLabel, type RedteamIo, type RedteamOptions } from './run.ts'
 import { parseTarget } from './targets.ts'
 
 type Seen = { url: string; headers: IncomingMessage['headers']; body: any }
@@ -60,6 +60,10 @@ beforeAll(async () => {
         if (req.url === '/v1/models') return json(res, 200, { data: [{ id: 'm-ok' }, { id: 'm-bad' }] })
         if (req.url === '/v1/messages') {
             if (body.model === 'm-bad') return json(res, 500, { error: 'boom' })
+            if (body.model === 'm-redir') {
+                res.writeHead(302, { location: extUrl })
+                return res.end()
+            }
             if (typeof body.system === 'string' && body.system.includes('attack_succeeded')) {
                 return reply(res, '{"attack_succeeded": false, "reason": "fine"}')
             }
@@ -69,6 +73,10 @@ beforeAll(async () => {
     })
     external = createServer(async (req, res) => {
         extSeen.push({ url: req.url ?? '', headers: req.headers, body: await readBody(req) })
+        if (req.url?.startsWith('/redir')) {
+            res.writeHead(302, { location: `http://localhost:${(external.address() as AddressInfo).port}/hit` })
+            return res.end()
+        }
         reply(res, 'I cannot help with that.')
     })
     await Promise.all([worker, external].map((s) => new Promise<void>((r) => s.listen(0, '127.0.0.1', r))))
@@ -173,8 +181,9 @@ describe('runRedteam external', () => {
         expect(Object.keys(files).sort()).toEqual([...r.files].sort())
         const card = JSON.parse(files[r.files.find((f) => f.endsWith('.json'))!]).cards[0]
         expect(card.meta.engagement).toBe('acme')
-        expect(progress).toHaveLength(3)
-        for (const l of progress) expect(l).toMatch(/^\[\d+\/3\] [a-z0-9-]+ (attacked|passed|error|skipped)$/)
+        expect(progress[0]).toMatch(/ starting \(3 cases\)$/)
+        expect(progress).toHaveLength(4)
+        for (const l of progress.slice(1)) expect(l).toMatch(/^\[\d+\/3\] [a-z0-9-]+ (attacked|passed|error|skipped)$/)
     })
     it('sends --header-env headers to the external target only', async () => {
         const { io } = makeIo({ RT_TOKEN: 'secret-1' })
@@ -225,5 +234,114 @@ describe('runRedteam self', () => {
         await runRedteam(opts({ suites: ['system-prompt-leakage'], judgeModel: 'judge-m' }), fetch, io)
         expect(workerSeen.filter((s) => s.body?.model === 'judge-m').length).toBe(2)
         expect(progress.some((l) => /sp-07 skipped/.test(l))).toBe(false)
+    })
+    it('refuses a self redirect to another origin', async () => {
+        const { io, progress } = makeIo()
+        await runRedteam(opts({ target: 'self:m-redir', suites: ['direct-injection'], maxCases: 2 }), fetch, io)
+        expect(progress.filter((l) => /^\[\d\/2\] [a-z0-9-]+ error$/.test(l))).toHaveLength(2)
+        expect(extSeen).toHaveLength(0)
+    })
+})
+
+describe('runRedteam CLI gate and secrets', () => {
+    const key = 'proxykey-xyz-123'
+    it('blocks an in-scope target redirecting to an out-of-scope host', async () => {
+        const { io, progress } = makeIo()
+        const url = extUrl.replace('/v1/messages', '/redir')
+        await runRedteam(
+            opts({
+                target: `anthropic:${url}`,
+                engagement: 'acme',
+                model: 'm',
+                suites: ['direct-injection'],
+                maxCases: 2
+            }),
+            fetch,
+            io
+        )
+        expect(extSeen.map((s) => s.url)).toEqual(['/redir', '/redir'])
+        expect(progress.filter((l) => / error$/.test(l))).toHaveLength(2)
+    })
+    it('stops when the window closes mid-run', async () => {
+        const { io, files, progress } = makeIo()
+        io.now = () => (extSeen.length >= 2 ? Date.now() + 2 * hour : Date.now())
+        const r = await runRedteam(
+            opts({
+                target: `anthropic:${extUrl}`,
+                engagement: 'acme',
+                model: 'm',
+                suites: ['direct-injection'],
+                maxCases: 5,
+                concurrency: 1
+            }),
+            fetch,
+            io
+        )
+        expect(extSeen).toHaveLength(2)
+        const card = JSON.parse(files[r.files.find((f) => f.endsWith('.json'))!]).cards[0]
+        expect(card.stopped).toContain('window is closed')
+        expect(progress.filter((l) => / skipped$/.test(l))).toHaveLength(3)
+    })
+    it('never sends the header-env value to /mcp, /v1/models or the judge, nor writes secrets', async () => {
+        const env = { RT_TOKEN: 'hdr-secret-789' }
+        const a = makeIo(env)
+        await runRedteam(
+            opts({
+                target: 'self:all',
+                key,
+                suites: ['system-prompt-leakage'],
+                headerEnv: 'X-Api-Token=RT_TOKEN',
+                judgeModel: 'judge-m'
+            }),
+            fetch,
+            a.io
+        )
+        const b = makeIo(env)
+        await runRedteam(
+            opts({
+                target: `anthropic:${extUrl}`,
+                key,
+                engagement: 'acme',
+                model: 'm',
+                suites: ['system-prompt-leakage'],
+                maxCases: 10,
+                headerEnv: 'X-Api-Token=RT_TOKEN',
+                judgeModel: 'judge-m'
+            }),
+            fetch,
+            b.io
+        )
+        expect(workerSeen.some((s) => s.url === '/mcp')).toBe(true)
+        expect(workerSeen.some((s) => s.url === '/v1/models')).toBe(true)
+        expect(workerSeen.some((s) => s.body?.model === 'judge-m')).toBe(true)
+        for (const s of workerSeen) expect(s.headers['x-api-token']).toBeUndefined()
+        expect(extSeen.length).toBeGreaterThan(0)
+        for (const s of extSeen) expect(s.headers['x-api-token']).toBe('hdr-secret-789')
+        for (const x of [a, b]) {
+            const out = JSON.stringify(x.files) + x.progress.join(' ')
+            expect(out).not.toContain(key)
+            expect(out).not.toContain('hdr-secret-789')
+        }
+    })
+    it('strips userinfo and query from the label and omits unlimited maxCases', async () => {
+        expect(safeLabel('openai:https://u:pw@h.example/v1/x?token=abc#f')).toBe('openai:https://h.example/v1/x')
+        const { io, files } = makeIo()
+        const r = await runRedteam(
+            opts({
+                target: `anthropic:${extUrl}?token=abc`,
+                engagement: 'acme',
+                model: 'm',
+                suites: ['direct-injection'],
+                maxCases: 1
+            }),
+            fetch,
+            io
+        )
+        const text = files[r.files.find((f) => f.endsWith('.json'))!]
+        expect(text).not.toContain('token=abc')
+        const self = makeIo()
+        const r2 = await runRedteam(opts({ suites: ['direct-injection'] }), fetch, self.io)
+        const card = JSON.parse(self.files[r2.files.find((f) => f.endsWith('.json'))!]).cards[0]
+        expect('maxCases' in card.meta.controls).toBe(false)
     })
 })
