@@ -66,7 +66,7 @@ const engagements = JSON.stringify({
     beta: engagement('beta-test.com', '10.2.0.0/16'),
     gamma: engagement('gamma-test.com', '10.3.0.0/16')
 })
-/** The spec's 5 ms budget is measured on the default config: built-in rules only (P4-R31). */
+/** The request budget (10 ms p95; relaxed from the spec's 5 ms by user decision, 2026-11-13) is measured on the default config: built-in rules only (P4-R31). */
 const env = { PROXY_KEY: 'test-key', ENGAGEMENTS: engagements }
 const customEnv = { ...env, GUARD_RULES: JSON.stringify({ custom }) }
 const requestOnlyEnv = {
@@ -149,7 +149,7 @@ describe('guard CPU budget', () => {
         expect(JSON.stringify(body).length).toBeGreaterThan(MB)
     })
 
-    it('request iteration p95 <= 5 ms (default config: loadConfig + createGuard + scanRequest + onToolUse)', () => {
+    it('request iteration p95 <= 10 ms (default config: loadConfig + createGuard + scanRequest + onToolUse)', () => {
         {
             const { p95, median } = p95Of(() => {
                 const cfg = loadConfig(env)
@@ -158,16 +158,16 @@ describe('guard CPU budget', () => {
                 g.onToolUse('Bash', { command: command4k })
             })
             console.info(`[bench] request iteration p95=${p95.toFixed(2)}ms median=${median.toFixed(2)}ms`)
-            expect(p95).toBeLessThanOrEqual(5)
+            expect(p95).toBeLessThanOrEqual(10)
         }
     })
 
-    it('request scan alone p95 <= 5 ms (default config)', () => {
+    it('request scan alone p95 <= 10 ms (default config)', () => {
         const cfg = loadConfig(env)
         const e = cfg.engagements.get('alpha')
         const { p95 } = p95Of(() => void createGuard(cfg, 'req-2', e).scanRequest(body))
         console.info(`[bench] scanRequest p95=${p95.toFixed(2)}ms`)
-        expect(p95).toBeLessThanOrEqual(5)
+        expect(p95).toBeLessThanOrEqual(10)
     })
 
     it('16 request custom rules cost <= 0.4 ms each per MB (best-of-15, with minus without)', () => {

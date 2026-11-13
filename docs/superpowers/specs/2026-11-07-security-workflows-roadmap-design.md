@@ -348,7 +348,7 @@ response side. Earlier turns were scanned on earlier requests.
   scope check (no model call) and logs a `hook.decision` line. Auth: `x-api-key`.
 - `GUARD_RULES` can disable rules, change severity, and add custom regex rules (validated at config
   parse; regexes are compiled once and tested against a pathological-backtracking fixture).
-- **Perf budget:** guard adds ≤5 ms CPU p95 on a 1 MB request body (benchmark test in Phase 4);
+- **Perf budget:** guard adds ≤10 ms CPU p95 on a 1 MB request body (benchmark test in Phase 4; relaxed from 5 ms by user decision on 2026-11-13 after measuring ~9.5 ms p95, ~5–6 ms median);
   `/v1/guard/check` answers in ≤50 ms server time.
 
 ### 5.5 MCP server (Phase 5, extended in 6 and 7)

@@ -45,41 +45,27 @@ export function newestTurn(messages: unknown): Segment[] {
 }
 
 // P4-R23: fake tags keep system/tool_result/function_*; user/assistant/human and "admin"/"in" are too common.
-// `anchors` are lowercase literals every match of the pattern contains. A pattern runs only if the lowercased text
-// holds one (an indexOf pass, far cheaper than the case-insensitive regex), which keeps clean 1 MB results fast.
-const INJECT_PATTERNS: readonly { re: RegExp; anchors?: readonly string[] }[] = [
-    {
-        // P4-R35: "ignore the user" only before "and", punctuation or "'s request", so "the user agent" stays quiet
-        re: /ignore (?:(?:all |any )?(?:the )?(?:previous|prior|above|earlier) (?:instructions|prompts|messages|rules)|(?:the|your) (?:user(?:['’]s (?:request|instruction|message)s?|\s{1,3}and\b|\s{0,3}[.,;:!])|system prompt|instructions))/i,
-        anchors: ['gnore']
-    },
-    {
-        re: /\bSYSTEM (?:NOTICE|MESSAGE|OVERRIDE|ALERT)\s{0,3}:/i,
-        anchors: ['system notice', 'system message', 'system override', 'system alert']
-    },
-    { re: /disregard (?:all |the )?(?:previous|prior|above) /i },
-    {
-        re: /<\/?(?:system|tool_result|function_results|function_calls)>/i,
-        anchors: ['<']
-    },
-    { re: /<\|im_(?:start|end)\|>/i, anchors: ['<|'] },
-    {
-        re: /\byou are now (?:an?|the) (?:[\w-]+ ){0,3}(?:assistant|ai|model|agent|developer mode|dan|jailbroken)\b/i,
-        anchors: ['you a']
-    },
-    { re: /[\u{E0000}-\u{E007F}]/u },
-    { re: /[\u200B-\u200D\u2060\uFEFF]{3}/ }
+// The phrases form one case-insensitive alternation: a single pass over a 1 MB result costs about 0.5 ms, where
+// per-phrase indexOf prefilters on a lowercased copy cost about 3 ms. It fires exactly when any one phrase matches.
+const INJECT_PHRASES = [
+    // P4-R35: "ignore the user" only before "and", punctuation or "'s request", so "the user agent" stays quiet
+    /ignore (?:(?:all |any )?(?:the )?(?:previous|prior|above|earlier) (?:instructions|prompts|messages|rules)|(?:the|your) (?:user(?:['’]s (?:request|instruction|message)s?|\s{1,3}and\b|\s{0,3}[.,;:!])|system prompt|instructions))/,
+    /\bSYSTEM (?:NOTICE|MESSAGE|OVERRIDE|ALERT)\s{0,3}:/,
+    /disregard (?:all |the )?(?:previous|prior|above) /,
+    /<\/?(?:system|tool_result|function_results|function_calls)>/,
+    /<\|im_(?:start|end)\|>/,
+    /\byou are now (?:an?|the) (?:[\w-]+ ){0,3}(?:assistant|ai|model|agent|developer mode|dan|jailbroken)\b/
+]
+const INJECT_PATTERNS: readonly RegExp[] = [
+    new RegExp(INJECT_PHRASES.map((re) => re.source).join('|'), 'i'),
+    /[\u{E0000}-\u{E007F}]/u,
+    /[\u200B-\u200D\u2060\uFEFF]{3}/
 ]
 
 /** Prompt-injection triggers inside a tool result. */
 export function injectInstruction(seg: Segment): string | null {
     if (seg.kind !== 'tool_result') return null
-    let lower: string | undefined
-    for (const { re, anchors } of INJECT_PATTERNS) {
-        if (anchors) {
-            lower ??= seg.text.toLowerCase()
-            if (!anchors.some((a) => lower!.includes(a))) continue
-        }
+    for (const re of INJECT_PATTERNS) {
         const m = re.exec(seg.text)
         if (m) return excerptAt(seg.text, m.index, m.index + m[0].length)
     }
