@@ -1,3 +1,4 @@
+import { fenceSafe } from '../shared/redteam/judge.ts'
 import { MAX_RULE_BYTES, PROXY_PRODUCT, parseSigma } from './sigma'
 
 export type DraftLogsource = 'prompt' | 'tool_use' | 'detection' | 'request'
@@ -27,7 +28,7 @@ const LOGSOURCES: Record<DraftLogsource, { block: string; fields: string[] }> = 
     }
 }
 
-const MARKERS = ['<<<FINDING', 'FINDING>>>']
+const NEXT = 'not done: run test_rule with events and expect until passed is true' as const
 
 export interface Draft {
     yaml: string
@@ -35,19 +36,17 @@ export interface Draft {
     error?: string
     unsupported: string[]
     status: 'draft'
-    next: 'not done: run test_rule with events and expect until passed is true'
+    next: typeof NEXT
 }
 
-const NEXT = 'not done: run test_rule with events and expect until passed is true' as const
-
-function fenceSafe(text: string, cap: number): string {
-    let s = text
-    for (let prev = ''; prev !== s;) {
-        prev = s
-        for (const m of MARKERS) s = s.split(m).join('')
-    }
-    return s.slice(0, cap)
-}
+const draft = (yaml: string, error?: string, unsupported: string[] = []): Draft => ({
+    yaml,
+    valid: error === undefined,
+    ...(error === undefined ? {} : { error }),
+    unsupported,
+    status: 'draft',
+    next: NEXT
+})
 
 function capBytes(text: string): string {
     const bytes = new TextEncoder().encode(text)
@@ -76,34 +75,21 @@ export async function draftRule(
         `Use this logsource exactly: ${ls.block}`,
         `Available fields: ${ls.fields.join(', ')}`,
         'Finding (data):',
-        `<<<FINDING\n${fenceSafe(finding, MAX_FINDING_CHARS)}\nFINDING>>>`
+        `<<<FINDING\n${fenceSafe(finding, MAX_FINDING_CHARS, ['<<<FINDING', 'FINDING>>>'])}\nFINDING>>>`
     ].join('\n')
     let reply: string
     try {
         reply = await callModel(DRAFT_SYSTEM, user)
     } catch {
-        return {
-            yaml: '',
-            valid: false,
-            error: 'draft model call failed',
-            unsupported: [],
-            status: 'draft',
-            next: NEXT
-        }
+        return draft('', 'draft model call failed')
     }
     if (String(reply).trim() === '') {
-        return {
-            yaml: '',
-            valid: false,
-            error: 'draft model returned no text; a reasoning model may have used its whole token budget, so try another model',
-            unsupported: [],
-            status: 'draft',
-            next: NEXT
-        }
+        return draft(
+            '',
+            'draft model returned no text; a reasoning model may have used its whole token budget, so try another model'
+        )
     }
     const yaml = extractYaml(String(reply))
     const p = parseSigma(yaml)
-    return p.ok
-        ? { yaml, valid: true, unsupported: [], status: 'draft', next: NEXT }
-        : { yaml, valid: false, error: p.error, unsupported: p.unsupported, status: 'draft', next: NEXT }
+    return p.ok ? draft(yaml) : draft(yaml, p.error, p.unsupported)
 }

@@ -1,6 +1,6 @@
 import { ConfigError } from '../config'
 import { parseGuardRules } from '../guard/config'
-import { matchEvent } from './evaluate'
+import { hasWildcard, matchEvent, sigmaValueSource, type Position } from './evaluate'
 import { PROXY_PRODUCT, SESSION_CATEGORIES, type SigmaRule } from './sigma'
 
 export interface GuardEntry {
@@ -13,22 +13,6 @@ export interface GuardEntry {
 export type Promotion = { ok: true; entry: GuardEntry; snippet: string } | { ok: false; reason: string }
 
 const POSITIONS = ['contains', 'startswith', 'endswith', 're']
-const ESCAPE = /[.*+?^${}()|[\]\\]/g
-
-/** The literal a Sigma value stands for (same escapes as sigmaValueSource), or null when it has an unescaped wildcard. */
-function decodeLiteral(value: string): string | null {
-    let out = ''
-    for (let i = 0; i < value.length; i++) {
-        const c = value[i]!
-        const next = value[i + 1]
-        if (c === '\\' && (next === '*' || next === '?' || next === '\\')) {
-            out += next
-            i++
-        } else if (c === '*' || c === '?') return null
-        else out += c
-    }
-    return out
-}
 
 const hasOwn = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k)
 const fail = (reason: string): Promotion => ({ ok: false, reason })
@@ -70,25 +54,8 @@ export function promoteRule(rule: SigmaRule, events: Record<string, unknown>[], 
     if (!shapeOk) return fail('selection must be one text field with contains, startswith, endswith or re and no all')
     const values = fm.values as string[]
 
-    let parts: string[]
-    if (position === 're') parts = values
-    else {
-        parts = []
-        for (const v of values) {
-            const lit = decodeLiteral(v)
-            if (lit === null) return fail('wildcard values are not promotable')
-            const esc = lit.replace(ESCAPE, '\\$&')
-            parts.push(
-                position === 'contains'
-                    ? esc
-                    : position === 'startswith'
-                      ? `^${esc}`
-                      : position === 'endswith'
-                        ? `${esc}$`
-                        : `^${esc}$`
-            )
-        }
-    }
+    if (position !== 're' && values.some(hasWildcard)) return fail('wildcard values are not promotable')
+    const parts = position === 're' ? values : values.map((v) => sigmaValueSource(v, (position ?? 'none') as Position))
     const pattern = parts.length === 1 ? parts[0]! : `(?:${parts.join('|')})`
 
     const slug = (idSuffix ?? rule.title)

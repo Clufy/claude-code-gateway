@@ -53,6 +53,9 @@ export function sigmaValueSource(value: string, position: Position): string {
     return out
 }
 
+// Literal `[` is always escaped, so only a wildcard emits an unescaped `[\s\S]`.
+export const hasWildcard = (value: string): boolean => sigmaValueSource(value, 'contains').includes('[\\s\\S]')
+
 export function sigmaValueRegex(value: string, position: Position): RegExp {
     return new RegExp(sigmaValueSource(value, position), 'i')
 }

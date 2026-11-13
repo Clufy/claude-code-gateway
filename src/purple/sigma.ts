@@ -203,6 +203,11 @@ function condition(text: string, names: readonly string[], flag: (u: string) => 
         pos++
         return { op: 'not', arg: not(deeper(depth)) }
     }
+    const named = (t: string | undefined): string => {
+        if (t === undefined || KEYWORDS.has(t) || !NAME.test(t)) throw unexpected(t)
+        if (!names.includes(t)) throw bad(`unknown selection "${clip(t)}"`)
+        return t
+    }
     const atom = (depth: number): Cond => {
         const t = tokens[pos++]
         if (t === '(') {
@@ -215,9 +220,7 @@ function condition(text: string, names: readonly string[], flag: (u: string) => 
             if (t !== 'all' && t !== '1') flag(`of:${clip(t, 10)}`)
             return { op: 'of', quant: t === 'all' ? 'all' : 'one', names: target(tokens[pos++]) }
         }
-        if (t === undefined || KEYWORDS.has(t) || !NAME.test(t)) throw unexpected(t)
-        if (!names.includes(t)) throw bad(`unknown selection "${clip(t)}"`)
-        return { op: 'sel', name: t }
+        return { op: 'sel', name: named(t) }
     }
     const target = (t: string | undefined): string[] => {
         if (t === 'them' || t === '*') {
@@ -232,9 +235,7 @@ function condition(text: string, names: readonly string[], flag: (u: string) => 
             if (hits.length === 0) throw bad(`no selection matches "${clip(t)}"`)
             return hits
         }
-        if (t === undefined || KEYWORDS.has(t) || !NAME.test(t)) throw unexpected(t)
-        if (!names.includes(t)) throw bad(`unknown selection "${clip(t)}"`)
-        return [t]
+        return [named(t)]
     }
 
     const cond = or(0)
