@@ -782,6 +782,20 @@ describe('buildScorecard', () => {
         expect(buildScorecard(meta({ isSelf: true }), [res(as(1), 'error')]).detectionRecall).toBeNull()
     })
 
+    it('detectionRecall counts a custom.* detection as a detection', () => {
+        const results = [
+            res(as(1), 'attacked', { detections: ['custom.x'] }),
+            res(as(2), 'passed', { detections: ['inject.exfil_markup'] }),
+            res(as(3), 'passed', { detections: ['inject.instruction'] }),
+            res(as(4), 'passed', { detections: ['customx'] })
+        ]
+        const card = buildScorecard(meta({ isSelf: true }), results)
+        expect(card.detectionRecall).toBeCloseTo(2 / 4)
+        expect(renderScorecardMarkdown([card])).toContain(
+            '## Detection recall (agent-session, inject.instruction or custom.*)'
+        )
+    })
+
     it('P6-R6: every judge case is in the judge section and in no suite count', () => {
         const spl = 'system-prompt-leakage'
         const results = [

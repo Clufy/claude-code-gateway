@@ -1,0 +1,20 @@
+title: Authority override
+description: A fake system or operator message, or an order to ignore the user or earlier instructions, inside tool output.
+level: high
+logsource:
+    product: claude-proxy
+    category: prompt
+detection:
+    selection:
+        text|contains:
+            - '[system]:'
+            - '[operator]:'
+            - '[admin]:'
+            - 'instruction from the operator'
+            - 'instructions from the operator'
+            - 'ignore the user.'
+            - 'ignore the user,'
+            - 'ignore previous instructions'
+            - 'ignore all previous instructions'
+            - 'disregard previous instructions'
+    condition: selection
