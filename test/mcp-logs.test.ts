@@ -158,6 +158,15 @@ describe('logs tool', () => {
         expect(stub.calls).toHaveLength(0)
     })
 
+    it('misconfigured never fetches and names the problem', async () => {
+        stub = stubFetch(() => apiBody([]))
+        const r = await call({ action: 'activity' }, { CF_API_TOKEN: 'tok-secret' })
+        expect(r.isError).toBe(true)
+        expect(r.text).toBe('logs misconfigured: CF_ACCOUNT_ID is missing')
+        expect(r.text).not.toContain('tok-secret')
+        expect(stub.calls).toHaveLength(0)
+    })
+
     it('upstream 500 is an isError at HTTP 200', async () => {
         stub = stubFetch(() => new Response('{}', { status: 500 }))
         const r = await call({ action: 'activity' })

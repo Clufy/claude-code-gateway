@@ -15,21 +15,30 @@ describe('observability config', () => {
         expect(
             loadConfig({ CF_ACCOUNT_ID: ACC, CF_API_TOKEN: 't', OBSERVABILITY_SERVICE: 'x' }).observability?.service
         ).toBe('x'))
-    it('rejects a token without an account id', () =>
-        expect(() => loadConfig({ CF_API_TOKEN: 't' })).toThrow(expect.objectContaining({ variable: 'CF_ACCOUNT_ID' })))
-    it('rejects an account id without a token', () =>
-        expect(() => loadConfig({ CF_ACCOUNT_ID: ACC })).toThrow(expect.objectContaining({ variable: 'CF_API_TOKEN' })))
-    it.each(['ABC', '0123456789ABCDEF0123456789ABCDEF', ACC + '0'])('rejects account id %s', (id) =>
-        expect(() => loadConfig({ CF_ACCOUNT_ID: id, CF_API_TOKEN: 't' })).toThrow(
-            expect.objectContaining({ variable: 'CF_ACCOUNT_ID' })
-        )
-    )
-    it('never puts the token in the error message', () => {
-        expect.assertions(1)
-        try {
-            loadConfig({ CF_ACCOUNT_ID: 'bad', CF_API_TOKEN: 'sekrit-token' })
-        } catch (e) {
-            expect(String((e as Error).message)).not.toContain('sekrit-token')
-        }
+    it('both fields are null when neither var is set', () => {
+        const c = loadConfig({})
+        expect(c.observability).toBeNull()
+        expect(c.observabilityError).toBeNull()
     })
+    it('reports a token without an account id', () => {
+        const c = loadConfig({ CF_API_TOKEN: 't' })
+        expect(c.observability).toBeNull()
+        expect(c.observabilityError).toBe('CF_ACCOUNT_ID is missing')
+    })
+    it('reports an account id without a token', () => {
+        const c = loadConfig({ CF_ACCOUNT_ID: ACC })
+        expect(c.observability).toBeNull()
+        expect(c.observabilityError).toBe('CF_API_TOKEN is missing')
+    })
+    it.each(['ABC', '0123456789ABCDEF0123456789ABCDEF', ACC + '0'])('reports account id %s', (id) => {
+        const c = loadConfig({ CF_ACCOUNT_ID: id, CF_API_TOKEN: 't' })
+        expect(c.observability).toBeNull()
+        expect(c.observabilityError).toBe('CF_ACCOUNT_ID must be 32 lowercase hex characters')
+    })
+    it('never puts the token in the error', () => {
+        const c = loadConfig({ CF_ACCOUNT_ID: 'bad', CF_API_TOKEN: 'sekrit-token' })
+        expect(c.observabilityError).not.toContain('sekrit-token')
+    })
+    it('is clean when valid', () =>
+        expect(loadConfig({ CF_ACCOUNT_ID: ACC, CF_API_TOKEN: 't' }).observabilityError).toBeNull())
 })

@@ -206,3 +206,24 @@ describe('POST /mcp batches', () => {
         expect(res.status).toBe(200)
     })
 })
+
+describe('partial CF_* config does not break other routes', () => {
+    it('GET / and /v1/messages still return 200 with only CF_API_TOKEN set', async () => {
+        const env = makeEnv({ CF_API_TOKEN: 'tok' })
+        expect((await callWorker('/', undefined, env)).status).toBe(200)
+        const res = await callWorker(
+            '/v1/messages',
+            {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', 'x-api-key': 'test-key' },
+                body: JSON.stringify({
+                    model: 'claude-sonnet-4-5',
+                    max_tokens: 10,
+                    messages: [{ role: 'user', content: 'hi' }]
+                })
+            },
+            env
+        )
+        expect(res.status).toBe(200)
+    })
+})

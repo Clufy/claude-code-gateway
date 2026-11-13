@@ -109,6 +109,7 @@ export const registerLogsTool: ToolRegistrar = (server, ctx) => {
         },
         ({ action, since, limit, engagement, rule, severity }) =>
             logged(ctx, 'logs', action, async () => {
+                if (ctx.config.observabilityError) return fail(`logs misconfigured: ${ctx.config.observabilityError}`)
                 const obs = ctx.config.observability
                 if (!obs) {
                     return fail(

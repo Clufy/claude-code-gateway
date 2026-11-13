@@ -34,6 +34,8 @@ export interface ProxyConfig {
     engagements: ReadonlyMap<string, Engagement>
     guard: GuardConfig
     observability: ObservabilityConfig | null
+    /** Why `observability` is null despite CF_* vars being set; never contains values. */
+    observabilityError: string | null
 }
 
 export class ConfigError extends Error {
@@ -183,17 +185,16 @@ function parseRoutes(raw: Raw, urlCfg: Pick<ProxyConfig, 'allowedHosts' | 'allow
 
 export const DEFAULT_OBSERVABILITY_SERVICE = 'claude-workers-ai-proxy'
 
-function parseObservability(raw: Raw): ObservabilityConfig | null {
+function parseObservability(raw: Raw): Pick<ProxyConfig, 'observability' | 'observabilityError'> {
     const accountId = str(raw, 'CF_ACCOUNT_ID')?.trim()
     const apiToken = str(raw, 'CF_API_TOKEN')?.trim()
-    if (!accountId && !apiToken) return null
-    if (!accountId) throw new ConfigError('CF_ACCOUNT_ID', 'CF_ACCOUNT_ID is required when CF_API_TOKEN is set')
-    if (!apiToken) throw new ConfigError('CF_API_TOKEN', 'CF_API_TOKEN is required when CF_ACCOUNT_ID is set')
-    if (!/^[0-9a-f]{32}$/.test(accountId)) {
-        throw new ConfigError('CF_ACCOUNT_ID', 'CF_ACCOUNT_ID must be 32 lowercase hex characters')
-    }
+    const none = (observabilityError: string | null) => ({ observability: null, observabilityError })
+    if (!accountId && !apiToken) return none(null)
+    if (!accountId) return none('CF_ACCOUNT_ID is missing')
+    if (!apiToken) return none('CF_API_TOKEN is missing')
+    if (!/^[0-9a-f]{32}$/.test(accountId)) return none('CF_ACCOUNT_ID must be 32 lowercase hex characters')
     const service = str(raw, 'OBSERVABILITY_SERVICE')?.trim() || DEFAULT_OBSERVABILITY_SERVICE
-    return { accountId, apiToken, service }
+    return { observability: { accountId, apiToken, service }, observabilityError: null }
 }
 
 export function loadConfig(env: unknown): ProxyConfig {
@@ -211,6 +212,6 @@ export function loadConfig(env: unknown): ProxyConfig {
         routes: parseRoutes(raw, { allowedHosts, allowHttp }),
         engagements: parseEngagements(raw.ENGAGEMENTS),
         guard: parseGuardRules(raw.GUARD_RULES),
-        observability: parseObservability(raw)
+        ...parseObservability(raw)
     }
 }
