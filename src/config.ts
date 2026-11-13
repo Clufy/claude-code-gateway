@@ -2,7 +2,7 @@ import { resolveProviderUrl } from './provider-url'
 import { parseEngagements, type Engagement } from './engagement'
 import { parseGuardRules, type GuardConfig } from './guard/config'
 
-export type BackendType = 'workers-ai' | 'openai' | 'openai-responses' | 'gemini'
+export type BackendType = 'workers-ai' | 'openai' | 'openai-responses' | 'gemini' | 'anthropic'
 export interface Route {
     provider: BackendType
     model: string
@@ -10,6 +10,9 @@ export interface Route {
     keySecret?: string
     fallback: string[]
     contextTokens?: number
+    vision?: boolean
+    multiTool?: boolean
+    reasoning?: boolean
 }
 export interface RouteEntry {
     pattern: string
@@ -36,6 +39,8 @@ export interface ProxyConfig {
     observability: ObservabilityConfig | null
     /** Why `observability` is null despite CF_* vars being set; never contains values. */
     observabilityError: string | null
+    draftModel: string | null
+    judgeModel: string | null
 }
 
 export class ConfigError extends Error {
@@ -109,8 +114,18 @@ function parseHosts(raw: Raw): ReadonlySet<string> | '*' {
     return new Set(entries)
 }
 
-const BACKENDS: readonly string[] = ['workers-ai', 'openai', 'openai-responses', 'gemini']
-const ROUTE_KEYS = new Set(['provider', 'model', 'baseUrl', 'keySecret', 'fallback', 'contextTokens'])
+const BACKENDS: readonly string[] = ['workers-ai', 'openai', 'openai-responses', 'gemini', 'anthropic']
+const ROUTE_KEYS = new Set([
+    'provider',
+    'model',
+    'baseUrl',
+    'keySecret',
+    'fallback',
+    'contextTokens',
+    'vision',
+    'multiTool',
+    'reasoning'
+])
 
 function parseRoutes(raw: Raw, urlCfg: Pick<ProxyConfig, 'allowedHosts' | 'allowHttp'>): RouteEntry[] {
     const text = str(raw, 'MODEL_ROUTES')
@@ -178,6 +193,12 @@ function parseRoutes(raw: Raw, urlCfg: Pick<ProxyConfig, 'allowedHosts' | 'allow
             }
             route.contextTokens = r.contextTokens
         }
+        for (const key of ['vision', 'multiTool', 'reasoning'] as const) {
+            if (r[key] !== undefined) {
+                if (typeof r[key] !== 'boolean') return bad(`route "${pattern}" ${key} must be a boolean`)
+                route[key] = r[key]
+            }
+        }
         entries.push({ pattern, route })
     }
     return entries
@@ -212,6 +233,8 @@ export function loadConfig(env: unknown): ProxyConfig {
         routes: parseRoutes(raw, { allowedHosts, allowHttp }),
         engagements: parseEngagements(raw.ENGAGEMENTS),
         guard: parseGuardRules(raw.GUARD_RULES),
+        draftModel: str(raw, 'DRAFT_MODEL')?.trim() || null,
+        judgeModel: str(raw, 'JUDGE_MODEL')?.trim() || null,
         ...parseObservability(raw)
     }
 }
