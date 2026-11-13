@@ -5,6 +5,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ProxyConfig } from '../config'
 import { readLimitedBody } from '../body-limit'
 import { anthropicError } from '../errors'
+import { registerEngagementTool } from './engagement-tool'
 
 export const MCP_MAX_BODY_BYTES = 65536
 
@@ -16,8 +17,8 @@ export interface McpContext {
 
 export type ToolRegistrar = (server: McpServer, ctx: McpContext) => void
 
-// Tasks 3 and 5 append the engagement and logs registrars here.
-const TOOLS: ToolRegistrar[] = []
+// Task 5 appends the logs registrar here.
+const TOOLS: ToolRegistrar[] = [registerEngagementTool]
 
 // Assumes auth has already passed.
 export async function handleMcp(
