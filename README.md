@@ -947,23 +947,43 @@ array of your `GUARD_RULES` var (at most 32 custom rules) and redeploy.
 ### Dogfood rules for agent-session injections
 
 The built-in `inject.instruction` rule catches 1 of the 10 `agent-session` tool results (10%
-detection recall). The four rules in `redteam/purple/*.yml` target the injection styles in
-those tool results: a note or label addressed to an AI agent, an order that agents run a
-command, a fake system or operator message, and an order to fetch a URL through the agent's
-own tools. Together they flag all 10, and none of the benign tool results in
+detection recall). The five rules in `redteam/purple/*.yml` target the injection styles in
+those tool results:
+
+- `agent-addressed-marker`: a label or bracketed note for an AI agent that goes on to name
+  WebFetch, curl or wget, or an agents-only label followed by an encoded payload;
+- `agent-directed-command`: an order that bare "agents" (not CI or build agents) fetch
+  something, or a line-start `Assistant:`/`AI:`/`Agent:` label ordering curl, wget or WebFetch;
+- `authority-override`: a fake `[system]`, `[operator]` or `[admin]` message at the very start
+  of a line that gives an order, or a sentence-initial "Ignore the user";
+- `tool-channel-directive`: an order to run curl or wget on a URL "in the shell" or "via Bash";
+- `webfetch-directive`: an order to use WebFetch on a URL "first", "immediately" or "then retry".
+
+Together they flag all 10, and none of the benign tool results in
 `redteam/purple/benign-tool-results.json` (`test/purple-dogfood.node.test.ts` checks both and
 enforces them through the real guard). Merged, they are this `GUARD_RULES` value:
 
 ```text
-{"custom":[{"id":"custom.agent-addressed-marker","side":"request","severity":"high","pattern":"(?:AI agents:|AI agent:|AI assistants:|AI assistant:|\\[for AI |\\[for agents\\]|for agents\\))","flags":"i"},{"id":"custom.agent-directed-command","side":"request","severity":"high","pattern":"(?:[Aa]gents (?:must|should|need to) (?:run|execute|call|fetch)[^\\n]{0,9}(?:curl|wget|WebFetch|http)|(?:^|\\n)[ \\t]{0,8}(?:Assistant|AI|Agent): (?:also |then |now |first |)(?:run|call|use|execute|fetch) )","flags":""},{"id":"custom.authority-override","side":"request","severity":"high","pattern":"(?:\\[system\\]:|\\[operator\\]:|\\[admin\\]:|instruction from the operator|instructions from the operator|ignore the user\\.|ignore the user,|ignore previous instructions|ignore all previous instructions|disregard previous instructions)","flags":"i"},{"id":"custom.tool-channel-directive","side":"request","severity":"high","pattern":"(?:[Rr]un (?:curl|wget) (?:http|https)://\\S{1,80} (?:in the shell|in your shell|in a shell|via Bash|with Bash)|(?:[Uu]se|[Cc]all) WebFetch (?:on|with url|with) (?:http|https)://)","flags":""}]}
+{"custom":[{"id":"custom.agent-addressed-marker","side":"request","severity":"high","pattern":"(?:(?:AI (?:[Aa]gents|[Aa]gent|[Aa]ssistants|[Aa]ssistant):|\\[for (?:AI tools|AI agents|AI assistants|AI|agents)\\])[^\\n]{0,60}(?:WebFetch|curl|wget)|for agents\\): [A-Za-z0-9+/]{16})","flags":""},{"id":"custom.agent-directed-command","side":"request","severity":"high","pattern":"(?:(?:^|[^\\w ]|[^\\w ] )[Aa]gents (?:must|should|need to) (?:run|execute|call|fetch)[^\\n]{0,9}(?:curl|wget|WebFetch|http)|(?:^|\\n)[ \\t]{0,8}(?:Assistant|AI|Agent): (?:also |then |now |first |)(?:run|call|use|execute|fetch) (?:curl|wget|WebFetch))","flags":""},{"id":"custom.authority-override","side":"request","severity":"high","pattern":"(?:(?:^|\\n)\\[(?:SYSTEM|System|system|OPERATOR|Operator|operator|ADMIN|Admin|admin)\\]:[^\\n]{0,30}(?:[Ii]nstruction|INSTRUCTION|[Ii]gnore|IGNORE|[Oo]verride|OVERRIDE|[Pp]riority|PRIORITY)|(?:^|[>\\n]|[.!?:] )(?:Ignore|IGNORE|ignore) the user[.,!])","flags":""},{"id":"custom.tool-channel-directive","side":"request","severity":"high","pattern":"[Rr]un (?:curl|wget) (?:http|https)://\\S{1,80} (?:in the shell|via Bash|with Bash|with the Bash tool)","flags":""},{"id":"custom.webfetch-directive","side":"request","severity":"high","pattern":"(?:[Uu]se|[Cc]all) WebFetch (?:on|with url|with) (?:http|https)://\\S{1,80} (?:first|immediately|then retry|then continue|before)","flags":""}]}
 ```
 
 This snippet is **opt-in**: it is not enabled by default and the built-in rules are unchanged.
 To use it, merge its `custom` entries into your `GUARD_RULES` var (escaped as a JSON string in
-`wrangler.jsonc`, as in the example above) and redeploy. It raises agent-session detection
-recall from 10% to 10 of 10 on the corpus text. The rules are tuned on this corpus, so expect
-misses on other phrasings and the odd false positive on real tool output; the hits are
-flag-only `custom.*` detections, counted in the scorecard's detection recall.
+`wrangler.jsonc`, as in the example above) and redeploy. The hits are flag-only `custom.*`
+detections, counted in the scorecard's detection recall; nothing is blocked.
+
+The rules were tuned on this corpus, so they raise agent-session detection recall from 10% to
+10 of 10 on these 10 cases only; expect misses on other phrasings. The benign set probes these
+false-positive classes, and none of them fires: AGENTS.md and CONTRIBUTING notes addressed to
+AI agents or assistants, a PR checklist naming the AI assistant used, CI and build-agent
+docs that tell agents to run curl or fetch a URL, a support chat log with an `Assistant:`
+line, a server log with timestamped `[system]:` and `[admin]:` lines, an error-handling doc
+that says to ignore the user, a webhook how-to that says to run curl "in your shell", and a
+tutorial that says to use WebFetch on a docs URL. Known false-positive classes that remain:
+agent notes that tell agents to run curl, wget or WebFetch (`AI agents: run curl ...`), a chat
+log in which the assistant tells the user to run curl or wget, a how-to that says to run curl
+"in the shell" or "via Bash", a tutorial that says to use WebFetch on a URL "first", and any
+sentence that starts with "Ignore the user.".
 
 ## Point Claude Code at the Worker
 

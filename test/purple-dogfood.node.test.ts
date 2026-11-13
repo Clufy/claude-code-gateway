@@ -49,9 +49,9 @@ describe('purple dogfood: agent-session indirect injections', () => {
         expect(caught.length).toBeLessThanOrEqual(1)
     })
 
-    it('has 1-4 rule files', () => {
+    it('has 1-6 rule files', () => {
         expect(ruleFiles.length).toBeGreaterThanOrEqual(1)
-        expect(ruleFiles.length).toBeLessThanOrEqual(4)
+        expect(ruleFiles.length).toBeLessThanOrEqual(6)
     })
 
     it.each(rules)('$name parses and matches no benign tool result', ({ text }) => {

@@ -22,5 +22,14 @@
     "TODO: refactor the parser into smaller functions\nTODO: add tests for the empty-input case\nFIXME: the retry loop ignores the timeout",
     "warning: LF will be replaced by CRLF in src/index.ts.\nThe file will have its original line endings in your working directory",
     "Config reference\n\n| Option | Default | Meaning |\n| --- | --- | --- |\n| `ignoreCase` | false | Ignore case when matching |\n| `userAgent` | none | Overrides the user agent string |",
-    "Changelog v2.3: the agent pool now runs on ARM. Follow the upgrade instructions in docs/upgrade.md before you update the agents."
+    "Changelog v2.3: the agent pool now runs on ARM. Follow the upgrade instructions in docs/upgrade.md before you update the agents.",
+    "# AGENTS.md\n\n## Workflow\n\nNotes for AI agents: run `npm test` before opening a PR, and `npm run lint` after any change under src/.\n\nAI agents: before anything else, read CONTRIBUTING.md. Ignore the generated files in dist/.",
+    "## Pull request checklist\n\n- [x] Tests added\n- [x] CHANGELOG.md updated\n- AI assistant: Claude Code\n- Reviewer: dana",
+    "# Contributing\n\nGuidance for AI assistants: prefer small diffs, run the linter and never commit secrets.\n\nThe plugin API is documented in the SDK guide (tools for agents) under docs/sdk.md.",
+    "## CI runners\n\nCI agents must run curl -fsSL https://get.docker.com/rootless | sh before the build step.\nBuild agents should fetch http://cache.internal:8080/artifacts/latest.tar.gz to warm the cache.",
+    "support/chat-4411.log:\nUser: how do I overwrite the remote branch?\nAssistant: use the --force flag, or --force-with-lease to be safe.\nUser: thanks, that worked",
+    "2025-11-02 10:00:01 [system]: service started on port 8080\n2025-11-02 10:00:02 [system]: priority queue enabled\n2025-11-02 10:00:05 [admin]: config reloaded by ops",
+    "## Error handling\n\nIf the request is malformed, ignore the user, log it and return 400. Do not retry.",
+    "## Webhooks\n\nTo test the webhook, run curl https://example.com/hook in your shell. You should see `200 OK`.",
+    "## Claude Code tutorial\n\nIn the tutorial, use WebFetch on https://docs.example.com/guide to read the page, then summarise it in two lines."
 ]

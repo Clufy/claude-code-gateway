@@ -1,0 +1,11 @@
+title: WebFetch directive
+description: An order to use or call WebFetch on a URL that also sets the order of work (first, immediately, then retry, then continue, before).
+level: high
+logsource:
+    product: claude-proxy
+    category: prompt
+detection:
+    selection:
+        text|re:
+            - '(?:[Uu]se|[Cc]all) WebFetch (?:on|with url|with) (?:http|https)://\S{1,80} (?:first|immediately|then retry|then continue|before)'
+    condition: selection

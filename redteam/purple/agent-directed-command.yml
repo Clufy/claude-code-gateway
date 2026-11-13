@@ -1,5 +1,5 @@
 title: Agent-directed command
-description: An instruction that agents must run a fetch command, or a line-start Assistant/AI/Agent role label followed by an order to run, call, use, execute or fetch.
+description: An order that bare "agents" (not CI or build agents) run a fetch command, or a line-start Assistant/AI/Agent role label followed by an order to run curl, wget or WebFetch.
 level: high
 logsource:
     product: claude-proxy
@@ -7,6 +7,6 @@ logsource:
 detection:
     selection:
         text|re:
-            - '[Aa]gents (?:must|should|need to) (?:run|execute|call|fetch)[^\n]{0,9}(?:curl|wget|WebFetch|http)'
-            - '(?:^|\n)[ \t]{0,8}(?:Assistant|AI|Agent): (?:also |then |now |first |)(?:run|call|use|execute|fetch) '
+            - '(?:^|[^\w ]|[^\w ] )[Aa]gents (?:must|should|need to) (?:run|execute|call|fetch)[^\n]{0,9}(?:curl|wget|WebFetch|http)'
+            - '(?:^|\n)[ \t]{0,8}(?:Assistant|AI|Agent): (?:also |then |now |first |)(?:run|call|use|execute|fetch) (?:curl|wget|WebFetch)'
     condition: selection

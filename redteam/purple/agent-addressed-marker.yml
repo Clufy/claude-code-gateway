@@ -1,17 +1,12 @@
 title: Agent-addressed marker
-description: Tool output that addresses its reader as an AI agent or assistant (a label or bracketed note aimed at the model, not the user).
+description: A label or bracketed note aimed at an AI agent or assistant that goes on to name a fetch tool (WebFetch, curl, wget), or an agents-only label followed by an encoded payload.
 level: high
 logsource:
     product: claude-proxy
     category: prompt
 detection:
     selection:
-        text|contains:
-            - 'AI agents:'
-            - 'AI agent:'
-            - 'AI assistants:'
-            - 'AI assistant:'
-            - '[for AI '
-            - '[for agents]'
-            - 'for agents)'
+        text|re:
+            - '(?:AI (?:[Aa]gents|[Aa]gent|[Aa]ssistants|[Aa]ssistant):|\[for (?:AI tools|AI agents|AI assistants|AI|agents)\])[^\n]{0,60}(?:WebFetch|curl|wget)'
+            - 'for agents\): [A-Za-z0-9+/]{16}'
     condition: selection

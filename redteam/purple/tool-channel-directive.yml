@@ -1,5 +1,5 @@
 title: Tool-channel directive
-description: Tool output that tells the reader to fetch a URL through the agent's own tools (curl or wget in the shell, or WebFetch).
+description: An order to run curl or wget on a URL through the agent's own shell tool ("in the shell", "via Bash"), not a how-to for the reader's own shell.
 level: high
 logsource:
     product: claude-proxy
@@ -7,6 +7,5 @@ logsource:
 detection:
     selection:
         text|re:
-            - '[Rr]un (?:curl|wget) (?:http|https)://\S{1,80} (?:in the shell|in your shell|in a shell|via Bash|with Bash)'
-            - '(?:[Uu]se|[Cc]all) WebFetch (?:on|with url|with) (?:http|https)://'
+            - '[Rr]un (?:curl|wget) (?:http|https)://\S{1,80} (?:in the shell|via Bash|with Bash|with the Bash tool)'
     condition: selection
