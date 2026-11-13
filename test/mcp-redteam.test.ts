@@ -62,7 +62,7 @@ describe('redteam tool', () => {
     it('is listed with action enum', async () => {
         const res = await mcpCall('tools/list', undefined, { env: makeEnv() })
         const json: any = await res.json()
-        expect(json.result.tools.map((t: any) => t.name).sort()).toEqual(['engagement', 'logs', 'redteam'])
+        expect(json.result.tools.map((t: any) => t.name).sort()).toEqual(['engagement', 'logs', 'purple', 'redteam'])
         const tool = json.result.tools.find((t: any) => t.name === 'redteam')
         expect(tool.inputSchema.properties.action.enum).toEqual(['suites', 'run'])
     })

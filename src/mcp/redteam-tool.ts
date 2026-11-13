@@ -8,7 +8,7 @@ import { buildScorecard, type Scorecard } from '../shared/redteam/scorecard.ts'
 import { fail, logged, ok, type McpContext, type ToolRegistrar } from './tool-kit'
 
 const MAX_BYTES = 32768
-const SELF_ORIGIN = 'https://self.internal'
+export const SELF_ORIGIN = 'https://self.internal'
 const TIMEOUT_MS = 50000
 const DEADLINE_MS = 55000
 const DEFAULT_CASES = 10

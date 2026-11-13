@@ -6,12 +6,13 @@ import { readLimitedBody } from '../body-limit'
 import { anthropicError } from '../errors'
 import { registerEngagementTool } from './engagement-tool'
 import { registerLogsTool } from './logs-tool'
+import { registerPurpleTool } from './purple-tool'
 import { registerRedteamTool } from './redteam-tool'
 import type { McpContext, ToolRegistrar } from './tool-kit'
 
 export const MCP_MAX_BODY_BYTES = 65536
 
-const TOOLS: ToolRegistrar[] = [registerEngagementTool, registerLogsTool, registerRedteamTool]
+const TOOLS: ToolRegistrar[] = [registerEngagementTool, registerLogsTool, registerPurpleTool, registerRedteamTool]
 
 // Assumes auth has already passed.
 export async function handleMcp(
