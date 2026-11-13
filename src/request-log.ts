@@ -82,7 +82,8 @@ function toolTracker(guard: Guard | undefined) {
         if (!guard) return
         try {
             if (event === 'content_block_start' && data?.content_block?.type === 'tool_use') {
-                if (blocks.size >= MAX_OPEN_TOOL_BLOCKS) return
+                // a repeated start on an open index replaces that entry, even at the cap
+                if (blocks.size >= MAX_OPEN_TOOL_BLOCKS && !blocks.has(data.index)) return
                 blocks.set(data.index, { name: data.content_block.name, json: '' })
             } else if (event === 'content_block_delta' && data?.delta?.type === 'input_json_delta') {
                 const b = blocks.get(data.index)

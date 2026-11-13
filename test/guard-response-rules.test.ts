@@ -70,6 +70,12 @@ describe('cmdRisky', () => {
         expect(ex).not.toBeNull()
         expect(ex).not.toContain(tok.slice(8))
     })
+
+    it('reads only the first 64 KB of a command (P4-R37)', () => {
+        expect(bash('rm -rf / ' + 'x'.repeat(1_000_000))).toContain('rm -rf /')
+        expect(bash('x'.repeat(65_520) + ' rm -rf /')).not.toBeNull()
+        expect(bash('x'.repeat(65_536) + ' rm -rf /')).toBeNull()
+    })
 })
 
 const acme: Engagement = {

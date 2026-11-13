@@ -743,6 +743,25 @@ describe('stream tap', () => {
         expect(lines('request')).toHaveLength(1)
     })
 
+    it('a duplicate start on an open index at the cap replaces that entry (P4-R37)', async () => {
+        const { guard, calls } = spyGuard()
+        let text = ''
+        for (let i = 0; i < 16; i++) text += start(i, `T${i}`)
+        text += start(3, 'Dup') + delta(3, '{"command":"ls"}') + stop(3)
+        for (let i = 0; i < 16; i++) if (i !== 3) text += stop(i)
+        const body = new ReadableStream<Uint8Array>({
+            start(c) {
+                c.enqueue(enc.encode(text))
+                c.close()
+            }
+        })
+        const out = await finalize(body, guard)
+        expect(await out.text()).toBe(text)
+        const tools = calls.filter((c) => c.startsWith('tool '))
+        expect(tools[0]).toBe('tool Dup {"command":"ls"}')
+        expect(tools).toHaveLength(16)
+    })
+
     it('a cancelled stream still calls onEnd once', async () => {
         const { guard, calls } = spyGuard()
         const body = new ReadableStream<Uint8Array>({

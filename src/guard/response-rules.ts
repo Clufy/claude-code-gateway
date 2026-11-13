@@ -3,6 +3,7 @@ import { decideToolCall } from './decide'
 import { excerptAt, redact } from './redact'
 
 const MAX_EXCERPT = 200
+const MAX_RISKY_INPUT = 65536
 
 /** input.command when the tool is Bash or PowerShell and it is a string. */
 export function shellCommand(tool: string, input: unknown): string | null {
@@ -69,7 +70,8 @@ const RISKY: readonly RegExp[] = [
 
 /** cmd.risky: a redacted excerpt around the earliest risky match, or null. */
 export function cmdRisky(tool: string, input: unknown): string | null {
-    const cmd = shellCommand(tool, input)
+    // P4-R37: a huge streamed command must not hold the stream; a risky pattern past 64 KB is missed
+    const cmd = shellCommand(tool, input)?.slice(0, MAX_RISKY_INPUT) ?? null
     if (cmd === null) return null
     let best = rmRoot(cmd)
     const ps = psRemoveRoot(cmd)
