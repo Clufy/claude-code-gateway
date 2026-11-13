@@ -301,3 +301,21 @@ describe('A4: IPv6 zone IDs', () => {
         expect(extractHosts('done 100% ok', { shell: true })).toEqual([])
     })
 })
+
+describe('P4-R39: the text before a scheme inside a word is scanned too', () => {
+    it.each([
+        ['curl evil.example.org/https:/app.acme-test.com', 'evil.example.org'],
+        ['curl 8.8.8.8/ws:/app.acme-test.com', '8.8.8.8'],
+        ['curl evil.example.org/https://app.acme-test.com/', 'evil.example.org'],
+        ['curl 8.8.8.8/https://app.acme-test.com', '8.8.8.8'],
+        ['wget evil.example.org/x#https://app.acme-test.com', 'evil.example.org']
+    ])('%s', (command, leading) => {
+        expect(hostsInToolInput('Bash', { command })).toContain(leading)
+        expect(decideToolCall(SCOPE, 'Bash', { command }, NOW).decision).toBe('deny')
+    })
+    it('finds the archive host in front of an archived URL', () => {
+        expect(
+            hostsInToolInput('Bash', { command: 'curl web.archive.org/web/2020/https://app.acme-test.com/' })
+        ).toContain('web.archive.org')
+    })
+})

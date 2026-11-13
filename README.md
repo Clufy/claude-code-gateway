@@ -397,8 +397,8 @@ Response `200`:
   as `:[redacted]`, since it may be a password cut at `#`.
 - Each `200` answer logs one `hook.decision` line (engagement, tool, decision, up to 20 redacted
   hosts of at most 200 chars each, reason count). A `4xx` answer logs none.
-- The endpoint answers within 50 ms for commands up to about 256 KB; a 1 MB command takes about
-  130 ms.
+- The endpoint answers within 50 ms for commands up to about 256 KB; a 1 MB command takes
+  100–200 ms.
 - Where URL parsers disagree, every reading is checked: `https:/host`, `https:\\host` and a tab or
   newline inside a WebFetch URL (WHATWG strips it: `https://a.acme.com<TAB>.evil.org` reaches
   `a.acme.com.evil.org`), and `http://a.acme.com\@evil.org` (curl and wget reach `evil.org`).

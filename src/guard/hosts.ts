@@ -151,9 +151,10 @@ function cutPath(s: string): string {
 /**
  * The first URL in a token: `scheme://` for any scheme, or a WHATWG special scheme followed by any run of `/` and
  * `\` (`https:/h`, `https:\\h`, `https:///h` all reach h). Other schemes need `//`, so `C:\Users` is not a URL.
- * `rest` starts at the authority. The scheme is '' when no letter precedes the colon (then nothing is emitted).
+ * `rest` starts at the authority and `start` is the scheme's index. The scheme is '' when no letter precedes the
+ * colon (then nothing is emitted).
  */
-function findUrl(t: string): { scheme: string; rest: string } | null {
+function findUrl(t: string): { start: number; scheme: string; rest: string } | null {
     for (let c = t.indexOf(':'); c !== -1; c = t.indexOf(':', c + 1)) {
         if (t[c + 1] !== '/' && t[c + 1] !== '\\') continue
         let s = c
@@ -163,9 +164,9 @@ function findUrl(t: string): { scheme: string; rest: string } | null {
         if (SPECIAL_SCHEMES.has(scheme.toLowerCase())) {
             let a = c + 1
             while (a < t.length && (t[a] === '/' || t[a] === '\\')) a++
-            return { scheme, rest: t.slice(a) }
+            return { start: s, scheme, rest: t.slice(a) }
         }
-        if (t.startsWith('//', c + 1)) return { scheme, rest: t.slice(c + 3) }
+        if (t.startsWith('//', c + 1)) return { start: s, scheme, rest: t.slice(c + 3) }
     }
     return null
 }
@@ -302,7 +303,11 @@ export function extractHosts(text: string, opts: ExtractOptions): string[] {
             if (t === '') continue
             const url = findUrl(t)
             if (url === null) bareCandidates(t, hosts ? hostCheck : null, out)
-            else urlCandidates(url.scheme, url.rest, opts.shell, out)
+            else {
+                urlCandidates(url.scheme, url.rest, opts.shell, out)
+                // `evil.org/https://ok.com`: curl and wget connect to the text before the scheme (P4-R39)
+                if (url.start > 0) bareCandidates(t.slice(0, url.start), hosts ? hostCheck : null, out)
+            }
         }
     }
     // inline code: full extraction inside its quoted strings (fail closed), URLs and IPs elsewhere
