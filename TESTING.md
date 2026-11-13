@@ -297,10 +297,10 @@ curl -sS "${H[@]}" -X POST "$LOCAL/mcp" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"engagement","arguments":{"action":"list"}}}'
 ```
 
-**Expected:** `initialize` returns `serverInfo.name` `claude-worker-proxy`; `tools/list` returns exactly 2 tools, `engagement` and `logs`; the `engagement` call returns a JSON text with your engagements (or `{"engagements":[],"hint":"set the ENGAGEMENTS secret"}` with none). Each `tools/call` prints one `event: "mcp"` line with `ok: true` and no arguments.
+**Expected:** `initialize` returns `serverInfo.name` `claude-worker-proxy`; `tools/list` returns exactly 3 tools, `engagement`, `logs` and `redteam`; the `engagement` call returns a JSON text with your engagements (or `{"engagements":[],"hint":"set the ENGAGEMENTS secret"}` with none). Each `tools/call` prints one `event: "mcp"` line with `ok: true` and no arguments.
 
 - [ ] **Auth and methods.** `curl -i -X GET "$LOCAL/mcp"` returns `405` with `allow: POST`. A `POST` with a wrong Bearer returns `401 {"error":"invalid authorization"}`; `x-api-key` instead of a Bearer also returns `401`. A body over 65536 bytes returns `413`. A JSON-RPC batch (a body that is an array of two `tools/call` requests) returns `400` with error code `-32600`. `logs` without `CF_API_TOKEN` and `CF_ACCOUNT_ID` returns `isError: true` with `logs not configured: ...`; with only one of them set it returns `isError: true` with `logs misconfigured: <reason>` while `GET /` and `/v1/messages` still work.
-- [ ] **Claude Code.** `claude mcp add --transport http proxy-local http://127.0.0.1:8080/mcp --header "Authorization: Bearer $PROXY_KEY"`, start Claude Code and run `/mcp`. **Expected:** `proxy-local` connected with 2 tools. Ask it to list engagements and to scope-check a host; the answers match section 13's decisions. Remove it afterwards with `claude mcp remove proxy-local`.
+- [ ] **Claude Code.** `claude mcp add --transport http proxy-local http://127.0.0.1:8080/mcp --header "Authorization: Bearer $PROXY_KEY"`, start Claude Code and run `/mcp`. **Expected:** `proxy-local` connected with 3 tools. Ask it to list engagements and to scope-check a host; the answers match section 13's decisions. Remove it afterwards with `claude mcp remove proxy-local`.
 - [ ] **`logs` against real logs (after a deploy).** With the token and account id set, generate a detection (section 12, request side), wait a minute, then call `logs` with `{"action":"findings","since":"1h"}` and `{"action":"activity","since":"1h"}`:
 
 ```bash
@@ -322,6 +322,25 @@ curl -sS -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/work
 ```
 
 If the keys carry a prefix, the filter keys in `src/mcp/logs-tool.ts` need it; note the result and open a follow-up. Until then the client-side re-check keeps results correct, only possibly fewer than `limit`.
+
+## 15. Red-team harness
+
+Authorized testing only: this uses your Workers AI quota (10 requests per model for one suite) and every case is canary-based. Needs `PROXY_KEY`.
+
+- [ ] **Run the agent-session suite.** Start `npx wrangler dev --port 8791` (`PROXY_KEY` in `.dev.vars`), then in another terminal:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8791
+export PROXY_KEY=<PROXY_KEY>
+npm run redteam -- --target self:all --suite agent-session
+```
+
+**Expected:** a `[n/10] as-NN attacked|passed|error` line per case on stderr, then `Wrote redteam-results/self/<timestamp>.json and redteam-results/self/<timestamp>.md`, exit code 0.
+
+- [ ] **Read the scorecard.** Open `redteam-results/self/<timestamp>.md`. **Expected:** one row for `agent-session (LLM01)` and one column per model from `/v1/models`, cells like `30% (3/10)`; a `Detection recall` line per model; no judge section (no `--judge-model`). A model that errored shows `+N err`. Check each `attacked` example against the case's canary host.
+- [ ] **Detection cross-check.** The `wrangler dev` output should log `inject.instruction` for the `agent-session` requests; recall in the scorecard should match.
+- [ ] **Gate refusals.** `npm run redteam -- --target openai:https://llm.example.invalid/v1/chat/completions --engagement <engagement>`, where the host is not in the engagement. **Expected:** exit code 2 with `target llm.example.invalid is not in engagement <engagement> scope`, and no request sent. With a closed-window engagement: `engagement <engagement> window is closed`.
+- [ ] **MCP tool.** Call `redteam` with `{"action":"suites"}`, then `{"action":"run","suite":"agent-session","target":"self:<model>","maxCases":3}` (same curl shape as section 14). **Expected:** 7 suites of 10 cases; then a scorecard JSON with `meta.corpusSha` `bundled`.
 
 ## CPU budget benchmark (`npm run bench`)
 
