@@ -1,5 +1,6 @@
 import type { Severity } from '../audit'
 import { ConfigError } from '../config'
+import { isObj } from '../engagement'
 import { BUILTIN_RULES, type RuleSide } from './ids'
 
 export interface CustomRule {
@@ -162,14 +163,13 @@ export function unsafePatternReason(source: string, flags: string): string | nul
 }
 
 const isSeverity = (v: unknown): v is Severity => v === 'low' || v === 'medium' || v === 'high'
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 export function parseGuardRules(raw: unknown): GuardConfig {
     const bad = (reason: string): never => {
         throw new ConfigError('GUARD_RULES', reason)
     }
     const severity = new Map<string, Severity>()
-    for (const [id, r] of Object.entries(BUILTIN_RULES)) severity.set(id, r.severity)
+    for (const [id, s] of Object.entries(BUILTIN_RULES)) severity.set(id, s)
 
     if (raw === undefined) return { disabled: new Set(), severity, custom: [] }
     if (typeof raw !== 'string') return bad('GUARD_RULES must be a JSON string')

@@ -7,7 +7,6 @@ import { logDetection, type Severity } from '../audit'
 import type { ProxyConfig } from '../config'
 import type { Engagement } from '../engagement'
 import type { BackendStats } from '../stats'
-import { BUILTIN_RULES } from './ids'
 import { excerptAt } from './redact'
 import { exfilMarkup, injectInstruction, newestTurn, secretEgress, type Segment } from './request-rules'
 import { cmdRisky, scopeOutOfScope, shellCommand } from './response-rules'
@@ -38,13 +37,7 @@ function responseText(name: string, input: unknown): string {
  * outOfWindow: applyMode already logged engagement.out_of_window for this request. It counts as one of the 20 lines
  * and leads the request-side ids, so it appears in x-proxy-detections (P4-R29).
  */
-export function createGuard(
-    cfg: ProxyConfig,
-    requestId: string,
-    engagement?: Engagement,
-    now: number = Date.now(),
-    outOfWindow = false
-): Guard {
+export function createGuard(cfg: ProxyConfig, requestId: string, engagement?: Engagement, outOfWindow = false): Guard {
     const { disabled, severity, custom } = cfg.guard
     const requestCustom = custom.filter((c) => c.side === 'request')
     const responseCustom = custom.filter((c) => c.side === 'response')
@@ -57,7 +50,7 @@ export function createGuard(
             if (excerpt === null) return false
             if (lines < MAX_LINES) {
                 lines++
-                const sev: Severity = severity.get(ruleId) ?? BUILTIN_RULES[ruleId]?.severity ?? 'medium'
+                const sev: Severity = severity.get(ruleId) ?? 'medium'
                 logDetection({
                     ruleId,
                     severity: sev,
@@ -102,7 +95,7 @@ export function createGuard(
         onToolUse(name, input) {
             if (enabled('cmd.risky')) run('cmd.risky', () => cmdRisky(name, input))
             if (engagement && enabled('scope.out_of_scope')) {
-                run('scope.out_of_scope', () => scopeOutOfScope(name, input, engagement, now))
+                run('scope.out_of_scope', () => scopeOutOfScope(name, input, engagement))
             }
             if (responseCustom.length === 0) return
             let text: string

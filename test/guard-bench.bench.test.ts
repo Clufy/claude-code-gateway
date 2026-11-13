@@ -153,7 +153,7 @@ describe('guard CPU budget', () => {
         {
             const { p95, median } = p95Of(() => {
                 const cfg = loadConfig(env)
-                const g = createGuard(cfg, 'req-1', cfg.engagements.get('alpha'), NOW)
+                const g = createGuard(cfg, 'req-1', cfg.engagements.get('alpha'))
                 g.scanRequest(body)
                 g.onToolUse('Bash', { command: command4k })
             })
@@ -165,7 +165,7 @@ describe('guard CPU budget', () => {
     it('request scan alone p95 <= 5 ms (default config)', () => {
         const cfg = loadConfig(env)
         const e = cfg.engagements.get('alpha')
-        const { p95 } = p95Of(() => void createGuard(cfg, 'req-2', e, NOW).scanRequest(body))
+        const { p95 } = p95Of(() => void createGuard(cfg, 'req-2', e).scanRequest(body))
         console.info(`[bench] scanRequest p95=${p95.toFixed(2)}ms`)
         expect(p95).toBeLessThanOrEqual(5)
     })
@@ -173,7 +173,7 @@ describe('guard CPU budget', () => {
     it('16 request custom rules cost <= 0.4 ms each per MB (best-of-15, with minus without)', () => {
         const scan = (e: typeof env) => {
             const cfg = loadConfig(e)
-            const g = createGuard(cfg, 'req-c', cfg.engagements.get('alpha'), NOW)
+            const g = createGuard(cfg, 'req-c', cfg.engagements.get('alpha'))
             return () => void g.scanRequest(body)
         }
         const base = scan(env)
@@ -188,7 +188,7 @@ describe('guard CPU budget', () => {
     it('response scan alone p95 <= 5 ms (4 KB Bash command, 16 response custom rules)', () => {
         const cfg = loadConfig(customEnv)
         const e = cfg.engagements.get('alpha')
-        const { p95 } = p95Of(() => createGuard(cfg, 'req-3', e, NOW).onToolUse('Bash', { command: command4k }))
+        const { p95 } = p95Of(() => createGuard(cfg, 'req-3', e).onToolUse('Bash', { command: command4k }))
         console.info(`[bench] onToolUse p95=${p95.toFixed(2)}ms`)
         expect(p95).toBeLessThanOrEqual(5)
     })
@@ -232,13 +232,13 @@ describe('pathological inputs', () => {
                     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: make(MB) }] }
                 ]
             }
-            const run = () => createGuard(cfg, 'r', e, NOW).scanRequest(b)
+            const run = () => createGuard(cfg, 'r', e).scanRequest(b)
             run()
             expect(best(run)).toBeLessThanOrEqual(MAX_MS)
         })
         it(`100 KB Bash command of ${name}`, () => {
             const command = make(100 * KB)
-            const run = () => createGuard(cfg, 'r', e, NOW).onToolUse('Bash', { command })
+            const run = () => createGuard(cfg, 'r', e).onToolUse('Bash', { command })
             run()
             expect(best(run)).toBeLessThanOrEqual(MAX_MS)
         })
@@ -264,7 +264,7 @@ describe('units deferred from earlier reviews', () => {
 
     it('Task 6: 100 KB of "iwr " through onToolUse(PowerShell)', () => {
         const command = rep('iwr ', 100 * KB)
-        const run = () => createGuard(cfg, 'r', e, NOW).onToolUse('PowerShell', { command })
+        const run = () => createGuard(cfg, 'r', e).onToolUse('PowerShell', { command })
         run()
         expect(best(run)).toBeLessThanOrEqual(MAX_MS)
     })
@@ -272,7 +272,7 @@ describe('units deferred from earlier reviews', () => {
     it('Task 7: a 1 MB Write input with 16 response custom rules', () => {
         const code = 'export function add(a: number, b: number): number {\n    return a + b // sum\n}\n'
         const content = rep(code, MB)
-        const run = () => createGuard(cfg, 'r', e, NOW).onToolUse('Write', { file_path: 'x', content })
+        const run = () => createGuard(cfg, 'r', e).onToolUse('Write', { file_path: 'x', content })
         run()
         const t = best(run)
         console.info(`[bench] Write 1 MB with 16 response custom rules best-of-15=${t.toFixed(2)}ms`)
@@ -391,8 +391,8 @@ describe('scopeOutOfScope stays fast on 100 KB commands', () => {
     }
     for (const unit of ['http://', 'a@', 'a.b. ']) {
         it(`unit ${JSON.stringify(unit)}`, () => {
-            const command = unit.repeat(Math.ceil((100 * 1024) / unit.length))
-            const run = () => scopeOutOfScope('Bash', { command }, eng, 1)
+            const command = rep(unit, 100 * KB)
+            const run = () => scopeOutOfScope('Bash', { command }, eng)
             run()
             expect(best(run)).toBeLessThanOrEqual(MAX_MS)
         })

@@ -117,7 +117,7 @@ describe('scopeOutOfScope terminates on 100 KB commands', () => {
     for (const unit of ['http://', 'a@', 'a.b. ']) {
         it(`unit ${JSON.stringify(unit)}`, () => {
             const command = unit.repeat(Math.ceil((100 * 1024) / unit.length))
-            const run = () => scopeOutOfScope('Bash', { command }, eng, 1)
+            const run = () => scopeOutOfScope('Bash', { command }, eng)
             run()
             expect(() => run()).not.toThrow()
         })

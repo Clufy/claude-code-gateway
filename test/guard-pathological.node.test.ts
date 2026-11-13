@@ -52,11 +52,11 @@ describe('guard pathological inputs terminate', () => {
                     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: make(MB) }] }
                 ]
             }
-            expect(() => createGuard(cfg, 'r', e, NOW).scanRequest(b)).not.toThrow()
+            expect(() => createGuard(cfg, 'r', e).scanRequest(b)).not.toThrow()
         })
         it(`100 KB Bash command of ${name}`, () => {
             const command = make(100 * KB)
-            expect(() => createGuard(cfg, 'r', e, NOW).onToolUse('Bash', { command })).not.toThrow()
+            expect(() => createGuard(cfg, 'r', e).onToolUse('Bash', { command })).not.toThrow()
         })
     }
 
@@ -71,8 +71,8 @@ describe('guard pathological inputs terminate', () => {
 
     it('100 KB of "iwr " through onToolUse(PowerShell) and a 1 MB Write input', () => {
         const command = rep('iwr ', 100 * KB)
-        expect(() => createGuard(cfg, 'r', e, NOW).onToolUse('PowerShell', { command })).not.toThrow()
+        expect(() => createGuard(cfg, 'r', e).onToolUse('PowerShell', { command })).not.toThrow()
         const content = rep('export const add = (a: number, b: number) => a + b\n', MB)
-        expect(() => createGuard(cfg, 'r', e, NOW).onToolUse('Write', { file_path: 'x', content })).not.toThrow()
+        expect(() => createGuard(cfg, 'r', e).onToolUse('Write', { file_path: 'x', content })).not.toThrow()
     })
 })

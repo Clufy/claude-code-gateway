@@ -104,22 +104,21 @@ const acme: Engagement = {
 }
 
 describe('scopeOutOfScope', () => {
-    const now = Date.UTC(2026, 5, 1)
     it('flags an out-of-scope host', () => {
-        expect(scopeOutOfScope('Bash', { command: 'nmap evil.example.org' }, acme, now)).toContain(
+        expect(scopeOutOfScope('Bash', { command: 'nmap evil.example.org' }, acme)).toContain(
             'evil.example.org is out of scope for engagement acme'
         )
     })
     it('allows loopback, in-scope hosts and non-target tools', () => {
-        expect(scopeOutOfScope('Bash', { command: 'curl http://127.0.0.1:8080/' }, acme, now)).toBeNull()
-        expect(scopeOutOfScope('Bash', { command: 'nmap 10.10.1.5' }, acme, now)).toBeNull()
-        expect(scopeOutOfScope('WebFetch', { url: 'https://docs.acme-test.com' }, acme, now)).toBeNull()
-        expect(scopeOutOfScope('Write', { content: 'see https://evil.example.org/x' }, acme, now)).toBeNull()
+        expect(scopeOutOfScope('Bash', { command: 'curl http://127.0.0.1:8080/' }, acme)).toBeNull()
+        expect(scopeOutOfScope('Bash', { command: 'nmap 10.10.1.5' }, acme)).toBeNull()
+        expect(scopeOutOfScope('WebFetch', { url: 'https://docs.acme-test.com' }, acme)).toBeNull()
+        expect(scopeOutOfScope('Write', { content: 'see https://evil.example.org/x' }, acme)).toBeNull()
     })
     it('ignores a closed window: in-scope host is null, no window reason otherwise', () => {
-        const late = Date.UTC(2030, 0, 1)
-        expect(scopeOutOfScope('Bash', { command: 'nmap docs.acme-test.com' }, acme, late)).toBeNull()
-        const r = scopeOutOfScope('Bash', { command: 'nmap evil.example.org' }, acme, late)
+        const past: Engagement = { ...acme, window: { start: Date.UTC(2020, 0, 1), end: Date.UTC(2020, 11, 31) } }
+        expect(scopeOutOfScope('Bash', { command: 'nmap docs.acme-test.com' }, past)).toBeNull()
+        const r = scopeOutOfScope('Bash', { command: 'nmap evil.example.org' }, past)
         expect(r).not.toContain('window')
     })
 
@@ -127,26 +126,26 @@ describe('scopeOutOfScope', () => {
         const excl: Engagement = { ...acme, exclude: { domains: ['mail.acme-test.com'], cidrs: [] } }
         it('shows no token from URL userinfo', () => {
             const tok = 'ghp_aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fG2hJ4'
-            const r = scopeOutOfScope('Bash', { command: `curl https://u:${tok}@evil.example.org/` }, acme, now)
+            const r = scopeOutOfScope('Bash', { command: `curl https://u:${tok}@evil.example.org/` }, acme)
             expect(r).not.toBeNull()
             expect(r).not.toContain(tok.slice(8))
         })
         it('caps the excerpt at 200 chars', () => {
             const hosts = Array.from({ length: 30 }, (_, i) => `host${i}.evil-example.org`).join(' ')
-            const r = scopeOutOfScope('Bash', { command: `nmap ${hosts}` }, acme, now)
+            const r = scopeOutOfScope('Bash', { command: `nmap ${hosts}` }, acme)
             expect(r!.length).toBeLessThanOrEqual(200)
         })
         it('flags an invalid target', () => {
-            expect(scopeOutOfScope('Bash', { command: 'curl http://$TARGET' }, acme, now)).toContain(
+            expect(scopeOutOfScope('Bash', { command: 'curl http://$TARGET' }, acme)).toContain(
                 'not a checkable target'
             )
         })
         it('flags an excluded host', () => {
-            expect(scopeOutOfScope('Bash', { command: 'nmap mail.acme-test.com' }, excl, now)).toContain('excluded')
+            expect(scopeOutOfScope('Bash', { command: 'nmap mail.acme-test.com' }, excl)).toContain('excluded')
         })
         it('flags more than 64 hosts', () => {
             const hosts = Array.from({ length: 70 }, (_, i) => `h${i}.acme-test.com`).join(' ')
-            expect(scopeOutOfScope('Bash', { command: `nmap ${hosts}` }, acme, now)).toContain('too many targets')
+            expect(scopeOutOfScope('Bash', { command: `nmap ${hosts}` }, acme)).toContain('too many targets')
         })
     })
 })

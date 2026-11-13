@@ -44,22 +44,7 @@ const REDACT_EXTRA: readonly { re: RegExp; anchors: readonly string[] }[] = [
     { re: /\b(?:[Bb]earer|BEARER)\s{1,10}([^\s"',;]{1,300})/g, anchors: ['earer', 'EARER'] }
 ]
 
-const RUNNERS = [
-    'node',
-    'npm',
-    'npx',
-    'yarn',
-    'pnpm',
-    'python',
-    'python3',
-    'bash',
-    'sh',
-    'ruby',
-    'go',
-    'java',
-    'deno',
-    'bun'
-]
+const RUNNERS = 'node npm npx yarn pnpm python python3 bash sh ruby go java deno bun'.split(' ')
 
 const PLACEHOLDERS = ['${', '<', '{{', 'xxx', 'changeme', 'example', '****']
 const MARKER = '…[redacted]'

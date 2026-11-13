@@ -97,8 +97,7 @@ function riskyMatch(cmd: string): [number, number] | null {
 }
 
 /** scope.out_of_scope: the window is treated as open (the request side logs out_of_window). */
-export function scopeOutOfScope(tool: string, input: unknown, e: Engagement, now: number): string | null {
-    void now // P4-R1: the window is deliberately treated as open, so the caller's clock is unused
+export function scopeOutOfScope(tool: string, input: unknown, e: Engagement): string | null {
     const d = decideToolCall(e, tool, input, e.window.start)
     if (d.decision === 'allow') return null
     return redact(`${tool}: ${d.reasons.join('; ')}`).slice(0, MAX_EXCERPT)
