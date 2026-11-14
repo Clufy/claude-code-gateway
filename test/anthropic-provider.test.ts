@@ -204,6 +204,21 @@ describe('anthropic provider via MODEL_ROUTES', () => {
         expect(((await res.json()) as any).content[0].text).toBe('ok')
     })
 
+    it('scrubs the key from an error event inside a 200 SSE stream', async () => {
+        stub = stubFetch(
+            (req) =>
+                new Response(
+                    `event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"key ${req.headers.get('x-api-key')}"}}\n\n`,
+                    { status: 200, headers: { 'content-type': 'text/event-stream' } }
+                )
+        )
+        const res = await post({ ...baseBody(), stream: true })
+        const text = await res.text()
+        expect(res.status).toBe(200)
+        expect(text).toContain('[redacted]')
+        expect(text).not.toContain(KEY)
+    })
+
     it('scrubs the key from an upstream 401 body', async () => {
         stub = stubFetch((req) =>
             Response.json(

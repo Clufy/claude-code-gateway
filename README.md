@@ -73,8 +73,8 @@ and `keySecret`):
   sent. No other inbound header is forwarded: not the proxy key, `Authorization`, `x-engagement`,
   `x-proxy-*` or cookies. Anyone holding the proxy key can turn on any `anthropic-beta` header or
   body feature (server tools, `mcp_servers`), and all of it is billed to the route's `keySecret`.
-- **Response:** the body, streaming SSE included, is relayed unchanged; upstream errors are
-  scrubbed of the key. Only the `content-type` and `retry-after` headers are kept. Anthropic's
+- **Response:** the body, streaming SSE included, is relayed unchanged except that the key
+  is scrubbed from it, error or not. Only the `content-type` and `retry-after` headers are kept. Anthropic's
   `request-id`, `anthropic-organization-id`, `anthropic-ratelimit-*` and `set-cookie` are dropped,
   and the proxy's own `request-id` is set.
 
@@ -234,7 +234,8 @@ requests or to the `/{type}/{provider_url}/v1/messages` path.
 | Header allowlist  | Only allowlisted client headers are forwarded upstream; the rest are stripped. There is no opt-out variable.                                                                                                             | none                                                                                                                          |
 | Invalid config    | A malformed var (e.g. `MAX_BODY_BYTES=abc`, `ALLOW_HTTP=yes`) makes every request fail with `500` instead of silently using a default. Fix the var in `wrangler.jsonc`.                                                  | `invalid config: <VAR>` (e.g. `invalid config: MAX_BODY_BYTES`)                                                               |
 
-Provider API keys are scrubbed from upstream error text before it is returned.
+Provider API keys are scrubbed from upstream responses before they are returned: error bodies whole, and
+successful (including streamed) bodies as they arrive, so an error event inside a `200` stream is covered too.
 
 ### 7. Rate limiting and logging (built in)
 

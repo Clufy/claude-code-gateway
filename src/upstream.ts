@@ -58,8 +58,58 @@ export async function fetchUpstream(
     return lastResponse as Response
 }
 
+/** Longest end of `text` that is a proper prefix of a secret, so it may complete in the next chunk. */
+function pendingPrefix(text: string, secrets: string[]): number {
+    let keep = 0
+    for (const s of secrets) {
+        for (let j = Math.min(s.length - 1, text.length); j > keep; j--) {
+            if (text.endsWith(s.slice(0, j))) {
+                keep = j
+                break
+            }
+        }
+    }
+    return keep
+}
+
+/**
+ * Replaces each secret in a streamed body with [redacted], including one split across chunks.
+ * Only a possible secret prefix at a chunk's end is held back, so ordinary chunks pass at once.
+ */
+export function scrubStream(body: ReadableStream<Uint8Array>, secrets: string[]): ReadableStream<Uint8Array> {
+    const keys = secrets.filter(Boolean)
+    const decoder = new TextDecoder()
+    const encoder = new TextEncoder()
+    const redact = (t: string) => keys.reduce((acc, k) => acc.split(k).join('[redacted]'), t)
+    let tail = ''
+    return body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+                const text = redact(tail + decoder.decode(chunk, { stream: true }))
+                const cut = text.length - pendingPrefix(text, keys)
+                tail = text.slice(cut)
+                if (cut > 0) controller.enqueue(encoder.encode(text.slice(0, cut)))
+            },
+            flush(controller) {
+                const text = redact(tail + decoder.decode())
+                if (text) controller.enqueue(encoder.encode(text))
+            }
+        })
+    )
+}
+
+/** Secrets never reach the client: error bodies are scrubbed whole, 2xx bodies as they stream. */
 export async function scrubUpstreamError(response: Response, secrets: string[]): Promise<Response> {
-    if (response.ok) return response
+    if (response.ok) {
+        if (!response.body) return response
+        const headers = new Headers(response.headers)
+        headers.delete('content-length')
+        return new Response(scrubStream(response.body, secrets), {
+            status: response.status,
+            statusText: response.statusText,
+            headers
+        })
+    }
     let text = await response.text()
     for (const secret of secrets) {
         if (secret) text = text.split(secret).join('[redacted]')
