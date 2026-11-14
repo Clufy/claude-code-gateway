@@ -92,3 +92,16 @@ describe('scrubUpstreamError on a 2xx response', () => {
         expect(await scrubUpstreamError(res, [KEY])).toBe(res)
     })
 })
+
+describe('scrubUpstreamError on an error response', () => {
+    it('redacts the secrets and any Bearer token, and drops content-length', async () => {
+        const body = `bad key ${KEY}; echoed header Authorization: Bearer other.token-9`
+        const res = await scrubUpstreamError(
+            new Response(body, { status: 401, headers: { 'content-length': String(body.length) } }),
+            ['', KEY]
+        )
+        expect(res.status).toBe(401)
+        expect(res.headers.get('content-length')).toBeNull()
+        expect(await res.text()).toBe('bad key [redacted]; echoed header Authorization: [redacted]')
+    })
+})
