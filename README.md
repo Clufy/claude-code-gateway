@@ -126,6 +126,9 @@ deleted on deploy; secrets (`PROXY_KEY`) are not. Edit the `vars` block, then de
 }
 ```
 
+Keep the shipped `MODELS` and `MODEL_ROUTES` values when you add vars;
+[Upgrading to model-agnostic config](#upgrading-to-model-agnostic-config) explains why.
+
 | Var                     | Default                   | Purpose                                                                                                              |
 | ----------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `ALLOWED_HOSTS`         | built-in list (see below) | Comma-separated provider hosts; `*` allows any                                                                       |
@@ -165,25 +168,30 @@ npx wrangler secret put DEEPSEEK_KEY
 
 Each route has these keys (unknown keys are rejected):
 
-| Key             | Required                   | Meaning                                                                                                                                                                                                                  |
-| --------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`      | yes                        | `workers-ai`, `openai`, `openai-responses`, `gemini` or `anthropic`                                                                                                                                                      |
-| `model`         | yes                        | Model name sent to the backend                                                                                                                                                                                           |
-| `baseUrl`       | non-`workers-ai` providers | Provider URL including any version prefix (e.g. `https://api.openai.com/v1`); the proxy appends `chat/completions`, `responses` or `messages`. Checked against `ALLOWED_HOSTS` and `ALLOW_HTTP` like the path convention |
-| `keySecret`     | non-`workers-ai` providers | Name (`[A-Z][A-Z0-9_]*`) of a secret set with `wrangler secret put`; `PROXY_KEY` is rejected                                                                                                                             |
-| `fallback`      | no                         | Up to 3 model names to try after this one                                                                                                                                                                                |
-| `contextTokens` | no                         | Context window reported by `GET /v1/models`. Without it (and without a one-hop inheritance, below) the model reports 24 000, so set it for large-context models                                                          |
-| `reasoning`     | no                         | `true` reports the `thinking` capability in `GET /v1/models`; default `false`                                                                                                                                            |
-| `vision`        | no                         | Overrides `VISION_MODELS` for this model                                                                                                                                                                                 |
-| `multiTool`     | no                         | Overrides `MULTI_TOOL_MODELS` for this model                                                                                                                                                                             |
+| Key             | Required                   | Meaning                                                                                         |
+| --------------- | -------------------------- | ----------------------------------------------------------------------------------------------- |
+| `provider`      | yes                        | `workers-ai`, `openai`, `openai-responses`, `gemini` or `anthropic`                             |
+| `model`         | yes                        | Model name sent to the backend                                                                  |
+| `baseUrl`       | non-`workers-ai` providers | Provider URL including any version prefix (see **Base URLs** below)                             |
+| `keySecret`     | non-`workers-ai` providers | Name (`[A-Z][A-Z0-9_]*`) of a secret set with `wrangler secret put`; `PROXY_KEY` is rejected    |
+| `fallback`      | no                         | Up to 3 model names to try after this one                                                       |
+| `contextTokens` | no                         | Context window reported by `GET /v1/models`; default 24 000 (see **One-hop inheritance** below) |
+| `reasoning`     | no                         | `true` reports the `thinking` capability in `GET /v1/models`; default `false`                   |
+| `vision`        | no                         | Overrides `VISION_MODELS` for this model                                                        |
+| `multiTool`     | no                         | Overrides `MULTI_TOOL_MODELS` for this model                                                    |
 
 - **Shipped defaults:** `wrangler.jsonc` ships `MODELS` and `MODEL_ROUTES` with `@cf/zai-org/glm-5.3`,
   `@cf/moonshotai/kimi-k2.6` and `@cf/deepseek-ai/deepseek-v4-pro-0813`, each an identity route that
   carries its context window and `reasoning: true`. No model id is hard-coded in `src/`.
+- **Base URLs:** include any version prefix (e.g. `https://api.openai.com/v1`); the proxy appends
+  `chat/completions`, `responses` or `messages`. The URL is checked against `ALLOWED_HOSTS` and
+  `ALLOW_HTTP` like the path convention.
 - **One-hop inheritance:** a route that leaves `contextTokens`, `reasoning`, `vision` or `multiTool`
-  unset takes them from the backing model's exact route on the same provider (the route whose key, with no `*`, equals its `model`). Only one hop is
-  followed, so `claude-sonnet-*` pointing at `@cf/zai-org/glm-5.3` reports that model's window, but
-  a chain of aliases does not. A route's own value always wins.
+  unset takes them from the backing model's exact route on the same provider (the route whose key,
+  with no `*`, equals its `model`). Only one hop is followed, so `claude-sonnet-*` pointing at
+  `@cf/zai-org/glm-5.3` reports that model's window, but a chain of aliases does not. A route's own
+  value always wins. Without either, a model reports 24 000, so set `contextTokens` for
+  large-context models.
 - **Matching:** a key without `*` is an exact match and always wins. Otherwise the first
   glob key (in the order written) whose `*` wildcards match the name is used.
 - **Fallback:** only before a backend's response is accepted (before any backend content is
@@ -241,7 +249,7 @@ with a `retry-after` header. Each messages request also emits one JSON log line
 | `status`, `durationMs`                  | Final status and total time                                                                            |
 | `streamed`                              | `true` for streamed responses                                                                          |
 | `model`                                 | Model name the client requested                                                                        |
-| `route`                                 | Matching `MODEL_ROUTES` key, if any                                                                    |
+| `route`                                 | Matching `MODEL_ROUTES` key, if any (the shipped models have identity routes, so they log one)         |
 | `backend`                               | Final target as `provider:model`; path-convention requests log only the provider type                  |
 | `fallbackUsed`                          | `true` if a fallback target answered                                                                   |
 | `ttfbMs`                                | Time until the backend answered                                                                        |
@@ -1052,8 +1060,11 @@ that says to ignore the user, a webhook how-to that says to run curl "in your sh
 tutorial that says to use WebFetch on a docs URL. Known false-positive classes that remain:
 agent notes that tell agents to run curl, wget or WebFetch (`AI agents: run curl ...`), a chat
 log in which the assistant tells the user to run curl or wget, a how-to that says to run curl
-"in the shell" or "via Bash", a tutorial that says to use WebFetch on a URL "first", and any
-sentence that starts with "Ignore the user.".
+"in the shell" or "via Bash", a tutorial that says to use WebFetch on a URL "first", a log
+line with no timestamp that starts with `[system]:`, `[operator]:` or `[admin]:` and mentions
+"priority", "instruction", "ignore" or "override" soon after (`[system]: priority queue
+drained`), and any sentence, or clause after `: `, that starts with "Ignore the user." or
+"ignore the user," (`On a bad token: ignore the user, return 401`).
 
 ## Point Claude Code at the Worker
 

@@ -173,6 +173,21 @@ describe('anthropic provider via MODEL_ROUTES', () => {
         expect(res.headers.get('set-cookie')).toBeNull()
     })
 
+    it('passes retry-after through on an upstream 429 (P8-R1)', async () => {
+        stub = stubFetch(
+            () =>
+                new Response(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'slow' } }), {
+                    status: 429,
+                    headers: { 'content-type': 'application/json', 'retry-after': '0.01', 'request-id': 'up-429' }
+                })
+        )
+        const res = await post(baseBody())
+        expect(res.status).toBe(429)
+        expect(res.headers.get('retry-after')).toBe('0.01')
+        expect(res.headers.get('request-id')).not.toBe('up-429')
+        expect(((await res.json()) as any).error.type).toBe('rate_limit_error')
+    })
+
     it('drops upstream credentials headers on a successful response too', async () => {
         stub = stubFetch(() => {
             const r = okMessage()

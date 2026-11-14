@@ -6,8 +6,9 @@
     "workers_dev": true,
     "preview_urls": false,
     // This file is the source of truth for non-sensitive config: dashboard vars are
-    // deleted on deploy; secrets (PROXY_KEY) are not. Set vars below, e.g.
-    // "vars": { "ALLOWED_HOSTS": "api.openai.com" }. Values are strings. Defaults:
+    // deleted on deploy; secrets (PROXY_KEY) are not. Add vars as new keys inside the
+    // "vars" block below, next to MODELS and MODEL_ROUTES (keep those, or the shipped
+    // models are lost), e.g. "ALLOWED_HOSTS": "api.openai.com". Values are strings. Defaults:
     //   ALLOWED_HOSTS     api.openai.com, generativelanguage.googleapis.com, api.anthropic.com,
     //                     openrouter.ai, api.groq.com, api.deepseek.com, api.mistral.ai, api.x.ai
     //                     ("*" allows any host)
@@ -22,7 +23,7 @@
     //                     default 24000), reasoning (thinking capability, default false),
     //                     vision and multiTool (override VISION_MODELS / MULTI_TOOL_MODELS).
     //                     An alias route inherits unset settings from the route keyed by its
-    //                     model (one hop).
+    //                     model on the same provider (one hop).
     //   DRAFT_MODEL       none  (default model for MCP purple draft_rule; else the first /v1/models entry)
     //   JUDGE_MODEL       none  (default judge for MCP redteam; judgeModel "" turns it off)
     //   VISION_MODELS     none (comma-separated model ids)
