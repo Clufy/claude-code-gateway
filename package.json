@@ -1,11 +1,11 @@
 {
-    "name": "claude-worker-proxy",
+    "name": "claude-code-gateway",
     "version": "0.0.0",
     "private": true,
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "https://github.com/Clufy/Cloudflare-worker-proxy.git"
+        "url": "https://github.com/Clufy/claude-code-gateway.git"
     },
     "scripts": {
         "deploy": "wrangler types && prettier --write . && wrangler deploy",

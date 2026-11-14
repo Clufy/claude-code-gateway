@@ -1,4 +1,4 @@
-# claude-worker-proxy
+# claude-code-gateway
 
 A Cloudflare Worker that lets [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 run against multiple AI backends through an Anthropic-compatible API.

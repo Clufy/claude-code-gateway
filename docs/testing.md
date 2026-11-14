@@ -1,4 +1,4 @@
-# Testing Checklist — claude-worker-proxy
+# Testing Checklist — claude-code-gateway
 
 **Deployed URL:** `https://claude-workers-ai-proxy.<your-subdomain>.workers.dev`
 
@@ -303,7 +303,7 @@ curl -sS "${H[@]}" -X POST "$LOCAL/mcp" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"engagement","arguments":{"action":"list"}}}'
 ```
 
-**Expected:** `initialize` returns `serverInfo.name` `claude-worker-proxy`; `tools/list` returns exactly 4 tools, `engagement`, `logs`, `redteam` and `purple`; the `engagement` call returns a JSON text with your engagements (or `{"engagements":[],"hint":"set the ENGAGEMENTS secret"}` with none). Each `tools/call` prints one `event: "mcp"` line with `ok: true` and no arguments.
+**Expected:** `initialize` returns `serverInfo.name` `claude-code-gateway`; `tools/list` returns exactly 4 tools, `engagement`, `logs`, `redteam` and `purple`; the `engagement` call returns a JSON text with your engagements (or `{"engagements":[],"hint":"set the ENGAGEMENTS secret"}` with none). Each `tools/call` prints one `event: "mcp"` line with `ok: true` and no arguments.
 
 - [ ] **Auth and methods.** `curl -i -X GET "$LOCAL/mcp"` returns `405` with `allow: POST`. A `POST` with a wrong Bearer returns `401 {"error":"invalid authorization"}`; `x-api-key` instead of a Bearer also returns `401`. A body over 65536 bytes returns `413`. A JSON-RPC batch (a body that is an array of two `tools/call` requests) returns `400` with error code `-32600`. `logs` without `CF_API_TOKEN` and `CF_ACCOUNT_ID` returns `isError: true` with `logs not configured: ...`; with only one of them set it returns `isError: true` with `logs misconfigured: <reason>` while `GET /` and `/v1/messages` still work.
 - [ ] **Claude Code.** `claude mcp add --transport http proxy-local http://127.0.0.1:8080/mcp --header "Authorization: Bearer $PROXY_KEY"`, start Claude Code and run `/mcp`. **Expected:** `proxy-local` connected with 4 tools. Ask it to list engagements and to scope-check a host; the answers match section 13's decisions. Remove it afterwards with `claude mcp remove proxy-local`.

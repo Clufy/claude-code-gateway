@@ -25,7 +25,7 @@ describe('POST /mcp', () => {
         const res = await mcpCall('initialize', init)
         expect(res.status).toBe(200)
         const json: any = await res.json()
-        expect(json.result.serverInfo.name).toBe('claude-worker-proxy')
+        expect(json.result.serverInfo.name).toBe('claude-code-gateway')
         expect(json.result.capabilities.tools).toBeDefined()
     })
 

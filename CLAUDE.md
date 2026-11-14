@@ -1,4 +1,4 @@
-# claude-worker-proxy
+# claude-code-gateway
 
 Cloudflare Worker that serves the Anthropic Messages API to Claude Code and routes each model to
 Workers AI, OpenAI, Gemini or Anthropic, with a session guard, red-team/purple tooling and an MCP
