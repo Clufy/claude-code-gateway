@@ -38,6 +38,7 @@ claude-code/hooks/   The scope-guard PreToolUse hook for Claude Code
 redteam/corpus/      Attack cases, one folder per suite (deliberate injection text: test data)
 redteam/purple/      Dogfood Sigma rules and their benign probe set
 docs/                User docs; docs/history/ holds the original specs and plans
+.github/workflows/   CI: npm run check and npm test on every push to main and every pull request
 wrangler.jsonc       Worker config and the shipped vars (MODELS, MODEL_ROUTES)
 ```
 

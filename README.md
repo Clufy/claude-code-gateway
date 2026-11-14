@@ -143,3 +143,8 @@ unset ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL ANTHROPIC_AP
   implemented.
 - `PROXY_KEY` is a single shared secret with no per-user rate limiting beyond
   Cloudflare's platform controls.
+
+## Contributing and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to set up and send changes, and [SECURITY.md](SECURITY.md) to
+report a vulnerability privately. Released under the [MIT License](LICENSE).
