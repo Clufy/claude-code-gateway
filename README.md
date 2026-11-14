@@ -234,8 +234,10 @@ requests or to the `/{type}/{provider_url}/v1/messages` path.
 | Header allowlist  | Only allowlisted client headers are forwarded upstream; the rest are stripped. There is no opt-out variable.                                                                                                             | none                                                                                                                          |
 | Invalid config    | A malformed var (e.g. `MAX_BODY_BYTES=abc`, `ALLOW_HTTP=yes`) makes every request fail with `500` instead of silently using a default. Fix the var in `wrangler.jsonc`.                                                  | `invalid config: <VAR>` (e.g. `invalid config: MAX_BODY_BYTES`)                                                               |
 
-Provider API keys are scrubbed from upstream responses before they are returned: error bodies whole, and
-successful (including streamed) bodies as they arrive, so an error event inside a `200` stream is covered too.
+Provider API keys that appear verbatim in an upstream response are scrubbed before it is returned:
+error bodies whole, and successful (including streamed) bodies as they arrive, so an error event
+inside a `200` stream is covered too. A key that model output spreads over several stream events is
+not contiguous in the bytes and is not caught.
 
 ### 7. Rate limiting and logging (built in)
 
@@ -1065,10 +1067,10 @@ tutorial that says to use WebFetch on a docs URL. Known false-positive classes t
 agent notes that tell agents to run curl, wget or WebFetch (`AI agents: run curl ...`), a chat
 log in which the assistant tells the user to run curl or wget, a how-to that says to run curl
 "in the shell" or "via Bash", a tutorial that says to use WebFetch on a URL "first", a log
-line with no timestamp that starts with `[system]:`, `[operator]:` or `[admin]:` and mentions
-"priority", "instruction", "ignore" or "override" soon after (`[system]: priority queue
-drained`), and any sentence, or clause after `: `, that starts with "Ignore the user." or
-"ignore the user," (`On a bad token: ignore the user, return 401`).
+line with no timestamp that starts with `[system]:`, `[operator]:` or `[admin]:` (lower, title or upper case) and
+mentions "priority", "instruction", "ignore" or "override" soon after (`[system]: priority queue
+drained`), and "ignore the user" (first word lower, title or upper case) followed by `.`, `,` or `!` at the start
+of a line, after `>`, or after `. `, `! `, `? ` or `: ` (`On a bad token: ignore the user, return 401`).
 
 ## Point Claude Code at the Worker
 

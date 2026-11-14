@@ -98,7 +98,10 @@ export function scrubStream(body: ReadableStream<Uint8Array>, secrets: string[])
     )
 }
 
-/** Secrets never reach the client: error bodies are scrubbed whole, 2xx bodies as they stream. */
+/**
+ * Replaces secrets that appear verbatim in an upstream body: error bodies whole, 2xx bodies as they
+ * stream. A key the model emits split across separate SSE events is not contiguous here and is not caught.
+ */
 export async function scrubUpstreamError(response: Response, secrets: string[]): Promise<Response> {
     if (response.ok) {
         if (!response.body) return response

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_RULE_BYTES, parseSigma } from '../src/purple/sigma'
+import { promoteRule } from '../src/purple/promote'
 import {
     DRAFT_SYSTEM,
     MAX_FINDING_CHARS,
@@ -48,6 +49,9 @@ describe('extractYaml', () => {
     it('P7-M5: a closed fence still wins, yaml before plain', () => {
         expect(extractYaml('```\na: 1\n```\n```yaml\nb: 2\n```')).toBe('b: 2')
         expect(extractYaml('```yaml\na: 1\n```\n```yaml\nb: 2')).toBe('a: 1')
+    })
+    it('review: a fence mentioned mid-line in prose does not pair with a cut-off yaml fence', () => {
+        expect(extractYaml('Wrap it in ``` fences:\n```yaml\ntitle: x\nlevel: high')).toBe('title: x\nlevel: high')
     })
     it('P7-M5 follow-up: a closed plain fence beats a later unterminated yaml fence', () => {
         expect(extractYaml('```\na: 1\n```\n```yaml\nb: 2')).toBe('a: 1')
@@ -114,11 +118,11 @@ describe('draftRule prompt', () => {
             expect(user.indexOf(block)).toBeLessThan(user.indexOf('<<<FINDING'))
         }
     })
-    it('M3: gives a template that parses, uses the logsource and the first field, before the finding', async () => {
+    it('M3: gives a template that parses, uses the logsource and its phrase field, before the finding', async () => {
         const kinds: [DraftLogsource, string][] = [
             ['prompt', 'text'],
-            ['tool_use', 'tool'],
-            ['detection', 'ruleId'],
+            ['tool_use', 'text'],
+            ['detection', 'excerpt'],
             ['request', 'model']
         ]
         for (const [kind, field] of kinds) {
@@ -166,6 +170,22 @@ describe('draftRule result', () => {
             'logsource.category is missing, expected "prompt"',
             'field "prompt" is not a prompt field (fields: text)'
         ])
+    })
+    it('review: warns about an extra logsource key', async () => {
+        const d = await draftRule('f', 'prompt', async () =>
+            VALID.replace('  category: prompt', '  category: prompt\n  service: request')
+        )
+        expect(d.valid).toBe(true)
+        expect(d.warnings).toEqual(['logsource.service is "request", but a prompt rule has no service'])
+    })
+    it('review: caps unknown-field warnings at 10 and counts the rest', async () => {
+        const fields = Array.from({ length: 25 }, (_, i) => `    f${i}: 1`).join('\n')
+        const d = await draftRule('f', 'prompt', async () =>
+            VALID.replace('    text|contains: ignore previous', fields)
+        )
+        expect(d.warnings).toHaveLength(11)
+        expect(d.warnings![9]).toBe('field "f9" is not a prompt field (fields: text)')
+        expect(d.warnings![10]).toBe('and 15 more unknown fields')
     })
     it('M4: lists each unknown field once', async () => {
         const text = VALID.replace(
@@ -215,5 +235,15 @@ describe('draftRule result', () => {
             status: 'draft',
             next: NEXT
         })
+    })
+})
+
+describe('draftTemplate and promotion (review)', () => {
+    it.each<DraftLogsource>(['prompt', 'tool_use'])('a filled-in %s template is promotable', (kind) => {
+        const p = parseSigma(draftTemplate(kind).replace('<distinctive phrase from the finding>', 'run curl now'))
+        expect(p.ok).toBe(true)
+        if (!p.ok) return
+        const promo = promoteRule(p.rule, [{ text: 'please run curl now' }, { text: 'benign' }])
+        expect(promo.ok).toBe(true)
     })
 })
