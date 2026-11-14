@@ -1,10 +1,10 @@
-import { upstreamHeaders } from '../upstream-headers'
-import * as types from '../types'
-import * as provider from '../provider'
-import * as utils from '../utils'
-import * as tokens from '../tokens'
-import * as reasoning from '../reasoning'
-import * as toolChoice from '../tool-choice'
+import { upstreamHeaders } from '../routing/upstream-headers'
+import * as types from '../translate/types'
+import * as provider from './provider'
+import * as utils from '../translate/common'
+import * as tokens from '../translate/tokens'
+import * as reasoning from '../translate/reasoning'
+import * as toolChoice from '../translate/tool-choice'
 
 export class impl implements provider.Provider {
     private inputTokensEstimate = 0

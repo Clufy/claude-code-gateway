@@ -1,4 +1,4 @@
-import type { Severity } from '../audit'
+import type { Severity } from '../logs/audit'
 
 export type RuleSide = 'request' | 'response'
 

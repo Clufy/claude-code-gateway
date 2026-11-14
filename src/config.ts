@@ -1,4 +1,4 @@
-import { resolveProviderUrl } from './provider-url'
+import { resolveProviderUrl } from './routing/provider-url'
 import { parseEngagements, type Engagement } from './engagement'
 import { parseGuardRules, type GuardConfig } from './guard/config'
 

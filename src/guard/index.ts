@@ -3,10 +3,10 @@
  * over each response tool_use block, and logs redacted detection lines. Every rule call is wrapped: a guard
  * failure is lost silently and never reaches the client or the request log line.
  */
-import { logDetection, type Severity } from '../audit'
+import { logDetection, type Severity } from '../logs/audit'
 import type { ProxyConfig } from '../config'
 import type { Engagement } from '../engagement'
-import type { BackendStats } from '../stats'
+import type { BackendStats } from '../logs/stats'
 import { excerptAt } from './redact'
 import { exfilMarkup, injectInstruction, newestTurn, secretEgress, type Segment } from './request-rules'
 import { cmdRisky, scopeOutOfScope, shellCommand } from './response-rules'

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { judgeViaAnthropic } from '../shared/redteam/judge.ts'
-import { queryEvents, type LogFilter } from '../observability'
+import { queryEvents, type LogFilter } from '../logs/observability'
 import { DRAFT_MAX_TOKENS, draftRule, type DraftLogsource } from '../purple/draft'
 import { testRule } from '../purple/evaluate'
 import { promoteRule } from '../purple/promote'

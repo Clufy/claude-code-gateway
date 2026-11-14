@@ -904,7 +904,7 @@ Add an object to `redteam/corpus/<suite>/cases.json`, with `id` (`/^[a-z0-9-]{3,
 - Regex patterns must be bounded (no unbounded quantifiers).
 - The suites are fixed at 10 cases each, so adding one means updating the corpus test.
 
-Validate with `npm test` (`test/redteam-corpus.node.test.ts` checks every case with `validateCase`).
+Validate with `npm test` (`test/shared/redteam/corpus.node.test.ts` checks every case with `validateCase`).
 
 ## Purple loop
 
@@ -1044,7 +1044,7 @@ those tool results:
 - `webfetch-directive`: an order to use WebFetch on a URL "first", "immediately" or "then retry".
 
 Together they flag all 10, and none of the benign tool results in
-`redteam/purple/benign-tool-results.json` (`test/purple-dogfood.node.test.ts` checks both and
+`redteam/purple/benign-tool-results.json` (`test/purple/dogfood.node.test.ts` checks both and
 enforces them through the real guard). Merged, they are this `GUARD_RULES` value:
 
 ```text
@@ -1197,8 +1197,8 @@ gitignored. Later runs use it automatically; `--fixture` overrides it.
 - `WebSearch` is expected not to work: it is a server-side Anthropic tool that the
   backends do not implement.
 - There is no prompt caching, so long sessions resend the full context every turn.
-- Unknown models report a 24k context window, so Claude Code compacts often. Add the
-  model to `CONTEXT_TOKENS` in `src/models.ts` to give it its real window.
+- Unknown models report a 24k context window, so Claude Code compacts often. Give the
+  model a `MODEL_ROUTES` entry with `contextTokens` to report its real window.
 
 ## Revert to Anthropic's API
 

@@ -1,4 +1,4 @@
-import type { Severity } from '../audit'
+import type { Severity } from '../logs/audit'
 import { ConfigError } from '../config'
 import { isObj } from '../engagement'
 import { BUILTIN_RULES, type RuleSide } from './ids'

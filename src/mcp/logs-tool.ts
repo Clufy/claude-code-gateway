@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { redact } from '../guard/redact'
-import { queryEvents, type LogFilter, type LogRow } from '../observability'
+import { queryEvents, type LogFilter, type LogRow } from '../logs/observability'
 import { fail, logged, type ToolRegistrar } from './tool-kit'
 
 const MINUTE = 60_000

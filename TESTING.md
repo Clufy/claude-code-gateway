@@ -437,7 +437,7 @@ curl -sS -X POST "$LOCAL/anthropic/api.anthropic.com/v1/v1/messages" \
 
 ## CPU budget benchmark (`npm run bench`)
 
-`npm test` asserts no wall-clock time. The spec's CPU budgets are checked by `npm run bench` (vitest project `bench`, `test/guard-bench.bench.test.ts`):
+`npm test` asserts no wall-clock time. The spec's CPU budgets are checked by `npm run bench` (vitest project `bench`, `test/guard/bench.bench.test.ts`):
 
 - the session guard adds at most 10 ms p95 on a 1 MB request body (default config, built-in rules only; relaxed from the spec's original 5 ms on 2026-11-13, since medians sit near 5 ms), and `/v1/guard/check`-style decisions stay within 50 ms;
 - every adversarial unit (1 MB tool results, 100 KB commands) runs within 50 ms;

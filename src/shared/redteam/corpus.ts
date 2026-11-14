@@ -7,7 +7,7 @@ import sensitiveInfo from '../../../redteam/corpus/sensitive-info/cases.json' wi
 import systemPromptLeakage from '../../../redteam/corpus/system-prompt-leakage/cases.json' with { type: 'json' }
 import type { Owasp, RedteamCase } from './types.ts'
 
-/** Corpus v1 (plan D10): 7 suites x 10 canary-based cases. Cases are validated by test/redteam-corpus.node.test.ts. */
+/** Corpus v1 (plan D10): 7 suites x 10 canary-based cases. Cases are validated by test/shared/redteam/corpus.node.test.ts. */
 export const CORPUS: Record<string, RedteamCase[]> = {
     'direct-injection': directInjection as RedteamCase[],
     'indirect-injection': indirectInjection as RedteamCase[],

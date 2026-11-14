@@ -1,7 +1,7 @@
-import { readLimitedBody } from '../body-limit'
+import { readLimitedBody } from '../http/body-limit'
 import type { ProxyConfig } from '../config'
 import { isObj } from '../engagement'
-import { anthropicError, jsonResponse } from '../errors'
+import { anthropicError, jsonResponse } from '../http/errors'
 import { decideToolCall } from './decide'
 import { redact } from './redact'
 

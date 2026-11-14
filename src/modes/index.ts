@@ -1,7 +1,7 @@
-import { logDetection } from '../audit'
+import { logDetection } from '../logs/audit'
 import type { ProxyConfig } from '../config'
 import { inWindow, MODES, type ProxyMode } from '../engagement'
-import { anthropicError } from '../errors'
+import { anthropicError } from '../http/errors'
 import { buildModeBlock } from './block'
 
 /** outOfWindow: applyMode logged the engagement.out_of_window line (the guard counts it, P4-R29). */

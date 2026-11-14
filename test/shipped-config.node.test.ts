@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { loadConfig } from '../src/config'
-import { listModels } from '../src/models'
+import { listModels } from '../src/routing/models'
 
 // Drops // comments and trailing commas, leaving string contents (including https://) untouched.
 function parseJsonc(text: string): any {

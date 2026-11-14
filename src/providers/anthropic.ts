@@ -1,5 +1,5 @@
-import { Provider } from '../provider'
-import { buildUrl } from '../utils'
+import { Provider } from './provider'
+import { buildUrl } from '../translate/common'
 
 const ANTHROPIC_VERSION = '2023-06-01'
 // P8-D4: only these upstream response headers reach the client. Anthropic's request-id,
