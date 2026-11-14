@@ -280,7 +280,7 @@ describe('units deferred from earlier reviews', () => {
     })
 })
 
-// Per-rule timing units (moved from guard-request-rules.node.test.ts)
+// Per-rule timing units (moved from test/guard/request-rules.node.test.ts)
 
 const ruleUnits: Record<string, string> = {
     pem: '-----BEGIN ',

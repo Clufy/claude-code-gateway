@@ -314,7 +314,7 @@ curl -sS "${H[@]}" -X POST "$BASE/mcp" \
   -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"logs","arguments":{"action":"findings","since":"1h"}}}'
 ```
 
-**Expected:** the `inject.instruction` row appears under `findings` (rows have `time`, `ruleId`, `severity`, `requestId`, `excerpt`), and `activity` shows the request line with its `model`, `backend` and, if the model called a tool, `tools`. Also record the exact name of the token permission in the Cloudflare dashboard that made the call work (the README does not verify it) and fix the README if needed. An HTTP `401` or `403` in the error means the token lacks Workers Observability Edit/Write.
+**Expected:** the `inject.instruction` row appears under `findings` (rows have `time`, `ruleId`, `severity`, `requestId`, `excerpt`), and `activity` shows the request line with its `model`, `backend` and, if the model called a tool, `tools`. Also record the exact name of the token permission in the Cloudflare dashboard that made the call work ([mcp.md](mcp.md) does not verify it) and fix [mcp.md](mcp.md) if needed. An HTTP `401` or `403` in the error means the token lacks Workers Observability Edit/Write.
 
 - [ ] **If `findings` is empty while detections exist.** The custom-field filter key names are unverified. Read the real key names from the API's keys endpoint and compare them with `event`, `engagement`, `ruleId` and `severity`:
 

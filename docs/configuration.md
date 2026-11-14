@@ -4,14 +4,16 @@ Routes, providers, every `wrangler.jsonc` var, the security defaults, logging an
 
 ## Supported routes
 
-| Method | Path                                 | Purpose                              |
-| ------ | ------------------------------------ | ------------------------------------ |
-| `GET`  | `/`                                  | Health check: `ok`                   |
-| `GET`  | `/v1/models`                         | List supported models                |
-| `GET`  | `/v1/models/{id}`                    | Retrieve one model                   |
-| `POST` | `/v1/messages/count_tokens`          | Estimate input token count           |
-| `POST` | `/v1/messages`                       | Anthropic Messages API -> Workers AI |
-| `POST` | `/{type}/{provider_url}/v1/messages` | External provider proxy              |
+| Method | Path                                 | Purpose                                            |
+| ------ | ------------------------------------ | -------------------------------------------------- |
+| `GET`  | `/`                                  | Health check: `ok`                                 |
+| `GET`  | `/v1/models`                         | List supported models                              |
+| `GET`  | `/v1/models/{id}`                    | Retrieve one model                                 |
+| `POST` | `/v1/messages/count_tokens`          | Estimate input token count                         |
+| `POST` | `/v1/messages`                       | Anthropic Messages API -> Workers AI               |
+| `POST` | `/{type}/{provider_url}/v1/messages` | External provider proxy                            |
+| `POST` | `/v1/guard/check`                    | [Scope check](engagements.md#scope-check-endpoint) |
+| `POST` | `/mcp`                               | [MCP server](mcp.md)                               |
 
 `{type}` is `gemini`, `openai`, `openai-responses` or `anthropic`.
 
