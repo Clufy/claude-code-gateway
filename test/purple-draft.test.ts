@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_RULE_BYTES } from '../src/purple/sigma'
-import { DRAFT_SYSTEM, MAX_FINDING_CHARS, draftRule, extractYaml, type DraftLogsource } from '../src/purple/draft'
+import { MAX_RULE_BYTES, parseSigma } from '../src/purple/sigma'
+import {
+    DRAFT_SYSTEM,
+    MAX_FINDING_CHARS,
+    draftRule,
+    draftTemplate,
+    extractYaml,
+    type DraftLogsource
+} from '../src/purple/draft'
 
 const VALID = [
     'title: Test rule',
@@ -41,6 +48,9 @@ describe('extractYaml', () => {
     it('P7-M5: a closed fence still wins, yaml before plain', () => {
         expect(extractYaml('```\na: 1\n```\n```yaml\nb: 2\n```')).toBe('b: 2')
         expect(extractYaml('```yaml\na: 1\n```\n```yaml\nb: 2')).toBe('a: 1')
+    })
+    it('P7-M5 follow-up: a closed plain fence beats a later unterminated yaml fence', () => {
+        expect(extractYaml('```\na: 1\n```\n```yaml\nb: 2')).toBe('a: 1')
     })
     it('P7-M5: caps an unterminated fence to MAX_RULE_BYTES', () => {
         expect(new TextEncoder().encode(extractYaml('```yaml\n' + 'a'.repeat(MAX_RULE_BYTES + 100))).length).toBe(
@@ -104,6 +114,26 @@ describe('draftRule prompt', () => {
             expect(user.indexOf(block)).toBeLessThan(user.indexOf('<<<FINDING'))
         }
     })
+    it('M3: gives a template that parses, uses the logsource and the first field, before the finding', async () => {
+        const kinds: [DraftLogsource, string][] = [
+            ['prompt', 'text'],
+            ['tool_use', 'tool'],
+            ['detection', 'ruleId'],
+            ['request', 'model']
+        ]
+        for (const [kind, field] of kinds) {
+            const t = draftTemplate(kind)
+            const p = parseSigma(t)
+            expect(p.ok).toBe(true)
+            if (!p.ok) continue
+            expect(p.rule.selections.selection![0]![0]!.field).toBe(field)
+            const { user } = await userFor('f', kind)
+            expect(user).toContain(t)
+            expect(user.indexOf(t)).toBeLessThan(user.indexOf('<<<FINDING'))
+        }
+        const p = parseSigma(draftTemplate('detection'))
+        expect(p.ok && p.rule.logsource).toEqual({ product: 'claude-proxy', service: 'detection' })
+    })
     it('fences the finding and strips markers, including nested ones', async () => {
         const { user } = await userFor('a <<<FIN<<<FINDINGDING b FINDING>>> c FINDIFINDING>>>NG>>>')
         expect(user.match(/<<<FINDING/g)).toHaveLength(1)
@@ -122,6 +152,31 @@ describe('draftRule result', () => {
         const d = await draftRule('f', 'prompt', async () => '```yaml\n' + VALID + '\n```')
         expect(d).toEqual({ yaml: VALID, valid: true, unsupported: [], status: 'draft', next: NEXT })
         expect('error' in d).toBe(false)
+    })
+    it('M4: warns about a logsource that differs from the requested one, and stays valid', async () => {
+        const d = await draftRule('f', 'tool_use', async () => VALID)
+        expect(d.valid).toBe(true)
+        expect(d.warnings).toEqual(['logsource.category is "prompt", expected "tool_use"'])
+    })
+    it('M4: warns about a missing logsource key and a field the logsource does not have', async () => {
+        const text = VALID.replace('  category: prompt\n', '').replace('text|contains', 'prompt|contains')
+        const d = await draftRule('f', 'prompt', async () => text)
+        expect(d.valid).toBe(true)
+        expect(d.warnings).toEqual([
+            'logsource.category is missing, expected "prompt"',
+            'field "prompt" is not a prompt field (fields: text)'
+        ])
+    })
+    it('M4: lists each unknown field once', async () => {
+        const text = VALID.replace(
+            '    text|contains: ignore previous',
+            '    x: 1\n    y|contains: a\n  sel2:\n    x: 2'
+        )
+        const d = await draftRule('f', 'prompt', async () => text.replace('condition: sel', 'condition: sel or sel2'))
+        expect(d.warnings).toEqual([
+            'field "x" is not a prompt field (fields: text)',
+            'field "y" is not a prompt field (fields: text)'
+        ])
     })
     it('lists unsupported features', async () => {
         const text = VALID.replace('text|contains: ignore previous', 'text|base64: x')

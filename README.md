@@ -910,7 +910,8 @@ detection into a guard rule. Rules are written in a subset of [Sigma](https://si
 It has three actions:
 
 1. `draft_rule` asks a routed model (`model`, default the first entry in `/v1/models`) to write a
-   Sigma rule for a finding. The finding is fenced as untrusted data.
+   Sigma rule for a finding from a template for the chosen `logsource`. The finding is fenced as
+   untrusted data.
 2. `test_rule` runs a rule against JSON `events` you supply (optionally with `expect`, the indexes
    that must match), or against this Worker's logs (`logs`, the same `since`, `engagement` and
    `limit` as the `logs` tool).
@@ -971,7 +972,9 @@ above as a JSON string):
 }
 ```
 
-- `draft_rule` returns `yaml`, `valid`, `unsupported`, `status`, `next` and the `model` used.
+- `draft_rule` returns `yaml`, `valid`, `unsupported`, `status`, `next` and the `model` used. A
+  valid draft whose logsource differs from the requested one, or that uses a field the logsource
+  does not have, also gets `warnings`, one line per problem. Warnings never make a draft invalid.
 - `test_rule` returns `matched` (event indexes) and, with `expect`, `passed`, `missedExpected`
   and `unexpectedMatches`. With `logs` it also returns the `time` and `requestId` of each
   matched row.
