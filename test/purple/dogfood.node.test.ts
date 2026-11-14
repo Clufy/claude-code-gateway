@@ -1,4 +1,4 @@
-// Node project: reads redteam/purple/*.yml and README.md from disk.
+// Node project: reads redteam/purple/*.yml and docs/purple-loop.md from disk.
 import { readdirSync, readFileSync } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { loadConfig } from '../../src/config'
@@ -100,9 +100,12 @@ describe('purple dogfood: agent-session indirect injections', () => {
         expect(noisy).toEqual([])
     })
 
-    it('README.md carries the merged snippet exactly', () => {
+    it('docs/purple-loop.md carries the merged snippet exactly', () => {
         expect(entries.length).toBeGreaterThan(0)
-        // a boolean, so a failure prints the expected snippet rather than the whole README
-        expect(readFileSync('README.md', 'utf8').includes(snippet()), `README.md lacks ${snippet()}`).toBe(true)
+        // a boolean, so a failure prints the expected snippet rather than the whole doc
+        expect(
+            readFileSync('docs/purple-loop.md', 'utf8').includes(snippet()),
+            `docs/purple-loop.md lacks ${snippet()}`
+        ).toBe(true)
     })
 })
