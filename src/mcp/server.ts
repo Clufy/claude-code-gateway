@@ -47,7 +47,7 @@ export async function handleMcp(
     const bounded = new Request(request.url, { method: 'POST', headers, body: body.text })
 
     const server = new McpServer(
-        { name: 'claude-code-gateway', version: '0.5.0' },
+        { name: 'claude-code-gateway', version: '1.0.0' },
         { capabilities: { tools: {} }, jsonSchemaValidator: new CfWorkerJsonSchemaValidator() }
     )
     const selfFetch =

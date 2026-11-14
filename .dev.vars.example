@@ -1,0 +1,5 @@
+# Secrets for local dev: copy this file to .dev.vars (gitignored) and fill in the values.
+# The Deploy to Cloudflare button also reads this file and asks for each secret during setup.
+
+# Required. The key Claude Code sends in x-api-key; use a long random value.
+PROXY_KEY=

@@ -1,6 +1,6 @@
 {
     "name": "claude-code-gateway",
-    "version": "0.0.0",
+    "version": "1.0.0",
     "private": true,
     "license": "MIT",
     "repository": {
@@ -32,5 +32,12 @@
         "@modelcontextprotocol/sdk": "1.32.2",
         "yaml": "2.9.1",
         "zod": "^4.6.7"
+    },
+    "cloudflare": {
+        "bindings": {
+            "PROXY_KEY": {
+                "description": "Required. The key Claude Code sends in the `x-api-key` header; requests without it are refused. Use a long random value and keep it secret."
+            }
+        }
     }
 }
