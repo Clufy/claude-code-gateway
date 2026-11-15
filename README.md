@@ -1,3 +1,5 @@
+![claude-code-gateway: run Claude Code on any LLM through a Cloudflare Worker](.github/assets/banner.gif)
+
 # claude-code-gateway: run Claude Code on any LLM with Cloudflare Workers
 
 [![CI](https://github.com/Clufy/claude-code-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/Clufy/claude-code-gateway/actions/workflows/ci.yml)
