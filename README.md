@@ -1,11 +1,13 @@
-# claude-code-gateway
+# claude-code-gateway: run Claude Code on any LLM with Cloudflare Workers
 
 [![CI](https://github.com/Clufy/claude-code-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/Clufy/claude-code-gateway/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Clufy/claude-code-gateway)
 
-**Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on any model: open models on
-Cloudflare Workers AI, OpenAI, Gemini or Anthropic, through one Worker you deploy yourself.**
+**Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on any model: open-source LLMs on
+Cloudflare Workers AI (GLM, Kimi, DeepSeek), OpenAI, Gemini or Anthropic, through one self-hosted LLM gateway you deploy yourself.**
+
+Website: [clufy.github.io/claude-code-gateway](https://clufy.github.io/claude-code-gateway/)
 
 claude-code-gateway is a Cloudflare Worker that speaks the Anthropic Messages API, so Claude Code
 talks to it as if it were Anthropic. Behind it, each model name routes to a backend of your choice,
@@ -188,6 +190,14 @@ unset ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL ANTHROPIC_AP
   implemented.
 - `PROXY_KEY` is a single shared secret with no per-user rate limiting beyond
   Cloudflare's platform controls.
+
+## Related projects
+
+By [Aquib Haq](https://github.com/Clufy) · [clufy.github.io](https://clufy.github.io/)
+
+- [spanguard](https://github.com/Clufy/spanguard): PII/PHI detection and redaction for Python.
+- [voxbridge](https://github.com/Clufy/voxbridge): one Python SDK for Vapi and Retell voice agents.
+- [Sentinel](https://github.com/Clufy/Sentinel): AI compliance assistant for NIST 800-53, ISO 27001 and CIS Controls.
 
 ## Contributing and license
 
