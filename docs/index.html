@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude-code-gateway: run Claude Code on any LLM with Cloudflare Workers</title>
+<meta name="description" content="Open-source Cloudflare Worker that speaks the Anthropic Messages API so Claude Code can run on Workers AI open models, OpenAI, Gemini, DeepSeek or Anthropic, with a session guard, red-team harness and MCP server.">
+<meta name="author" content="Aquib Haq">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://clufy.github.io/claude-code-gateway/">
+<meta name="theme-color" content="#0d1117">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Aquib Haq">
+<meta property="og:title" content="claude-code-gateway: run Claude Code on any LLM with Cloudflare Workers">
+<meta property="og:description" content="Open-source Cloudflare Worker that speaks the Anthropic Messages API so Claude Code can run on Workers AI open models, OpenAI, Gemini, DeepSeek or Anthropic, with a session guard, red-team harness and MCP server.">
+<meta property="og:url" content="https://clufy.github.io/claude-code-gateway/">
+<meta property="og:image" content="https://clufy.github.io/claude-code-gateway/og-image.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="claude-code-gateway: run Claude Code on any LLM with Cloudflare Workers">
+<meta name="twitter:description" content="Open-source Cloudflare Worker that speaks the Anthropic Messages API so Claude Code can run on Workers AI open models, OpenAI, Gemini, DeepSeek or Anthropic, with a session guard, red-team harness and MCP server.">
+<meta name="twitter:image" content="https://clufy.github.io/claude-code-gateway/og-image.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d1117'/%3E%3Crect x='3' y='3' width='4' height='26' rx='2' fill='%23f78166'/%3E%3Ctext x='19' y='23' font-family='Arial' font-weight='700' font-size='17' fill='%23e6edf3' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareSourceCode","name":"claude-code-gateway","description":"Open-source Cloudflare Worker that speaks the Anthropic Messages API so Claude Code can run on Workers AI open models, OpenAI, Gemini, DeepSeek or Anthropic, with a session guard, red-team harness and MCP server.","url":"https://clufy.github.io/claude-code-gateway/","codeRepository":"https://github.com/Clufy/claude-code-gateway","programmingLanguage":"TypeScript","license":"https://opensource.org/licenses/MIT","keywords":"Claude Code, LLM gateway, LLM proxy, Cloudflare Workers AI, Anthropic API, OpenAI, Gemini, DeepSeek, MCP, prompt injection, red team","author":{"@type":"Person","name":"Aquib Haq","url":"https://clufy.github.io/","sameAs":["https://github.com/Clufy","https://www.linkedin.com/in/aquib-haq/"]}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Can I use Claude Code with other models?","acceptedAnswer":{"@type":"Answer","text":"Yes. Point ANTHROPIC_BASE_URL at your claude-code-gateway Worker and each model name routes to the backend you choose: Workers AI, OpenAI, Gemini, DeepSeek, Groq, OpenRouter or Anthropic."}},{"@type":"Question","name":"Which open-source models does it ship with?","acceptedAnswer":{"@type":"Answer","text":"It ships configured for GLM-5.3, Kimi K2.6 and DeepSeek V4 Pro on Cloudflare Workers AI, with no GPU of your own."}},{"@type":"Question","name":"Is the gateway secure by default?","acceptedAnswer":{"@type":"Answer","text":"A proxy key is required, provider hosts must be on an allowlist, bodies are size-capped, requests are rate limited and provider keys are scrubbed from every upstream response."}},{"@type":"Question","name":"What does not work through the gateway?","acceptedAnswer":{"@type":"Answer","text":"WebSearch, prompt caching, the Files API, the Batches API and managed-agent features are not implemented."}},{"@type":"Question","name":"How do I deploy it?","acceptedAnswer":{"@type":"Answer","text":"Use the one-click Deploy to Cloudflare button, or run npm install and npm run deploy with Wrangler, then set the PROXY_KEY secret."}}]}</script>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#e6edf3;--muted:#8b949e;--soft:#c9d1d9;--acc:#f78166}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+header.top{border-bottom:1px solid var(--border)}
+header.top .wrap{display:flex;justify-content:space-between;align-items:center;height:64px}
+header.top .brand{color:var(--fg);font-weight:700}
+header.top nav a{color:var(--muted);margin-left:22px;font-size:15px}
+.hero{padding:88px 0 56px;background:radial-gradient(700px 360px at 85% -10%,color-mix(in srgb,var(--acc) 28%,transparent),transparent)}
+.eyebrow{font:14px/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted);margin:0 0 18px}
+h1{font-size:clamp(34px,5.4vw,58px);line-height:1.08;margin:0 0 20px;letter-spacing:-.02em}
+h2{font-size:30px;margin:0 0 20px;letter-spacing:-.01em}h3{font-size:19px;margin:0 0 8px}
+.lead{font-size:20px;color:var(--soft);max-width:760px;margin:0 0 30px}
+.btns{display:flex;gap:12px;flex-wrap:wrap}
+.btn{display:inline-block;padding:11px 20px;border-radius:8px;border:1px solid var(--border);color:var(--fg);font-weight:600;background:var(--panel)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#0d1117}
+.btn:hover{text-decoration:none;filter:brightness(1.1)}
+.tags{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 0;padding:0;list-style:none}
+.tags li{border:1px solid color-mix(in srgb,var(--acc) 60%,var(--border));border-radius:999px;padding:3px 12px;font-size:14px;color:var(--soft)}
+section{padding:56px 0;border-top:1px solid var(--border)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:22px}
+.card p{margin:0;color:var(--soft);font-size:16px}
+.card .meta{margin-top:14px;font-size:14px;color:var(--muted)}
+ol.steps{padding-left:22px}ol.steps li{margin:0 0 10px;color:var(--soft)}
+pre{background:#010409;border:1px solid var(--border);border-radius:10px;padding:18px;overflow:auto;font:14px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--soft)}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.9em}
+table{width:100%;border-collapse:collapse;font-size:15px}th,td{border-bottom:1px solid var(--border);padding:10px 8px;text-align:left}th{color:var(--muted);font-weight:600}
+details{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin:0 0 10px}
+summary{cursor:pointer;font-weight:600}details p{color:var(--soft);margin:10px 0 0}
+footer{border-top:1px solid var(--border);padding:36px 0 56px;color:var(--muted);font-size:15px}
+footer ul{list-style:none;padding:0;margin:10px 0 0}footer li{margin:4px 0}
+.note{color:var(--muted);font-size:15px}
+.grid.two{grid-template-columns:repeat(auto-fit,minmax(400px,1fr))}
+.card img{width:100%;height:auto;aspect-ratio:2/1;border-radius:8px;display:block;margin:0 0 16px;background:#0d1117;border:1px solid var(--border)}
+img.banner{width:100%;height:auto;aspect-ratio:2/1;border-radius:14px;border:1px solid var(--border);display:block;margin:44px 0 0}
+@media(max-width:520px){.grid.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap"><a class="brand" href="https://clufy.github.io/">Aquib Haq</a><nav><a href="#features">Features</a><a href="#quick-start">Quick start</a><a href="#faq">FAQ</a><a href="https://github.com/Clufy/claude-code-gateway">GitHub</a></nav></div></header>
+<main>
+<div class="hero"><div class="wrap">
+<p class="eyebrow">github.com/Clufy/claude-code-gateway · open source · MIT</p>
+<h1>Run Claude Code on any LLM with one Cloudflare Worker</h1>
+<p class="lead">claude-code-gateway speaks the Anthropic Messages API, so Claude Code talks to it as if it were Anthropic. Behind it, each model routes to open models on Cloudflare Workers AI, OpenAI, Gemini or Anthropic, and every session passes a security layer built for AI-assisted red and purple teaming.</p>
+<div class="btns"><a class="btn primary" href="https://deploy.workers.cloudflare.com/?url=https://github.com/Clufy/claude-code-gateway">Deploy to Cloudflare</a><a class="btn" href="https://github.com/Clufy/claude-code-gateway">View on GitHub</a></div>
+<ul class="tags"><li>Claude Code</li><li>Cloudflare Workers AI</li><li>OpenAI</li><li>Gemini</li><li>DeepSeek</li><li>MCP</li><li>TypeScript</li></ul>
+<img class="banner" src="https://raw.githubusercontent.com/Clufy/claude-code-gateway/main/.github/assets/banner.gif" alt="claude-code-gateway routing Claude Code requests to Workers AI, OpenAI, Gemini and Anthropic" width="1280" height="640">
+</div></div>
+<section id="features"><div class="wrap"><h2>Features</h2>
+<div class="grid"><div class="card"><h3>Multi-provider routing</h3><p>Workers AI, OpenAI Chat Completions and Responses, Gemini and the Anthropic Messages API, with up to 3 fallback models per route.</p></div><div class="card"><h3>Full Claude Code experience</h3><p>Streaming, tool use, extended thinking, vision for flagged models, token counting and /v1/models with real context windows.</p></div><div class="card"><h3>Secure by default</h3><p>Required proxy key, provider host allowlist, body caps, rate limits and provider keys scrubbed from every response.</p></div><div class="card"><h3>Session guard</h3><p>Flags prompt injection, secrets and risky tool calls in each turn, with your own rules in GUARD_RULES.</p></div><div class="card"><h3>Red-team harness</h3><p>70 canary-based attack cases in 7 suites, mapped to the OWASP Top 10 for LLM Applications.</p></div><div class="card"><h3>MCP server and purple loop</h3><p>engagement, logs, redteam and purple tools at /mcp, plus Sigma rules drafted from findings and promoted to guard rules.</p></div></div>
+</div></section>
+<section id="how-it-works"><div class="wrap"><h2>How it works</h2>
+<pre>Claude Code ──Anthropic Messages API──▶ claude-code-gateway ──▶ Workers AI · OpenAI · Gemini · Anthropic
+                                        (your Worker)
+                                        auth · routing · fallbacks · session guard · scope check · /mcp</pre>
+</div></section>
+<section id="quick-start"><div class="wrap"><h2>Quick start</h2>
+<p>Deploy with the button above, or from your machine:</p>
+<pre>npx wrangler login
+npm install &amp;&amp; npm run check
+npm run deploy
+npx wrangler secret put PROXY_KEY</pre>
+<p>Then point Claude Code at the Worker in <code>~/.claude/settings.json</code>:</p>
+<pre>{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://&lt;worker-subdomain&gt;.workers.dev",
+    "ANTHROPIC_CUSTOM_HEADERS": "x-api-key: your-proxy-key-value",
+    "ANTHROPIC_MODEL": "@cf/zai-org/glm-5.3",
+    "ANTHROPIC_SMALL_FAST_MODEL": "@cf/moonshotai/kimi-k2.6"
+  }
+}</pre>
+<p class="note">Full configuration, engagements, guard rules and the red-team harness are documented in the <a href="https://github.com/Clufy/claude-code-gateway#documentation">repository docs</a>.</p>
+</div></section>
+<section id="faq"><div class="wrap"><h2>FAQ</h2><details><summary>Can I use Claude Code with other models?</summary><p>Yes. Point ANTHROPIC_BASE_URL at your claude-code-gateway Worker and each model name routes to the backend you choose: Workers AI, OpenAI, Gemini, DeepSeek, Groq, OpenRouter or Anthropic.</p></details><details><summary>Which open-source models does it ship with?</summary><p>It ships configured for GLM-5.3, Kimi K2.6 and DeepSeek V4 Pro on Cloudflare Workers AI, with no GPU of your own.</p></details><details><summary>Is the gateway secure by default?</summary><p>A proxy key is required, provider hosts must be on an allowlist, bodies are size-capped, requests are rate limited and provider keys are scrubbed from every upstream response.</p></details><details><summary>What does not work through the gateway?</summary><p>WebSearch, prompt caching, the Files API, the Batches API and managed-agent features are not implemented.</p></details><details><summary>How do I deploy it?</summary><p>Use the one-click Deploy to Cloudflare button, or run npm install and npm run deploy with Wrangler, then set the PROXY_KEY secret.</p></details></div></section>
+</main>
+<footer><div class="wrap">
+<p>Built by <a href="https://clufy.github.io/">Aquib Haq</a>, AI and backend engineer in Karachi, Pakistan. <a href="https://github.com/Clufy">GitHub</a> · <a href="https://www.linkedin.com/in/aquib-haq/">LinkedIn</a></p>
+<ul>
+<li><a href="https://clufy.github.io/Sentinel/">Sentinel</a>: AI compliance assistant for NIST 800-53, ISO 27001 and CIS Controls</li>
+<li><a href="https://clufy.github.io/claude-code-gateway/">claude-code-gateway</a>: run Claude Code on any LLM with Cloudflare Workers</li>
+<li><a href="https://clufy.github.io/spanguard/">spanguard</a>: PII/PHI detection and redaction for Python</li>
+<li><a href="https://clufy.github.io/voxbridge/">voxbridge</a>: one Python SDK for Vapi and Retell voice agents</li>
+</ul>
+</div></footer>
+</body>
+</html>
